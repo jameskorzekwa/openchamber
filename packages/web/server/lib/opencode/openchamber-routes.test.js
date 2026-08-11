@@ -178,6 +178,24 @@ describe('OpenChamber foreground update route', () => {
     expect(dependencies.fs.closeSync).toHaveBeenCalledWith(17);
   });
 
+  it('does not queue a supervised update when its log cannot be opened', async () => {
+    const { app, dependencies } = createApp({
+      platform: 'darwin',
+      environment: { OPENCHAMBER_UPDATE_RESTART_ON_EXIT: 'true' },
+    });
+    dependencies.fs.openSync.mockImplementation(() => {
+      throw new Error('update log unavailable');
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await request(app)
+      .post('/api/openchamber/update-install')
+      .expect(500, { error: 'update log unavailable' });
+
+    expect(childProcess.spawn).not.toHaveBeenCalled();
+    expect(dependencies.fs.closeSync).not.toHaveBeenCalled();
+  });
+
   it('does not enable restart-on-exit updates on Windows', async () => {
     const { app } = createApp({
       platform: 'win32',
@@ -186,7 +204,9 @@ describe('OpenChamber foreground update route', () => {
 
     await request(app)
       .post('/api/openchamber/update-install')
-      .expect(409);
+      .expect(409, {
+        error: 'Foreground servers must be updated by their service manager. Run openchamber update and restart the service.',
+      });
 
     expect(childProcess.spawn).not.toHaveBeenCalled();
   });

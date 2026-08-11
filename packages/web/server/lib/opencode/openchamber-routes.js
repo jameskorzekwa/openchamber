@@ -215,8 +215,11 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
           });
         }
 
+        const serviceManagerGuidance = process.platform === 'win32'
+          ? 'Run openchamber update and restart the service.'
+          : 'Set OPENCHAMBER_SYSTEMD_UNIT when running under systemd, set OPENCHAMBER_UPDATE_RESTART_ON_EXIT=true for a restart-on-exit supervisor, or run openchamber update and restart the service.';
         return res.status(409).json({
-          error: 'Foreground servers must be updated by their service manager. Set OPENCHAMBER_SYSTEMD_UNIT when running under systemd, set OPENCHAMBER_UPDATE_RESTART_ON_EXIT=true for a restart-on-exit supervisor, or run openchamber update and restart the service.',
+          error: `Foreground servers must be updated by their service manager. ${serviceManagerGuidance}`,
         });
       }
 
