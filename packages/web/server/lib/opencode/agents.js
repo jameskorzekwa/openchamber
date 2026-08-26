@@ -30,6 +30,7 @@ import {
   formatModelSelection,
   isRecord,
 } from './config-v2.js';
+import { assertProjectMutationAllowed } from './primary-worktree-write-guard.js';
 
 // ============== AGENT SCOPE HELPERS ==============
 //
@@ -358,6 +359,7 @@ function createAgent(agentName, config, workingDirectory, scope) {
   let targetScope;
 
   if (scope === AGENT_SCOPE.PROJECT && workingDirectory) {
+    assertProjectMutationAllowed(projectPath);
     ensureProjectAgentDir(workingDirectory);
     targetPath = projectPath;
     targetScope = AGENT_SCOPE.PROJECT;
@@ -448,6 +450,7 @@ function updateAgent(agentName, updates, workingDirectory) {
   const entity = applyAgentUpdates(current.config, updates);
 
   if (current.source === 'md') {
+    if (current.scope === AGENT_SCOPE.PROJECT) assertProjectMutationAllowed(current.path);
     writeAgentMd(current.path, entity);
     console.log(`Updated agent: ${agentName} (md: ${current.path})`);
     return { source: 'md', scope: current.scope, path: current.path };
@@ -456,6 +459,7 @@ function updateAgent(agentName, updates, workingDirectory) {
   if (current.source === 'json') {
     const layers = readConfigLayers(workingDirectory);
     const jsonSource = getJsonEntrySource(layers, 'agents', agentName);
+    if (jsonSource.path === layers.paths.projectPath) assertProjectMutationAllowed(jsonSource.path);
     const config = jsonSource.config || {};
     const rawSystem = jsonSource.section?.system ?? jsonSource.section?.prompt;
     // `{file:...}` substitution still works in OpenCode 2, so an agent whose
@@ -491,6 +495,7 @@ function deleteAgent(agentName, workingDirectory, scope) {
   if ((!requestedScope || requestedScope === AGENT_SCOPE.PROJECT) && workingDirectory) {
     const projectPath = getProjectAgentPath(workingDirectory, agentName);
     if (fs.existsSync(projectPath)) {
+      assertProjectMutationAllowed(projectPath);
       fs.unlinkSync(projectPath);
       console.log(`Deleted project-level agent .md file: ${projectPath}`);
       return;
@@ -510,6 +515,7 @@ function deleteAgent(agentName, workingDirectory, scope) {
 
   if (requestedScope === AGENT_SCOPE.PROJECT) {
     if (layers.paths.projectPath && deleteSectionEntry(layers.projectConfig, 'agents', agentName)) {
+      assertProjectMutationAllowed(layers.paths.projectPath);
       writeConfig(layers.projectConfig, layers.paths.projectPath);
       console.log(`Removed project-level agent from opencode.json: ${agentName}`);
       return;
@@ -531,6 +537,7 @@ function deleteAgent(agentName, workingDirectory, scope) {
   const jsonSource = getJsonEntrySource(layers, 'agents', agentName);
   if (jsonSource.exists && jsonSource.config && jsonSource.path
     && deleteSectionEntry(jsonSource.config, 'agents', agentName)) {
+    if (jsonSource.path === layers.paths.projectPath) assertProjectMutationAllowed(jsonSource.path);
     writeConfig(jsonSource.config, jsonSource.path);
     console.log(`Removed agent from opencode.json: ${agentName}`);
     return;
