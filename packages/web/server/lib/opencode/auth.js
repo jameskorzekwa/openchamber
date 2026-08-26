@@ -2,7 +2,20 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-const OPENCODE_DATA_DIR = path.join(os.homedir(), '.local', 'share', 'opencode');
+function resolveOpenCodeDataDir({ env = process.env, homeDir = os.homedir(), existsSync = fs.existsSync } = {}) {
+  if (env.OPENCODE_DATA_DIR) {
+    return path.resolve(env.OPENCODE_DATA_DIR);
+  }
+  if (env.XDG_DATA_HOME) {
+    return path.join(path.resolve(env.XDG_DATA_HOME), 'opencode');
+  }
+
+  const defaultDataDir = path.join(homeDir, '.local', 'share', 'opencode');
+  const migratedDataDir = path.join(defaultDataDir, 'xdg', 'opencode');
+  return existsSync(path.join(migratedDataDir, 'auth.json')) ? migratedDataDir : defaultDataDir;
+}
+
+const OPENCODE_DATA_DIR = resolveOpenCodeDataDir();
 const AUTH_FILE = path.join(OPENCODE_DATA_DIR, 'auth.json');
 
 function readAuthFile() {
@@ -79,6 +92,7 @@ export {
   removeProviderAuth,
   getProviderAuth,
   listProviderAuths,
+  resolveOpenCodeDataDir,
   AUTH_FILE,
   OPENCODE_DATA_DIR
 };
