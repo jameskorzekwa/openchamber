@@ -25,4 +25,13 @@ describe('composer value writeback composition guard (issue #2527)', () => {
         expect(compositionGuard).toBeGreaterThan(equalityCheck);
         expect(dispatch).toBeGreaterThan(compositionGuard);
     });
+
+    test('places the caret using CodeMirror-normalized line endings', () => {
+        const effect = writebackEffect();
+        const normalization = effect.indexOf("value.replace(/\\r\\n?/g, '\\n').length");
+        const selection = effect.indexOf('selection: { anchor: normalizedValueLength }');
+
+        expect(normalization).toBeGreaterThan(-1);
+        expect(selection).toBeGreaterThan(normalization);
+    });
 });

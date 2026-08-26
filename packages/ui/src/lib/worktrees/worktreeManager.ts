@@ -372,11 +372,10 @@ export const partitionWorktreesByRegisteredProject = (
   return partitioned;
 };
 
-// Cache worktree listings to avoid repeated git worktree list + rev-parse calls
-const _worktreeListCache = new Map<string, { value: WorktreeMetadata[]; at: number }>();
+// Deduplicate concurrent listings while allowing external worktree changes to
+// appear on the next completed request.
 const _worktreeListInflight = new Map<string, Promise<WorktreeMetadata[]>>();
 const _worktreeListGeneration = new Map<string, number>();
-const WORKTREE_LIST_CACHE_TTL = 30_000; // 30 seconds
 
 const getWorktreeListGeneration = (projectDirectory: string): number => {
   return _worktreeListGeneration.get(projectDirectory) ?? 0;
@@ -384,7 +383,6 @@ const getWorktreeListGeneration = (projectDirectory: string): number => {
 
 const invalidateWorktreeList = (projectDirectory: string): void => {
   _worktreeListGeneration.set(projectDirectory, getWorktreeListGeneration(projectDirectory) + 1);
-  _worktreeListCache.delete(projectDirectory);
 };
 
 const readProjectWorktrees = async (projectDirectory: string): Promise<WorktreeMetadata[]> => {
@@ -430,7 +428,6 @@ const readStableProjectWorktrees = async (projectDirectory: string): Promise<Wor
     const worktrees = await readProjectWorktrees(projectDirectory);
 
     if (generation === getWorktreeListGeneration(projectDirectory)) {
-      _worktreeListCache.set(projectDirectory, { value: worktrees, at: Date.now() });
       return worktrees;
     }
   }
@@ -438,12 +435,6 @@ const readStableProjectWorktrees = async (projectDirectory: string): Promise<Wor
 
 export async function listProjectWorktrees(project: ProjectRef): Promise<WorktreeMetadata[]> {
   const projectDirectory = normalizePath(project.path);
-
-  // Return cached if fresh
-  const cached = _worktreeListCache.get(projectDirectory);
-  if (cached && Date.now() - cached.at < WORKTREE_LIST_CACHE_TTL) {
-    return cached.value;
-  }
 
   // Dedup in-flight requests
   const inflight = _worktreeListInflight.get(projectDirectory);

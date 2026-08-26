@@ -7,6 +7,7 @@ const removedSessionIds: string[] = []
 let mutationCalls = 0
 let runtimeKey = "runtime-a"
 let runtimeWillChange: (() => void) | null = null
+const sessionDirectoryChanges: Array<{ sessionId: string; directory: string }> = []
 
 mock.module("@/stores/useGlobalSessionsStore", () => ({
   isGlobalSessionRecencyOnlyUpdate: (existing: Session, incoming: Session) => (
@@ -45,6 +46,15 @@ mock.module("@/lib/runtime-switch", () => ({
     return () => undefined
   },
 }))
+mock.module("@/sync/session-ui-store", () => ({
+  useSessionUIStore: {
+    getState: () => ({
+      setSessionDirectory: (sessionId: string, directory: string) => {
+        sessionDirectoryChanges.push({ sessionId, directory })
+      },
+    }),
+  },
+}))
 import { applySessionEventsToGlobalSessions, applySessionEventToGlobalSessions } from "../session-event-router"
 
 const buildSession = (title: string, time: Session["time"]): Session => ({
@@ -78,6 +88,7 @@ describe("applySessionEventToGlobalSessions", () => {
     upsertedSessions.length = 0
     removedSessionIds.length = 0
     mutationCalls = 0
+    sessionDirectoryChanges.length = 0
   })
 
   test("skips stale global session.updated echoes after a newer rename", () => {
@@ -105,6 +116,20 @@ describe("applySessionEventToGlobalSessions", () => {
     applySessionEventToGlobalSessions(buildEvent(buildSession("Renamed", { created: 1, updated: 20 })))
 
     expect(upsertedSessions.map((session) => session.title)).toEqual(["Renamed"])
+  })
+
+  test("reconciles an externally moved selected session to its new directory", () => {
+    currentSessions = [{
+      ...buildSession("Initial", { created: 1, updated: 10 }),
+      directory: "/repo/main",
+    }]
+
+    applySessionEventToGlobalSessions(buildEvent({
+      ...buildSession("Initial", { created: 1, updated: 20 }),
+      directory: "/repo/worktree",
+    }))
+
+    expect(sessionDirectoryChanges).toEqual([{ sessionId: "ses_1", directory: "/repo/worktree" }])
   })
 
   test("cancels a pending global update when the session is deleted", () => {
