@@ -420,6 +420,7 @@ function updateAgent(agentName, updates, workingDirectory) {
           if (!promptFilePath) {
             throw new Error(`Invalid prompt file reference for agent ${agentName}`);
           }
+          assertProjectMutationAllowed(promptFilePath);
           writePromptFile(promptFilePath, '');
           continue;
         }
@@ -452,6 +453,7 @@ function updateAgent(agentName, updates, workingDirectory) {
         if (!promptFilePath) {
           throw new Error(`Invalid prompt file reference for agent ${agentName}`);
         }
+        assertProjectMutationAllowed(promptFilePath);
         writePromptFile(promptFilePath, normalizedValue);
         continue;
       } else if (isPromptFileReference(normalizedValue)) {

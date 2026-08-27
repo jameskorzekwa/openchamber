@@ -12,6 +12,7 @@ import { PlanView } from '@/components/views/PlanView';
 import { SettingsView } from '@/components/views/SettingsView';
 import { AppLinkConfirmDialog } from '@/components/chat/AppLinkConfirmDialog';
 import { SharedTrustConfirmDialog } from '@/components/projects/SharedTrustConfirmDialog';
+import { OpmStatusOverlay } from '@/components/opm-status/OpmStatusOverlay';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { RuntimeAPIProvider } from '@/contexts/RuntimeAPIProvider';
 import { useAuthSessionStore } from '@/lib/runtime-auth-expiry';
@@ -1310,6 +1311,7 @@ export function MobileApp({ apis }: MobileAppProps) {
                 switchRuntimeEndpoint({ apiBaseUrl: '', clientToken: null, runtimeKey: MOBILE_DISCONNECTED_RUNTIME_KEY });
                 setConnectionEpoch((value) => value + 1);
               }} />
+              <OpmStatusOverlay />
               <AppLinkConfirmDialog />
               <SharedTrustConfirmDialog />
               <Toaster position="top-center" offset="calc(var(--oc-safe-area-top, 0px) + 16px)" />

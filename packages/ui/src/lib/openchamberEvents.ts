@@ -5,7 +5,7 @@ import { messageQueueUpdatedEventSchema, type MessageQueueUpdatedEvent } from '@
 import { z } from 'zod';
 import { shouldReloadForBuildRevision } from './buildRevision';
 
-declare const __APP_VERSION__: string | undefined;
+declare const __BUILD_REVISION__: string | undefined;
 
 type ScheduledTaskRanEvent = {
   type: 'scheduled-task-ran';
@@ -126,7 +126,7 @@ const listeners = new Set<Listener>();
 
 const MAX_RECONNECT_DELAY_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 45_000;
-const CLIENT_BUILD_REVISION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '';
+const CLIENT_BUILD_REVISION = typeof __BUILD_REVISION__ === 'string' ? __BUILD_REVISION__ : '';
 
 const clearHeartbeatTimer = () => {
   if (!heartbeatTimer) {

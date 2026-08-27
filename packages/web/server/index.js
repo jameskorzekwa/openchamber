@@ -96,6 +96,7 @@ import { createMessageQueueRuntime } from './lib/message-queue/runtime.js';
 import { createRoutingRuntime } from './lib/routing/runtime.js';
 import { createGracefulShutdownRuntime } from './lib/opencode/shutdown-runtime.js';
 import { stopAllGuestServices } from './lib/guests/service.js';
+import { resolveRuntimeBuildRevision } from './lib/opencode/build-revision.js';
 import { createProjectConfigRuntime } from './lib/projects/project-config.js';
 import { migrateLegacyUserDirs } from './lib/data-dir-migration.js';
 import { createProjectContextRuntime } from './lib/project-context/runtime.js';
@@ -211,6 +212,7 @@ const OPENCHAMBER_VERSION = (() => {
   }
   return 'unknown';
 })();
+const OPENCHAMBER_BUILD_REVISION = resolveRuntimeBuildRevision({ packageVersion: OPENCHAMBER_VERSION });
 
 const isEnvFlagEnabled = (value) => {
   if (value === true || value === 1) return true;
@@ -1998,7 +2000,7 @@ async function main(options = {}) {
     openChamberControlService,
     waitForOpenCodeReady,
     emitSessionCreatedEvent,
-    openchamberBuildRevision: process.env.OPENCHAMBER_BUILD_REVISION || OPENCHAMBER_VERSION,
+    openchamberBuildRevision: OPENCHAMBER_BUILD_REVISION,
     getOpenChamberEventClients: () => uiOpenChamberEventClients,
     writeSseEvent,
     permissionAutoAcceptRuntime,
