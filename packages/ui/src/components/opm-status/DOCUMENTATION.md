@@ -6,8 +6,8 @@ This component renders OPM status in connected hosted web, Electron, and mobile 
 
 ## Ownership
 
-- `opm-status.ts` owns route transport, boundary parsing, derived counts, and owner-guidance classification used for localization.
-- `OpmStatusOverlay.tsx` owns the fixed pill, dashboard dialog, visible-only polling, browser notifications, copy actions, and session navigation.
+- `opm-status.ts` owns route transport, boundary parsing, derived counts (including the salient mobile count), and owner-guidance classification used for localization.
+- `OpmStatusOverlay.tsx` owns the fixed pill, pill dragging and edge placement, dashboard dialog, visible-only polling, browser notifications, copy actions, and session navigation.
 - `MainLayout.tsx` owns the hosted desktop and Electron mount. `MobileApp.tsx` mounts it inside the connected provider shell. Unavailable/disconnected mobile screens and `VSCodeLayout` do not mount it.
 
 ## Invariants
@@ -18,3 +18,5 @@ This component renders OPM status in connected hosted web, Electron, and mobile 
 - Open Session calls `useSessionUIStore.getState().setCurrentSession(sessionId, workspacePath)`. The store remains the authority for directory and project routing.
 - Rendered text uses i18n keys. OPM, GitHub, commands, paths, and server-provided work-item content remain literal.
 - Styling uses shared Dialog, Button, Icon, and semantic theme tokens.
+- The pill is draggable along the viewport edges: a 5px pointer travel threshold separates click from drag, release snaps to the nearest edge with a 6px margin, and the position persists in `localStorage` (`opmStatus.pillPos`) as `{ edge, offset }`. Inline styles override the default CSS position only when a stored position exists, top-edge placement respects `env(safe-area-inset-top)`, and a drag release never opens the dashboard.
+- On small screens the pill collapses to the status dot plus the salient count (`getSalientOpmCount`); the full text is desktop-only. Pill children never become pointer targets, so iOS drags always capture on the pill itself.

@@ -126,6 +126,22 @@ describe('OPM polling and route lifecycle', () => {
     expect(poller.current()).not.toHaveProperty('groups');
   });
 
+  it('notifies on every successful snapshot, skips failures, and survives notifier errors', async () => {
+    const notify = vi.fn().mockRejectedValue(new Error('pushover exploded'));
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ active: [entry()] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValue(new Response('down', { status: 503 }));
+    const poller = createOpmStatusPoller({ controlUrl: 'http://127.0.0.1:47651', issueUrls: {}, now: () => 123, notifier: { notify } });
+
+    await expect(poller.poll()).resolves.toMatchObject({ available: true });
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ available: true }));
+
+    await expect(poller.poll()).resolves.toMatchObject({ available: false });
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
   it('sets no-store and clears polling through an idempotent close handle', () => {
     vi.useFakeTimers();
     const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
