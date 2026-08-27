@@ -1,10 +1,23 @@
 import fs from 'node:fs';
 
-export const PRODUCTION_UPDATER_FEED = Object.freeze({
+export const DEFAULT_PRODUCTION_UPDATER_FEED = Object.freeze({
   provider: 'github',
   owner: 'openchamber',
   repo: 'openchamber',
 });
+
+export const MACOS_PRODUCTION_UPDATER_FEED = Object.freeze({
+  provider: 'generic',
+  url: 'https://raw.githubusercontent.com/jameskorzekwa/openchamber/desktop-channel/',
+});
+
+export const resolveProductionUpdaterFeed = ({ platform = process.platform, j2kBuild = false } = {}) => (
+  platform === 'darwin' && j2kBuild ? MACOS_PRODUCTION_UPDATER_FEED : DEFAULT_PRODUCTION_UPDATER_FEED
+);
+
+export const resolveUpdaterPrereleasePolicy = ({ platform = process.platform, j2kBuild = false } = {}) => (
+  platform === 'darwin' && j2kBuild
+);
 
 const isLoopbackHostname = (hostname) => {
   if (hostname === '::1' || hostname === '[::1]') return true;
@@ -34,14 +47,17 @@ export const parseLoopbackUpdaterUrl = (value) => {
 
 export const resolveUpdaterFeed = ({
   environment = process.env,
+  j2kBuild = false,
+  platform = process.platform,
   testBuild = false,
 } = {}) => {
+  const productionFeed = resolveProductionUpdaterFeed({ platform, j2kBuild });
   if (environment.OPENCHAMBER_E2E !== '1'
     || testBuild !== true) {
-    return PRODUCTION_UPDATER_FEED;
+    return productionFeed;
   }
 
   const url = parseLoopbackUpdaterUrl(environment.OPENCHAMBER_UPDATER_E2E_URL);
-  if (!url) return PRODUCTION_UPDATER_FEED;
+  if (!url) return productionFeed;
   return { provider: 'generic', url };
 };

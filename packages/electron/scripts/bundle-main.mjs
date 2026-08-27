@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const updaterE2eBuild = process.env.OPENCHAMBER_UPDATER_E2E_BUILD === '1';
+const j2kDesktopBuild = process.env.OPENCHAMBER_J2K_DESKTOP_BUILD === '1';
 
 const result = await Bun.build({
   entrypoints: [
@@ -48,6 +49,7 @@ const result = await Bun.build({
   naming: '[name].mjs',
   define: {
     __OPENCHAMBER_UPDATER_E2E_BUILD__: updaterE2eBuild ? 'true' : 'false',
+    'process.env.OPENCHAMBER_J2K_DESKTOP_BUILD': JSON.stringify(j2kDesktopBuild ? '1' : '0'),
   },
 });
 
@@ -56,4 +58,4 @@ if (!result.success) {
   process.exit(1);
 }
 
-console.log(`[electron] main process bundled -> dist-bundle/{entry,main,early-startup}.mjs (updater E2E=${updaterE2eBuild})`);
+console.log(`[electron] main process bundled -> dist-bundle/{entry,main,early-startup}.mjs (updater E2E=${updaterE2eBuild}, J2K desktop=${j2kDesktopBuild})`);
