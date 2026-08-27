@@ -1909,6 +1909,7 @@ async function main(options = {}) {
     waitForOpenCodeReady,
     emitSessionCreatedEvent,
     globalEventHub: globalMessageStreamHub,
+    openchamberBuildRevision: process.env.OPENCHAMBER_BUILD_REVISION || OPENCHAMBER_VERSION,
     getOpenChamberEventClients: () => uiOpenChamberEventClients,
     writeSseEvent,
     permissionAutoAcceptRuntime,

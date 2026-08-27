@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { shouldReloadForBuildRevision } from './buildRevision';
 
 mock.module('./runtime-url', () => ({
   getRuntimeUrlResolver: () => ({ sse: (path: string) => `http://runtime.test${path}` }),
@@ -71,5 +72,26 @@ describe('openchamber events', () => {
       },
     ]);
     unsubscribe();
+  });
+});
+
+describe('build revision reload guard', () => {
+  test('reloads once for a different server revision', () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    };
+
+    expect(shouldReloadForBuildRevision('1.22.0-j2k.1', '1.21.0-j2k.1', storage)).toBe(true);
+    expect(shouldReloadForBuildRevision('1.22.0-j2k.1', '1.21.0-j2k.1', storage)).toBe(false);
+  });
+
+  test('does not reload matching or missing revisions', () => {
+    const storage = { getItem: () => null, setItem: () => undefined };
+
+    expect(shouldReloadForBuildRevision('1.21.0', '1.21.0', storage)).toBe(false);
+    expect(shouldReloadForBuildRevision('', '1.21.0', storage)).toBe(false);
+    expect(shouldReloadForBuildRevision('1.21.0', '', storage)).toBe(false);
   });
 });

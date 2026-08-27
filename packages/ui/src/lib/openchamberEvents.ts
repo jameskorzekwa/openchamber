@@ -1,5 +1,8 @@
 import { getRuntimeUrlResolver } from './runtime-url';
 import { subscribeRuntimeEndpointChanged } from './runtime-switch';
+import { shouldReloadForBuildRevision } from './buildRevision';
+
+declare const __APP_VERSION__: string | undefined;
 
 type ScheduledTaskRanEvent = {
   type: 'scheduled-task-ran';
@@ -58,6 +61,7 @@ const listeners = new Set<Listener>();
 
 const MAX_RECONNECT_DELAY_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 45_000;
+const CLIENT_BUILD_REVISION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '';
 
 const clearHeartbeatTimer = () => {
   if (!heartbeatTimer) {
@@ -126,6 +130,16 @@ const getEventProperties = (properties: unknown): Record<string, unknown> | null
 const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) => {
   if (envelope.type === 'openchamber:event-stream-ready') {
     reconnectAttempt = 0;
+    const properties = getEventProperties(envelope.properties);
+    const serverRevision = typeof properties?.buildRevision === 'string' ? properties.buildRevision : '';
+    try {
+      if (shouldReloadForBuildRevision(serverRevision, CLIENT_BUILD_REVISION, window.sessionStorage)) {
+        window.location.reload();
+      }
+    } catch {
+      // Storage can be unavailable in embedded/private contexts. Reconnecting
+      // without a reload is safer than creating an unguarded reload loop.
+    }
     return;
   }
 
