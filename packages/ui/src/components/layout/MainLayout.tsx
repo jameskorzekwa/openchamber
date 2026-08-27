@@ -16,6 +16,7 @@ import { ArchiveView } from '@/components/views/ArchiveView';
 import { WorktreesView } from '@/components/views/WorktreesView';
 import { DiffWorkerProvider } from '@/contexts/DiffWorkerProvider';
 import { MultiRunLauncher } from '@/components/multirun';
+import { OpmStatusOverlay } from '@/components/opm-status/OpmStatusOverlay';
 
 import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
@@ -97,6 +98,7 @@ export const MainLayout: React.FC = () => {
                 <HelpDialog />
                 <OpenCodeStatusDialog />
                 <SessionDialogs />
+                <OpmStatusOverlay />
 
                 {/* Persistent top-left controls (toggle + project actions) that
                     stay put while the sidebar/header animate beneath them. */}

@@ -1,7 +1,9 @@
 import { settingsDict } from './fr.settings';
+import { opmStatusI18n } from './opm-status.i18n';
 
 export const dict = {
   ...settingsDict,
+  ...opmStatusI18n.fr,
   'terminalView.actions.attachSelection': 'Joindre la sortie sélectionnée',
   'terminalView.actions.restart': 'Redémarrer le terminal',
   'chat.message.terminalContext': '{terminal}, lignes {start}-{end}',

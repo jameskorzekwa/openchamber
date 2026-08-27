@@ -1,8 +1,10 @@
 import type { I18nKey } from './en';
 import { settingsDict } from './es.settings';
+import { opmStatusI18n } from './opm-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   ...settingsDict,
+  ...opmStatusI18n.es,
   'terminalView.actions.attachSelection': 'Adjuntar salida seleccionada',
   'terminalView.actions.restart': 'Reiniciar terminal',
   'chat.message.terminalContext': '{terminal}, líneas {start}-{end}',

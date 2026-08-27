@@ -5,6 +5,7 @@ import { registerWalkthroughRoutes } from '../walkthrough/routes.js';
 import { registerSessionGoalRoutes } from '../session-goal/routes.js';
 import { registerGitHubRoutes } from '../github/routes.js';
 import { registerGitRoutes } from '../git/routes.js';
+import { registerOpmStatusRoutes } from '../opm-status/routes.js';
 import { registerDevServerRoutes } from '../dev-servers/routes.js';
 import { registerMagicPromptRoutes } from '../magic-prompts/routes.js';
 import { registerSessionFoldersRoutes } from '../session-folders/routes.js';
@@ -56,6 +57,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     clientReloadDelayMs,
   } = dependencies;
   let gitRoutesRuntime = null;
+  let opmStatusRoutesRuntime = null;
 
   let quotaProviders = null;
   const getQuotaProviders = async () => {
@@ -306,6 +308,8 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     registerGitHubRoutes(app);
     gitRoutesRuntime?.close?.();
     gitRoutesRuntime = registerGitRoutes(app, { emitSessionCreatedEvent, globalEventHub });
+    opmStatusRoutesRuntime?.close?.();
+    opmStatusRoutesRuntime = registerOpmStatusRoutes(app);
     registerDevServerRoutes(app, { scanner: devServerScanner, getOwnPorts });
     registerMagicPromptRoutes(app, {
       fsPromises,
@@ -340,6 +344,8 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     close: () => {
       gitRoutesRuntime?.close?.();
       gitRoutesRuntime = null;
+      opmStatusRoutesRuntime?.close?.();
+      opmStatusRoutesRuntime = null;
     },
   };
 };
