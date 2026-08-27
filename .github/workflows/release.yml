@@ -244,6 +244,8 @@ jobs:
           bun run build
 
       - name: Create and verify release assets
+        env:
+          OPENCHAMBER_UPDATE_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir artifacts

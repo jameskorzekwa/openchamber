@@ -204,13 +204,15 @@ function validateFetchUrl(value, mode, initialUrl) {
   return url;
 }
 
-async function fetchWithRedirects(fetchImpl, value, label) {
+async function fetchWithRedirects(fetchImpl, value, label, githubToken) {
   const initialUrl = new URL(value);
   const mode = initialUrl.hostname === 'api.github.com' ? 'api' : 'asset';
   let url = validateFetchUrl(initialUrl, mode, initialUrl);
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
+    const headers = { Accept: mode === 'api' ? 'application/vnd.github+json' : 'application/octet-stream', 'User-Agent': 'openchamber-validated-updater' };
+    if (mode === 'api' && githubToken) headers.Authorization = `Bearer ${githubToken}`;
     const response = await fetchImpl(url.href, {
-      headers: { Accept: mode === 'api' ? 'application/vnd.github+json' : 'application/octet-stream', 'User-Agent': 'openchamber-validated-updater' },
+      headers,
       signal: AbortSignal.timeout(30_000),
       redirect: 'manual',
     });
@@ -224,7 +226,7 @@ async function fetchWithRedirects(fetchImpl, value, label) {
 }
 
 async function fetchBytes(fetchImpl, url, limit, label, options = {}) {
-  const response = await fetchWithRedirects(fetchImpl, url, label);
+  const response = await fetchWithRedirects(fetchImpl, url, label, options.githubToken);
   if (options.noReleaseOn404 && response.status === 404) throw new NoValidatedReleaseError();
   if (!response.ok) fail(`${label} request failed with ${response.status}`);
   return readResponseBytes(response, limit, label);
@@ -773,12 +775,14 @@ export function createValidatedReleaseInstaller(options = {}) {
   const currentInstallDir = options.currentInstallDir || MODULE_PACKAGE_ROOT;
   const currentVersion = options.currentVersion || 'unknown';
   const repository = options.repository || REPOSITORY;
+  const githubToken = options.githubToken || process.env.OPENCHAMBER_UPDATE_GITHUB_TOKEN || '';
   const target = {
     platform: options.platform || process.platform,
     arch: options.arch || process.arch,
     nodeAbi: options.nodeAbi || process.versions.modules,
   };
   if (!REPOSITORY_PATTERN.test(repository)) fail('Update channel repository is invalid');
+  if (githubToken && (!isString(githubToken) || githubToken.length > 1024 || /[\r\n]/.test(githubToken))) fail('Update channel GitHub token is invalid');
   const releaseApiUrl = options.releaseApiUrl || `https://api.github.com/repos/${repository}/releases/latest`;
   const statePath = path.join(installRoot, 'update-status.json');
   const lockPath = path.join(installRoot, 'update.lock');
@@ -869,21 +873,21 @@ export function createValidatedReleaseInstaller(options = {}) {
   }
 
   async function resolveChannel() {
-    const release = parseRelease(await fetchJson(fetchImpl, releaseApiUrl, 'GitHub release metadata', { noReleaseOn404: true }));
+    const release = parseRelease(await fetchJson(fetchImpl, releaseApiUrl, 'GitHub release metadata', { noReleaseOn404: true, githubToken }));
     const commitUrl = `https://api.github.com/repos/${repository}/commits/${encodeURIComponent(release.tag)}`;
-    const tagCommit = parseTagCommit(await fetchJson(fetchImpl, commitUrl, 'GitHub tag commit metadata'));
+    const tagCommit = parseTagCommit(await fetchJson(fetchImpl, commitUrl, 'GitHub tag commit metadata', { githubToken }));
     const channelAsset = getUniqueAsset(release, 'channel.json');
     validateAssetUrl(channelAsset, release.tag, repository);
     const channel = validateChannelMetadata(
-      await fetchJson(fetchImpl, channelAsset.url, 'Update channel metadata'),
+      await fetchJson(fetchImpl, channelAsset.url, 'Update channel metadata', { githubToken }),
       release,
       tagCommit,
       target,
     );
     const upstreamTagUrl = `https://api.github.com/repos/openchamber/openchamber/commits/${encodeURIComponent(channel.upstreamTag || `v${channel.baseVersion}`)}`;
-    const upstreamCommit = parseTagCommit(await fetchJson(fetchImpl, upstreamTagUrl, 'GitHub upstream tag metadata'));
+    const upstreamCommit = parseTagCommit(await fetchJson(fetchImpl, upstreamTagUrl, 'GitHub upstream tag metadata', { githubToken }));
     const compareUrl = `https://api.github.com/repos/${repository}/compare/${upstreamCommit}...${channel.sourceCommit}`;
-    parseCompare(await fetchJson(fetchImpl, compareUrl, 'GitHub upstream ancestry metadata'), upstreamCommit, channel.sourceCommit);
+    parseCompare(await fetchJson(fetchImpl, compareUrl, 'GitHub upstream ancestry metadata', { githubToken }), upstreamCommit, channel.sourceCommit);
     const releaseAssetNames = release.assets.map((asset) => asset.name).sort();
     if (JSON.stringify(releaseAssetNames) !== JSON.stringify([...channel.assets].sort())) {
       fail('GitHub Release asset inventory does not match the update channel');
@@ -973,7 +977,7 @@ export function createValidatedReleaseInstaller(options = {}) {
         channel = resolved.channel;
         if (channel.version !== targetVersion) fail('Validated release version does not match the requested update');
         const { archiveAsset, checksumAsset } = resolved;
-        const checksumBytes = await fetchBytes(fetchImpl, checksumAsset.url, 4096, 'Checksum asset');
+        const checksumBytes = await fetchBytes(fetchImpl, checksumAsset.url, 4096, 'Checksum asset', { githubToken });
         const declaredChecksum = parseChecksumFile(checksumBytes, channel.archive.name);
         if (declaredChecksum !== channel.archive.sha256) fail('Checksum asset does not match the update channel');
         await persist(statePayload('installing', currentVersion, { targetVersion: channel.version }));

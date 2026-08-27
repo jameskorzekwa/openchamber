@@ -331,6 +331,22 @@ describe('validated release installation', () => {
     await expect(rejectedHarness.installer.install({ targetVersion: VERSION, handoffRestart: vi.fn() })).rejects.toThrow('redirect destination is not allowed');
   });
 
+  it('sends an optional token only to the GitHub API', async () => {
+    const requests = [];
+    const baseFetch = makeFetch();
+    const fetchImpl = vi.fn((url, options) => {
+      requests.push({ url: String(url), authorization: options?.headers?.Authorization });
+      return baseFetch(url, options);
+    });
+    const harness = await makeHarness(fetchImpl, undefined, { githubToken: 'test-token' });
+    await harness.installer.checkForUpdate();
+
+    expect(requests.filter((request) => request.url.startsWith('https://api.github.com/'))
+      .every((request) => request.authorization === 'Bearer test-token')).toBe(true);
+    expect(requests.filter((request) => !request.url.startsWith('https://api.github.com/'))
+      .every((request) => request.authorization === undefined)).toBe(true);
+  });
+
   it('rolls back the current symlink when restart handoff fails', async () => {
     const harness = await makeHarness();
     await expect(harness.installer.install({
