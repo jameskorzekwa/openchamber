@@ -443,6 +443,9 @@ within a ten-minute overall deadline.
       detached child inherits the listening socket and would hold the port
       for the whole batch, so the restart inside it failed with "port already
       in use" and the update ended with no server.
+    - Foreground servers under another process manager may set
+      `OPENCHAMBER_UPDATE_RESTART_ON_EXIT=true`; OpenChamber installs in a
+      detached process, exits only after success, and lets the manager restart it.
   - `GET /api/openchamber/models-metadata`
   - `GET /api/zen/models`
 
