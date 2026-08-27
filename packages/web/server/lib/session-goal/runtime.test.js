@@ -30,7 +30,11 @@ const requestPath = (input) => new URL(typeof input === 'string' ? input : input
 
 const startIdleTick = async (fetchImpl) => {
   const getSmallModelService = vi.fn();
-  vi.stubGlobal('fetch', fetchImpl);
+  vi.stubGlobal('fetch', vi.fn((input, init) => (
+    requestPath(input) === '/experimental/session'
+      ? jsonResponse([])
+      : fetchImpl(input, init)
+  )));
   const runtime = createSessionGoalRuntime({
     buildOpenCodeUrl: (pathname) => `http://opencode.test${pathname}`,
     getOpenCodeAuthHeaders: () => ({}),
@@ -42,7 +46,7 @@ const startIdleTick = async (fetchImpl) => {
     type: 'session.status',
     properties: { sessionID: SESSION_ID, status: { type: 'idle' }, directory: DIRECTORY },
   });
-  await vi.runOnlyPendingTimersAsync();
+  await vi.advanceTimersByTimeAsync(10);
   return { runtime, getSmallModelService };
 };
 
@@ -125,6 +129,7 @@ describe('session goal live activity gate', () => {
     const fetchImpl = vi.fn(async (input, init = {}) => {
       const pathname = requestPath(input);
       requests.push({ pathname, method: init.method ?? 'GET', body: init.body });
+      if (pathname === '/experimental/session') return jsonResponse([]);
       if (pathname === `/session/${SESSION_ID}` && init.method === 'PATCH') return jsonResponse(session);
       if (pathname === `/session/${SESSION_ID}`) return jsonResponse(session);
       if (pathname === '/session/status') return jsonResponse({});
@@ -165,7 +170,7 @@ describe('session goal live activity gate', () => {
       type: 'session.status',
       properties: { sessionID: SESSION_ID, status: { type: 'idle' }, directory: DIRECTORY },
     });
-    await vi.runOnlyPendingTimersAsync();
+    await vi.advanceTimersByTimeAsync(10);
 
     expect(service.generateSmallModelText).toHaveBeenCalledOnce();
     const patch = requests.find((request) => request.pathname === `/session/${SESSION_ID}` && request.method === 'PATCH');
@@ -176,6 +181,32 @@ describe('session goal live activity gate', () => {
       evaluationProviderID: 'provider',
       evaluationModelID: 'model',
     });
+    runtime.stop();
+  });
+
+  it('preserves managedWorktree metadata and holds ticks during worktree movement', async () => {
+    const paths = [];
+    const heldSession = {
+      ...session,
+      metadata: {
+        openchamber: {
+          goal: {
+            ...goal,
+            managedWorktree: true,
+            statusReason: 'worktree-moving',
+          },
+        },
+      },
+    };
+    const { runtime, getSmallModelService } = await startIdleTick(vi.fn(async (input) => {
+      const pathname = requestPath(input);
+      paths.push(pathname);
+      if (pathname === `/session/${SESSION_ID}`) return jsonResponse(heldSession);
+      throw new Error(`Unexpected request: ${pathname}`);
+    }));
+
+    expect(paths).toEqual([`/session/${SESSION_ID}`]);
+    expect(getSmallModelService).not.toHaveBeenCalled();
     runtime.stop();
   });
 });

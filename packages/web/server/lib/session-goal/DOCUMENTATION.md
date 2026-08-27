@@ -13,6 +13,7 @@ the web server and survives UI disconnects.
   id,                      // opaque per-logical-goal id; stale-write guard
   objective,               // inline user text (fallback), <= 5000 chars
   objectiveFile,           // true: objective text lives in a server-side file
+  managedWorktree,         // true: lifecycle is owned by the managed-worktree controller
   status,                  // active | paused | blocked | budgetLimited | complete
   tokenBudget,             // optional positive int
   tokensUsed,              // tokensCommitted + current segment (snapshot - baseline)
@@ -42,6 +43,44 @@ part telling the agent goal mode is active and that each turn should end
 with a factual done/verified/remaining statement for the independent audit.
 Freshness/stale-write protection is by `id`: every runtime write re-reads the
 session and drops the write when the stored goal id no longer matches.
+
+## Managed-worktree external state contract
+
+Managed-worktree sessions set `managedWorktree: true` and keep their lifecycle
+authority under `~/.local/state/opencode/session-worktrees`:
+
+- `<sessionId>.json` is the versioned controller state. The goal runtime reads
+  `managedGoalID`, `managedGoal`, `managedGoalObjective`, `phase`, and
+  `devDeployment` from it. Invalid session IDs, malformed files, unsupported
+  versions, and goal-ID mismatches fail closed.
+- `<sessionId>.goal.json` is the latest accepted goal progress. Runtime writes
+  and accepted `session.updated` events persist it through an atomic temporary
+  file rename, but only while `<sessionId>.json` names the same managed goal.
+  The controller's original `managedGoal` remains the fallback if the progress
+  file is missing or stale.
+- `managedGoalObjective` is the complete objective used for audits and
+  continuations. This avoids judging the managed lifecycle against a shortened
+  metadata objective.
+
+An audit verdict of `complete` does not complete a managed goal by itself. The
+controller state must be in `goal-completion-pending` or `complete` and include
+verified deployment evidence: a non-empty target, a 40-character lowercase hex
+commit, a 2xx response status, a 64-character lowercase hex response-body hash,
+and a finite verification timestamp. Missing or mismatched state becomes a
+`continue` verdict with a lifecycle-specific note.
+
+Goal identity is protected while the controller phase is not
+`moving-to-worktree`, `goal-completion-pending`, or `complete`. If a
+`session.updated` event clears or replaces the protected goal, or marks it
+complete early, the runtime re-reads authoritative session metadata and restores
+the controller's goal as active. Enforcement retries transient failures up to
+five times after the first attempt. An existing matching goal keeps its progress;
+only its active status, resume reason, note, and update time are repaired.
+
+`worktree-moving` and `worktree-resume-dispatching` are held transitions. They
+do not arm kickoff timers, execute ticks, or enter stale-stream monitoring. The
+controller resumes normal goal processing by publishing a later active update
+with a non-held reason.
 
 ## File-backed objectives
 
@@ -74,6 +113,10 @@ before touching the filesystem). Rationale: metadata rides every
 
 1. `createSessionGoalRuntime` subscribes to the global SSE hub (same pattern
    as session-assist — it needs the envelope's `directory`).
+   Managed goals are also discovered from the authoritative global session list
+   every five minutes because a vanished upstream stream may emit no terminal
+   event. The watchdog checks known roots every minute and stops with the goal
+   runtime.
 2. `session.status: idle` arms a 15s per-session timer; `busy`/`retry` clears
    it. A `session.updated` carrying a fresh active goal (`turnsUsed === 0` or
    `statusReason === 'resumed'`) arms a kickoff timer — 3s for fresh goals,
@@ -143,6 +186,23 @@ before touching the filesystem). Rationale: metadata rides every
    continuations; error/question/permission notifications are untouched.
    Pausing a goal from the UI also aborts the running turn (and vice versa —
    an abort pauses the goal), so "stop" means stop on both axes.
+
+## Conservative stale-stream recovery
+
+The managed-goal watchdog only examines active, non-held root goals. A candidate
+must have an incomplete assistant message with no recorded error and no activity
+for at least 15 minutes. Session status fetch failure is unknown and performs no
+recovery. A `retry` status is never aborted. Pending tools also block recovery,
+except for one running foreground `task` whose linked child is known, no longer
+busy/retrying, and has a terminal assistant message.
+
+Recovery walks the bounded session tree, at most 1,000 sessions, and handles
+stale children before their parent. Aborting a child lets the parent task settle
+normally. A stale root or verified orphaned parent task is aborted and then the
+same managed goal is resumed. The resume waits briefly for the abort event's
+automatic pause, preserves all progress fields, refuses to overwrite a different
+goal or an explicit user pause, and retries a failed resume write on a later scan
+without aborting the root twice.
 
 ## Continuation prompt
 

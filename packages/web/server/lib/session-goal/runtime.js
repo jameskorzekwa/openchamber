@@ -11,14 +11,17 @@
 // has no channel to settle its own goal. When the small model is unavailable
 // the loop still terminates via the budget and the continuation cap.
 //
-// Purely event-driven like session-assist: no polling, no backfill, no session
-// scans. Only sessions that emit events while the server runs ever tick.
+// Normal continuation remains event-driven. Managed worktree goals also use
+// a conservative watchdog because an upstream model stream can disappear without
+// emitting the idle/error event required to re-arm the goal.
 
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
 import { GOAL_OBJECTIVE_CHAR_LIMIT, readObjective } from './objectives.js';
+import { createManagedGoalStaleRecovery } from './managed-goal-stale-recovery.js';
+import { readManagedWorktreeGoalGate, readManagedWorktreeGoalObjective, readManagedWorktreeGoalRecord, writeManagedWorktreeGoalProgress } from './worktree-goal-gate.js';
 
 const OPENCHAMBER_SETTINGS_FILE = path.join(
   process.env.OPENCHAMBER_DATA_DIR
@@ -203,6 +206,7 @@ const parseGoalMetadata = (session) => {
     id,
     objective: objective.slice(0, GOAL_OBJECTIVE_CHAR_LIMIT),
     objectiveFile,
+    managedWorktree: goal.managedWorktree === true,
     status,
     tokenBudget: Number.isFinite(goal.tokenBudget) && goal.tokenBudget > 0 ? Math.floor(goal.tokenBudget) : null,
     tokensUsed: Number.isFinite(goal.tokensUsed) && goal.tokensUsed > 0 ? Math.floor(goal.tokensUsed) : 0,
@@ -256,6 +260,7 @@ export const createSessionGoalRuntime = ({
 }) => {
   const timers = new Map();
   const inflight = new Set();
+  const goalEnforcementPending = new Set();
   let stopped = false;
 
   const clearTimer = (sessionId) => {
@@ -287,6 +292,9 @@ export const createSessionGoalRuntime = ({
     }
     return response.json().catch(() => null);
   };
+
+  const staleRecovery = createManagedGoalStaleRecovery({ openCodeFetch, isEnabled });
+  staleRecovery.start();
 
   const fetchRecentMessages = async (sessionId, directory) => {
     const messages = await openCodeFetch(`/session/${encodeURIComponent(sessionId)}/message`, {
@@ -332,6 +340,11 @@ export const createSessionGoalRuntime = ({
         },
       },
     });
+    if (nextGoal.managedWorktree) {
+      await writeManagedWorktreeGoalProgress(sessionId, nextGoal).catch((error) => {
+        console.warn('[session-goal] managed worktree progress write failed:', error?.message || error);
+      });
+    }
     return nextGoal;
   };
 
@@ -458,6 +471,7 @@ export const createSessionGoalRuntime = ({
 
     const goal = parseGoalMetadata(session);
     if (!goal || goal.status !== 'active') return;
+    if (goal.managedWorktree && (goal.statusReason === 'worktree-moving' || goal.statusReason === 'worktree-resume-dispatching')) return;
 
     // File-backed objectives: the metadata carries only a flag; the objective
     // TEXT lives under the OpenChamber data dir keyed by session id and is
@@ -465,6 +479,10 @@ export const createSessionGoalRuntime = ({
     // whatever inline objective the metadata still has — the goal must never
     // die just because a file went away.
     let effectiveObjective = goal.objective;
+    if (goal.managedWorktree) {
+      const managedObjective = await readManagedWorktreeGoalObjective(sessionId, goal.id);
+      if (managedObjective) effectiveObjective = managedObjective;
+    }
     if (goal.objectiveFile) {
       const fileObjective = await readObjective(sessionId);
       if (fileObjective) {
@@ -681,11 +699,17 @@ export const createSessionGoalRuntime = ({
       }
 
       if (audit?.verdict === 'complete') {
-        await settleGoal({
-          sessionId, directory, goal, status: 'complete', statusReason: 'verified by audit', note: audit.note, tokensUsed, tokensBaseline, tokensCommitted, lastAccountedMessageID,
-          evaluationProviderID: audit.evaluationProviderID, evaluationModelID: audit.evaluationModelID,
-        });
-        return;
+        if (goal.managedWorktree) {
+          const gate = await readManagedWorktreeGoalGate(sessionId, goal.id);
+          if (!gate.complete) audit = { ...audit, verdict: 'continue', note: gate.note };
+        }
+        if (audit.verdict === 'complete') {
+          await settleGoal({
+            sessionId, directory, goal, status: 'complete', statusReason: 'verified by audit', note: audit.note, tokensUsed, tokensBaseline, tokensCommitted, lastAccountedMessageID,
+            evaluationProviderID: audit.evaluationProviderID, evaluationModelID: audit.evaluationModelID,
+          });
+          return;
+        }
       }
 
       if (audit?.verdict === 'blocked') {
@@ -807,11 +831,61 @@ export const createSessionGoalRuntime = ({
     // transition, only session.updated. Arm a short timer; the tick's
     // quiescence check keeps this safe if the session is actually busy.
     const update = extractSessionUpdate(payload);
+    if (update) staleRecovery.observe(update);
+    if (update?.goal?.managedWorktree) {
+      void writeManagedWorktreeGoalProgress(update.sessionId, update.goal).catch((error) => {
+        console.warn('[session-goal] managed worktree progress event write failed:', error?.message || error);
+      });
+    }
+
+    if (update && !update.parentID && !goalEnforcementPending.has(update.sessionId)) {
+      const enforceManagedGoal = async () => {
+        const record = await readManagedWorktreeGoalRecord(update.sessionId);
+        if (!record?.protected) return;
+        const directory = update.directory || directoryHint;
+        const session = await openCodeFetch(`/session/${encodeURIComponent(update.sessionId)}`, { directory });
+        const liveGoal = parseGoalMetadata(session);
+        if (liveGoal?.id === record.goal.id && liveGoal.managedWorktree && liveGoal.status !== 'complete') return;
+        const currentMetadata = session?.metadata && typeof session.metadata === 'object' ? session.metadata : {};
+        const currentNamespace = currentMetadata.openchamber && typeof currentMetadata.openchamber === 'object'
+          ? currentMetadata.openchamber
+          : {};
+        const nextGoal = liveGoal?.id === record.goal.id && liveGoal.managedWorktree
+          ? { ...liveGoal, status: 'active', statusReason: 'resumed', note: 'Finish the managed worktree lifecycle before completing this goal.', updatedAt: Date.now() }
+          : { ...record.goal, status: 'active', statusReason: 'resumed', note: 'The managed worktree goal cannot be cleared or replaced before lifecycle completion.', updatedAt: Date.now() };
+        await openCodeFetch(`/session/${encodeURIComponent(update.sessionId)}`, {
+          directory,
+          method: 'PATCH',
+          body: { metadata: { ...currentMetadata, openchamber: { ...currentNamespace, goal: nextGoal } } },
+        });
+      };
+      const runEnforcement = (attempt = 0) => {
+        if (inflight.has(update.sessionId)) {
+          setTimeout(() => runEnforcement(attempt), RESUME_KICKOFF_MS);
+          return;
+        }
+        enforceManagedGoal()
+          .then(() => goalEnforcementPending.delete(update.sessionId))
+          .catch((error) => {
+            if (attempt < 5) {
+              setTimeout(() => runEnforcement(attempt + 1), Math.min(1_000 * 2 ** attempt, 10_000));
+              return;
+            }
+            goalEnforcementPending.delete(update.sessionId);
+            console.warn('[session-goal] managed worktree goal enforcement failed:', error?.message || error);
+          });
+      };
+      goalEnforcementPending.add(update.sessionId);
+      runEnforcement();
+    }
+
     if (
       update
       && !update.parentID
       && update.goal
       && update.goal.status === 'active'
+      && update.goal.statusReason !== 'worktree-moving'
+      && update.goal.statusReason !== 'worktree-resume-dispatching'
       && (update.goal.turnsUsed === 0 || update.goal.statusReason === 'resumed')
       && !timers.has(update.sessionId)
       && !inflight.has(update.sessionId)
@@ -823,6 +897,7 @@ export const createSessionGoalRuntime = ({
 
   const stop = () => {
     stopped = true;
+    staleRecovery.stop();
     for (const { timer } of timers.values()) {
       clearTimeout(timer);
     }
