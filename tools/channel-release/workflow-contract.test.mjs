@@ -31,6 +31,7 @@ test('release publication is resumable and keeps candidate code outside the toke
   assert.match(tokenStep, /gh release upload "\$RELEASE_TAG" "artifacts\/\$asset" --repo "\$\{\{ github\.repository \}\}"/);
   assert.match(tokenStep, /releases\?per_page=100/);
   assert.match(tokenStep, /releases\/\$release_id/);
+  assert.match(tokenStep, /RELEASES_JSON=.*node -e/);
   assert.match(tokenStep, /RESUME: \$\{\{ needs\.metadata\.outputs\.resume \}\}/);
   assert.match(tokenStep, /merge-base --is-ancestor "\$SOURCE_COMMIT" refs\/remotes\/origin\/j2k-current/);
   assert.match(tokenStep, /--force-with-lease=refs\/heads\/j2k\/current:/);

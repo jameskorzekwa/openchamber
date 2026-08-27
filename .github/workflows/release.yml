@@ -396,12 +396,7 @@ jobs:
               exit 1
             fi
             releases_json="$(gh api "repos/${{ github.repository }}/releases?per_page=100")"
-            release_json="$(RELEASES_JSON="$releases_json" RELEASE_TAG="$RELEASE_TAG" node <<'NODE'
-            const matches = JSON.parse(process.env.RELEASES_JSON).filter((release) => release.tag_name === process.env.RELEASE_TAG);
-            if (matches.length > 1) throw new Error(`Multiple GitHub Releases use tag ${process.env.RELEASE_TAG}`);
-            if (matches.length === 1) process.stdout.write(JSON.stringify(matches[0]));
-            NODE
-            )"
+            release_json="$(RELEASES_JSON="$releases_json" RELEASE_TAG="$RELEASE_TAG" node -e 'const matches = JSON.parse(process.env.RELEASES_JSON).filter((release) => release.tag_name === process.env.RELEASE_TAG); if (matches.length > 1) throw new Error(`Multiple GitHub Releases use tag ${process.env.RELEASE_TAG}`); if (matches.length === 1) process.stdout.write(JSON.stringify(matches[0]));')"
             if [[ -z "$release_json" ]]; then
               notes="Validated OpenChamber channel build $VERSION. Upstream base: $UPSTREAM_TAG. Source commit: $SOURCE_COMMIT."
               release_json="$(gh api --method POST "repos/${{ github.repository }}/releases" \
