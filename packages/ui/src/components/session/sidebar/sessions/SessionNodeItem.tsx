@@ -83,6 +83,7 @@ import {
   type SessionWorktreeMenuTarget,
   type StartSessionWorktreeMenuLoadResult,
 } from '../sessionWorktreeMenu';
+import { getPtyWaitingState } from '@/lib/ptyWaitingState';
 
 type SecondaryMeta = {
   projectLabel?: string | null;
@@ -552,6 +553,8 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
   );
   const turnActivity = useSessionTurnActivity(session.id);
   const isStreaming = turnActivity !== null;
+  const ptyWaiting = getPtyWaitingState(resolvedSession);
+  const isPtyWaiting = !isStreaming && ptyWaiting.count > 0;
   // Read as a boolean, not as the value: the row must not re-render on every
   // tick of the counter it only decides to mount.
   const hasActivityDuration = useHasSessionActivityDuration(session.id, isStreaming);
@@ -904,10 +907,30 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
     hideOnHoverClass,
   });
   const showUnreadStatus = !isSessionActionPending && !isStreaming && needsAttention && !isActive;
-  const showStatusMarker = isStreaming || showUnreadStatus;
-  // Running indicators are static by default; the local appearance preference
-  // enables stepped motion without changing the elapsed-turn counter.
-  const statusMarkerContent = <SessionActivityIndicator state={turnActivity ?? 'unread'} />;
+  const showStatusMarker = isStreaming || isPtyWaiting || showUnreadStatus;
+  const statusMarkerLabel = isStreaming
+    ? t('sessions.sidebar.session.status.active')
+    : isPtyWaiting
+      ? ptyWaiting.count === 1
+        ? ptyWaiting.description
+          ? t('sessions.sidebar.session.status.waitingSingleDescription', { description: ptyWaiting.description })
+          : t('sessions.sidebar.session.status.waitingSingleDefault')
+        : t('sessions.sidebar.session.status.waitingMany', { count: ptyWaiting.count })
+      : t('sessions.sidebar.session.status.unread');
+  const statusMarkerContent = isPtyWaiting ? (
+    <span
+      className={cn(
+        'h-1.5 w-1.5 rounded-full',
+        isStreaming
+          ? 'bg-primary'
+          : isPtyWaiting
+            ? 'bg-[var(--status-warning)]'
+            : 'bg-[var(--status-info)]',
+      )}
+      aria-label={statusMarkerLabel}
+      title={statusMarkerLabel}
+    />
+  ) : <SessionActivityIndicator state={turnActivity ?? 'unread'} />;
   // The settled duration lives exactly as long as the unread marker does, so a
   // session read (or watched) while it finishes never keeps a stale total.
   const showActivityDuration = (isStreaming || showUnreadStatus) && hasActivityDuration;
@@ -1781,6 +1804,20 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                           </span>
                         </div>
                       ) : null}
+                      {isPtyWaiting ? (
+                        <span
+                          className="inline-flex flex-shrink-0 items-center gap-1 rounded bg-[var(--status-warning)]/10 px-1 py-0.5 text-[0.7rem] text-[var(--status-warning)]"
+                          title={statusMarkerLabel}
+                          aria-label={statusMarkerLabel}
+                        >
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--status-warning)]" aria-hidden="true" />
+                          <span className="leading-none">
+                            {ptyWaiting.count === 1
+                              ? t('sessions.sidebar.session.status.waitingBadgeSingle')
+                              : t('sessions.sidebar.session.status.waitingBadgeMany', { count: ptyWaiting.count })}
+                          </span>
+                        </span>
+                      ) : null}
                       {pendingPermissionCount > 0 ? (
                         <span className={cn('inline-flex items-center gap-1 rounded bg-destructive/10 px-1 py-0.5 text-[0.7rem] text-destructive flex-shrink-0', badgeVisibilityClass)} title={t('sessions.sidebar.session.status.permissionRequired')} aria-label={t('sessions.sidebar.session.status.permissionRequired')}>
                           <Icon name="shield" className="h-3 w-3" />
@@ -2098,7 +2135,16 @@ const areSessionRenderSemanticsEqual = (prev: Session, next: Session): boolean =
   && prev.time?.idle === next.time?.idle
   && prev.metadata === next.metadata
   && sameMultiRunIdentity(prev, next)
+  && arePtyWaitingStatesEqual(prev, next)
 );
+
+const arePtyWaitingStatesEqual = (prev: Session, next: Session): boolean => {
+  const previousWaiting = getPtyWaitingState(prev);
+  const nextWaiting = getPtyWaitingState(next);
+  return previousWaiting.count === nextWaiting.count
+    && previousWaiting.oldestCreatedAt === nextWaiting.oldestCreatedAt
+    && previousWaiting.description === nextWaiting.description;
+};
 
 // Returns the name of the first prop whose change requires a render, or null
 // when the row can skip it. The name feeds the stream perf counters so sidebar
