@@ -13,9 +13,8 @@ import type { UpdateInfo, UpdateProgress } from '@/lib/desktop';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { openExternalUrl } from '@/lib/url';
 import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
-import { installWebUpdate, waitForUpdateApplied } from '@/lib/web-update';
-
-type WebUpdateState = 'idle' | 'updating' | 'restarting' | 'reconnecting' | 'error';
+import { useUpdateStore } from '@/stores/useUpdateStore';
+import { canStartWebUpdate } from '@/components/update/web-update-status';
 
 interface UpdateDialogProps {
   open: boolean;
@@ -125,8 +124,11 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
 }) => {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
-  const [webUpdateState, setWebUpdateState] = useState<WebUpdateState>('idle');
-  const [webError, setWebError] = useState<string | null>(null);
+  const installation = useUpdateStore((state) => state.installation);
+  const refreshInstallation = useUpdateStore((state) => state.refreshInstallation);
+  const startWebUpdate = useUpdateStore((state) => state.startWebUpdate);
+  const webUpdateState = installation?.state ?? 'available';
+  const webError = installation?.error ?? null;
 
   const releaseUrl = info?.version
     ? (info.releaseUrl || `${GITHUB_RELEASES_URL}/tag/v${info.version}`)
@@ -141,13 +143,15 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
   const isMobileRuntime = runtimeType === 'mobile';
   const updateCommand = info?.updateCommand || 'openchamber update';
 
-  // Reset state when dialog closes
   useEffect(() => {
-    if (!open) {
-      setWebUpdateState('idle');
-      setWebError(null);
-    }
-  }, [open]);
+    if (open && isWebRuntime) void refreshInstallation();
+  }, [isWebRuntime, open, refreshInstallation]);
+
+  useEffect(() => {
+    if (installation?.state !== 'installed') return;
+    const timer = window.setTimeout(() => window.location.reload(), 500);
+    return () => window.clearTimeout(timer);
+  }, [installation?.state]);
 
   const handleCopyCommand = async () => {
     const result = await copyTextToClipboard(updateCommand);
@@ -161,39 +165,17 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
     await openExternalUrl(url);
   }, []);
   const handleWebUpdate = useCallback(async () => {
-    setWebUpdateState('updating');
-    setWebError(null);
-
-    const result = await installWebUpdate();
-
-    if (!result.success) {
-      setWebUpdateState('error');
-      setWebError(result.error || t('updateDialog.error.updateFailed'));
-      return;
-    }
-
-    if (result.autoRestart) {
-      setWebUpdateState('restarting');
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    }
-
-    setWebUpdateState('reconnecting');
-
-    const applied = await waitForUpdateApplied(result.target, info?.currentVersion);
-
-    if (applied.status === 'applied') {
-      window.location.reload();
-    } else {
-      setWebUpdateState('error');
-      setWebError(applied.status === 'failed' ? applied.error : t('updateDialog.error.takingLonger'));
-    }
-  }, [info?.currentVersion, t]);
+    await startWebUpdate();
+  }, [startWebUpdate]);
 
   const handleMobileUpdate = useCallback(() => {
     void handleOpenExternal(mobileUpdateUrl);
   }, [handleOpenExternal, mobileUpdateUrl]);
 
-  const isWebUpdating = webUpdateState !== 'idle' && webUpdateState !== 'error';
+  const isWebUpdating = webUpdateState === 'downloading'
+    || webUpdateState === 'installing'
+    || webUpdateState === 'restarting'
+    || webUpdateState === 'installed';
 
   const changelog = useMemo<ParsedChangelog | null>(() => {
     if (!info?.body) {
@@ -236,7 +218,7 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
           <DialogTitle className="flex items-center gap-2.5">
             <Icon name="download-cloud" className="h-5 w-5 text-[var(--primary-base)]" />
             <span className="text-lg font-semibold text-foreground">
-              {webUpdateState === 'restarting' || webUpdateState === 'reconnecting'
+              {isWebUpdating
                 ? t('updateDialog.header.updating')
                 : t('updateDialog.header.updateAvailable')}
             </span>
@@ -267,9 +249,10 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
               <div className="flex items-center gap-3">
                 <Icon name="loader" className="h-5 w-5 animate-spin text-[var(--primary-base)]" />
                 <div className="typography-ui-label text-foreground">
-                  {webUpdateState === 'updating' && t('updateDialog.status.installingUpdate')}
+                  {webUpdateState === 'downloading' && t('updateDialog.status.downloadingPayload')}
+                  {webUpdateState === 'installing' && t('updateDialog.status.installingUpdate')}
                   {webUpdateState === 'restarting' && t('updateDialog.status.serverRestarting')}
-                  {webUpdateState === 'reconnecting' && t('updateDialog.status.waitingForServer')}
+                  {webUpdateState === 'installed' && t('updateDialog.status.updateInstalled')}
                 </div>
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
@@ -334,8 +317,14 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
             </div>
           )}
 
+          {isWebRuntime && webUpdateState === 'no-validated-release' && (
+            <div className="rounded-lg border border-[var(--surface-subtle)] px-4 py-3 text-sm text-muted-foreground">
+              {t('updateDialog.status.noValidatedRelease')}
+            </div>
+          )}
+
           {/* Web runtime fallback command */}
-          {isWebRuntime && info?.packageManager !== 'electron' && webUpdateState === 'error' && (
+          {isWebRuntime && info?.packageManager !== 'electron' && (webUpdateState === 'failed' || webUpdateState === 'rollback') && (
             <div className="space-y-2 mt-4">
               <div className="flex items-center gap-2 typography-meta text-muted-foreground">
                 <Icon name="terminal" className="h-4 w-4" />
@@ -384,6 +373,9 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
           {/* Error display */}
           {(error || webError) && (
             <div className="p-3 mt-4 bg-[var(--status-error-background)] border border-[var(--status-error-border)] rounded-lg">
+              {webUpdateState === 'rollback' && (
+                <p className="mb-1 text-sm font-medium text-[var(--status-error)]">{t('updateDialog.status.rollbackComplete')}</p>
+              )}
               <p className="text-sm text-[var(--status-error)]">{error || webError}</p>
             </div>
           )}
@@ -444,7 +436,7 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
               </Button>
             )}
 
-            {isWebRuntime && !isWebUpdating && (
+            {isWebRuntime && !isWebUpdating && canStartWebUpdate(webUpdateState) && (
               <button
                 onClick={handleWebUpdate}
                 className="flex items-center justify-center gap-2 px-5 py-2 rounded-md text-sm font-medium bg-[var(--primary-base)] text-[var(--primary-foreground)] hover:opacity-90 transition-opacity"

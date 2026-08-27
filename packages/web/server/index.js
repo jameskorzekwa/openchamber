@@ -1761,6 +1761,7 @@ async function main(options = {}) {
   const bootstrapResult = bootstrapRuntime.setupBaseRoutes(app, {
     process,
     openchamberVersion: OPENCHAMBER_VERSION,
+    openchamberBuildRevision: OPENCHAMBER_BUILD_REVISION,
     runtimeName: process.env.OPENCHAMBER_RUNTIME || 'web',
     serverStartedAt,
     gracefulShutdown,
@@ -1806,6 +1807,8 @@ async function main(options = {}) {
       return Number.isFinite(port) && port > 0 ? port : null;
     },
     getTunnelUrl: () => tunnelRuntimeContextHolder?.tunnelService?.getPublicUrl?.() ?? null,
+    updateTransactionPath: path.join(os.homedir(), '.local', 'share', 'openchamber', 'restart-transaction.json'),
+    runtimePackageRoot: path.resolve(__dirname, '..'),
     verboseRequestLogs: OPENCHAMBER_VERBOSE_REQUEST_LOGS,
     uiPassword,
     tunnelAuthController,

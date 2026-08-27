@@ -18,6 +18,7 @@ describe('core-routes', () => {
       }),
       getHealthSnapshot: () => ({ status: 'ok' }),
       openchamberVersion: '1.0.0',
+      openchamberBuildRevision: 'a'.repeat(40),
       runtimeName: 'test',
       express,
     };
@@ -828,6 +829,7 @@ describe('client auth routes', () => {
       gracefulShutdown: vi.fn(async () => {}),
       getHealthSnapshot: () => ({ status: 'ok' }),
       openchamberVersion: '1.0.0',
+      openchamberBuildRevision: 'a'.repeat(40),
       runtimeName: 'test',
       express,
     });
@@ -840,6 +842,14 @@ describe('client auth routes', () => {
     expect(response.body.startedAt).toBeTypeOf('string');
     expect(response.body.port).toBeNull();
     expect(response.body.tunnelUrl).toBeNull();
+    const health = await request(app).get('/health');
+    expect(health.body).toMatchObject({
+      status: 'ok',
+      openchamberVersion: '1.0.0',
+      openchamberBuildRevision: 'a'.repeat(40),
+      pid: process.pid,
+      startedAt: '2026-01-01T00:00:00.000Z',
+    });
   });
 
   it('reports the instance port and tunnel URL on /api/system/info from the wired getters', async () => {
@@ -860,5 +870,151 @@ describe('client auth routes', () => {
     expect(response.status).toBe(200);
     expect(response.body.port).toBe(9988);
     expect(response.body.tunnelUrl).toBe('https://worktree-a.example.trycloudflare.com');
+  });
+});
+
+describe('update restart authorization route', () => {
+  function createRestartHandler(consumeSupervisorTermination, createRestartAttestation = vi.fn(), runtimeOverrides = {}) {
+    const handlers = new Map();
+    const app = {
+      get: (route, handler) => handlers.set(`GET ${route}`, handler),
+      post: (route, ...routeHandlers) => handlers.set(`POST ${route}`, routeHandlers.at(-1)),
+    };
+    const processMock = { pid: 4321, env: {}, kill: vi.fn() };
+    registerServerStatusRoutes(app, {
+      process: processMock,
+      serverStartedAt: '2026-08-26T00:00:00.000Z',
+      gracefulShutdown: vi.fn(async () => {}),
+      getHealthSnapshot: () => runtimeOverrides.health || ({ isOpenCodeReady: true, openCodeRunning: true, lastOpenCodeError: null }),
+      openchamberVersion: runtimeOverrides.version || '2.0.0',
+      openchamberBuildRevision: runtimeOverrides.revision || 'a'.repeat(40),
+      runtimeName: 'test',
+      express,
+      updateTransactionPath: '/tmp/install/restart-transaction.json',
+      consumeSupervisorTermination,
+      createRestartAttestation,
+    });
+    return {
+      handler: handlers.get('POST /health/restart-for-update'),
+      attestationHandler: handlers.get('GET /health/update-attestation'),
+      processMock,
+    };
+  }
+
+  function responseRecorder() {
+    return {
+      statusCode: 200,
+      body: null,
+      status(code) { this.statusCode = code; return this; },
+      json(body) { this.body = body; return this; },
+    };
+  }
+
+  const validHeaders = {
+    'x-openchamber-transaction-id': '12345678-1234-4123-8123-123456789abc',
+    'x-openchamber-process-pid': '4321',
+    'x-openchamber-process-started-at': '2026-08-26T00:00:00.000Z',
+    'x-openchamber-termination-nonce': 'b'.repeat(64),
+    'x-openchamber-termination-authorization': 'c'.repeat(64),
+  };
+
+  it('returns loopback attestation without exposing journal secrets', async () => {
+    const create = vi.fn(async (input) => ({
+      transactionId: input.transactionId,
+      challenge: input.challenge,
+      pid: input.pid,
+      startedAt: input.startedAt,
+      selectedPath: '/tmp/install/releases/2.0.0',
+      version: '2.0.0',
+      revision: 'a'.repeat(40),
+      healthy: true,
+      mac: 'd'.repeat(64),
+    }));
+    const { attestationHandler } = createRestartHandler(vi.fn(), create);
+    const res = { ...responseRecorder(), setHeader: vi.fn() };
+    await attestationHandler({
+      socket: { remoteAddress: '127.0.0.1' },
+      headers: {
+        'x-openchamber-transaction-id': validHeaders['x-openchamber-transaction-id'],
+        'x-openchamber-attestation-challenge': 'e'.repeat(64),
+      },
+    }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.mac).toBe('d'.repeat(64));
+    expect(res.body.attestationSecret).toBeUndefined();
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ pid: 4321, currentVersion: '2.0.0', currentRevision: 'a'.repeat(40), healthy: true }));
+  });
+
+  it.each([
+    ['startup incomplete', { isOpenCodeReady: false, openCodeRunning: false, lastOpenCodeError: null }],
+    ['OpenCode stopped', { isOpenCodeReady: true, openCodeRunning: false, lastOpenCodeError: null }],
+    ['startup failed', { isOpenCodeReady: true, openCodeRunning: true, lastOpenCodeError: 'failed' }],
+    ['missing readiness fields', { status: 'ok' }],
+  ])('attests unhealthy when %s', async (_label, health) => {
+    const create = vi.fn(async (input) => ({ healthy: input.healthy }));
+    const { attestationHandler } = createRestartHandler(vi.fn(), create, { health });
+    const res = { ...responseRecorder(), setHeader: vi.fn() };
+    await attestationHandler({
+      socket: { remoteAddress: '127.0.0.1' },
+      headers: {
+        'x-openchamber-transaction-id': validHeaders['x-openchamber-transaction-id'],
+        'x-openchamber-attestation-challenge': 'e'.repeat(64),
+      },
+    }, res);
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ healthy: false }));
+  });
+
+  it('rejects non-loopback and missing authorization without signaling', async () => {
+    const consume = vi.fn(async () => true);
+    const { handler, processMock } = createRestartHandler(consume);
+    for (const request of [
+      { socket: { remoteAddress: '203.0.113.5' }, headers: validHeaders },
+      { socket: { remoteAddress: '127.0.0.1' }, headers: {} },
+    ]) {
+      const res = responseRecorder();
+      await handler(request, res);
+      expect(res.statusCode).toBe(403);
+    }
+    expect(consume).not.toHaveBeenCalled();
+    expect(processMock.kill).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['authorization', { 'x-openchamber-termination-authorization': 'f'.repeat(64) }, {}],
+    ['transaction', { 'x-openchamber-transaction-id': '87654321-4321-4321-8321-cba987654321' }, {}],
+    ['version', {}, { version: '2.0.1' }],
+    ['revision', {}, { revision: 'b'.repeat(40) }],
+    ['pid', { 'x-openchamber-process-pid': '9999' }, {}],
+    ['start identity', { 'x-openchamber-process-started-at': '2026-08-26T00:01:00.000Z' }, {}],
+  ])('rejects wrong %s without signaling', async (_label, headerChanges, runtimeOverrides) => {
+    const consume = vi.fn(async (input) => (
+      input.transactionId === validHeaders['x-openchamber-transaction-id']
+      && input.authorization === validHeaders['x-openchamber-termination-authorization']
+      && input.pid === 4321
+      && input.startedAt === validHeaders['x-openchamber-process-started-at']
+      && input.currentVersion === '2.0.0'
+      && input.currentRevision === 'a'.repeat(40)
+    ));
+    const { handler, processMock } = createRestartHandler(consume, vi.fn(), runtimeOverrides);
+    const res = responseRecorder();
+    await handler({ socket: { remoteAddress: '::1' }, headers: { ...validHeaders, ...headerChanges } }, res);
+    expect(res.statusCode).toBe(403);
+    expect(processMock.kill).not.toHaveBeenCalled();
+  });
+
+  it('consumes one authorization once and schedules exactly one signal', async () => {
+    vi.useFakeTimers();
+    const consume = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const { handler, processMock } = createRestartHandler(consume);
+    const first = responseRecorder();
+    await handler({ socket: { remoteAddress: '::ffff:127.0.0.1' }, headers: validHeaders }, first);
+    expect(first.statusCode).toBe(202);
+    const replay = responseRecorder();
+    await handler({ socket: { remoteAddress: '::ffff:127.0.0.1' }, headers: validHeaders }, replay);
+    expect(replay.statusCode).toBe(403);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(processMock.kill).toHaveBeenCalledOnce();
+    expect(processMock.kill).toHaveBeenCalledWith(4321, 'SIGTERM');
+    vi.useRealTimers();
   });
 });

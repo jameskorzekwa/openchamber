@@ -10,6 +10,7 @@ import { OpenChamberLogo } from '@/components/ui/OpenChamberLogo';
 import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { InstanceServiceUrls } from './InstanceServiceUrls';
+import { canManuallyCheckForUpdate } from '@/components/update/web-update-status';
 import {
   SettingsSection,
   SETTINGS_BRAND_TITLE_CLASS,
@@ -41,6 +42,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
     downloaded: s.downloaded,
     progress: s.progress,
     runtimeType: s.runtimeType,
+    installation: s.installation,
     checkForUpdates: s.checkForUpdates,
     downloadUpdate: s.downloadUpdate,
     restartToUpdate: s.restartToUpdate,
@@ -115,16 +117,18 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
       const timer = setTimeout(() => {
         setShowChecking(false);
         // Show toast if check completed with no update available
-        if (didInitiateCheck.current && !updateStore.available && !updateStore.error) {
+        if (didInitiateCheck.current && !updateStore.available && !updateStore.error && updateStore.installation?.state !== 'no-validated-release') {
           toast.success(t('settings.openchamber.about.toast.latestVersion'));
           didInitiateCheck.current = false;
         }
       }, MIN_CHECKING_DURATION);
       return () => clearTimeout(timer);
     }
-  }, [t, updateStore.checking, showChecking, updateStore.available, updateStore.error]);
+  }, [t, updateStore.checking, showChecking, updateStore.available, updateStore.error, updateStore.installation?.state]);
 
   const isChecking = updateStore.checking || showChecking;
+  const hasNoValidatedRelease = updateStore.installation?.state === 'no-validated-release';
+  const canCheckManually = canManuallyCheckForUpdate(updateStore.available, updateStore.error);
 
   if (isMobile) {
     return (
@@ -140,7 +144,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
         </div>
 
         <div className="flex justify-center">
-          {!updateStore.available && !updateStore.error && (
+          {canCheckManually && (
             <Button
               type="button"
               variant="outline"
@@ -171,6 +175,11 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
         {updateStore.error && (
           <p className="rounded-xl border border-[var(--status-error-border)] bg-[var(--status-error-background)] px-3 py-2 typography-meta text-[var(--status-error)]">
             {updateStore.error}
+          </p>
+        )}
+        {hasNoValidatedRelease && (
+          <p className="rounded-xl border border-border px-3 py-2 typography-meta text-muted-foreground">
+            {t('updateDialog.status.noValidatedRelease')}
           </p>
         )}
 
@@ -260,7 +269,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
               </Button>
             )}
 
-            {!updateStore.checking && !updateStore.available && !updateStore.error && (
+            {!updateStore.checking && !updateStore.available && !updateStore.error && !hasNoValidatedRelease && (
               <span className="typography-meta text-muted-foreground">{t('settings.openchamber.about.state.upToDate')}</span>
             )}
 
@@ -277,6 +286,11 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
         {updateStore.error && (
           <div className="px-3 py-2 border-b border-border/40">
             <p className="typography-meta text-[var(--status-error)]">{updateStore.error}</p>
+          </div>
+        )}
+        {hasNoValidatedRelease && (
+          <div className="px-3 py-2 border-b border-border/40">
+            <p className="typography-meta text-muted-foreground">{t('updateDialog.status.noValidatedRelease')}</p>
           </div>
         )}
 

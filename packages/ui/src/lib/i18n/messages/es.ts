@@ -5,6 +5,7 @@ import { linearPanelI18n } from './linear-panel.i18n';
 import { routingI18n } from './routing.i18n';
 import { pluginPanelI18n } from './plugin-panel.i18n';
 import { opmStatusI18n } from './opm-status.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   'sessions.aiRename.action': 'Renombrar con IA',
@@ -36,6 +37,7 @@ export const dict: Record<I18nKey, string> = {
   ...routingI18n.es,
   ...pluginPanelI18n.es,
   ...opmStatusI18n.es,
+  ...updateStatusI18n.es,
   'terminalView.actions.attachSelection': 'Adjuntar salida seleccionada',
   'terminalView.actions.copySelection': 'Copiar salida seleccionada',
   'terminalView.toast.selectionCopied': 'Salida copiada',

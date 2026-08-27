@@ -4,6 +4,7 @@ import { linearPanelI18n } from './linear-panel.i18n';
 import { routingI18n } from './routing.i18n';
 import { pluginPanelI18n } from './plugin-panel.i18n';
 import { opmStatusI18n } from './opm-status.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
   'sessions.aiRename.action': 'Mit KI umbenennen',
@@ -35,6 +36,7 @@ export const dict = {
   ...routingI18n.de,
   ...pluginPanelI18n.de,
   ...opmStatusI18n.de,
+  ...updateStatusI18n.de,
   'common.language.german': 'Deutsch',
   'common.loading': 'Wird geladen...',
   'common.unavailable': 'Nicht verfügbar',

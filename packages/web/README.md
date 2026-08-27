@@ -245,6 +245,25 @@ systemctl --user enable --now opencode openchamber
 - Background notifications plus reliable cross-tab session activity tracking
 - Built-in self-update + restart flow that keeps your server settings intact
 
+Web in-app updates use validated J2K GitHub Release assets and install under
+`~/.local/share/openchamber` without npm or root. The server must run under a
+supported external process manager so restart can be handed off after the
+atomic release switch. Systemd user services are detected automatically;
+other foreground managers must execute
+`~/.local/share/openchamber/bin/openchamber-managed` and set
+`OPENCHAMBER_UPDATE_RESTART_ON_EXIT=true`, with restart-on-exit configured so
+the managed launcher is started again after both the update exit and a
+rollback-requested exit. A detached transaction helper verifies the exact
+target build through a journal-secret authenticated loopback attestation and
+automatically selects and verifies the archived previous build on failure.
+The journal and delayed recovery helper are durable before release selection,
+so startup can recover an interruption at any handoff boundary. Validated channel archives must
+bundle their complete production `node_modules`; the updater never invokes npm
+or reuses dependencies from the prior release. A surviving journal blocks a
+new update until its leased helper verifies readiness and completes UUID-fenced
+cleanup. Cancellation restores exact process-manager configuration before the
+journal is removed.
+
 ## License
 
 MIT
