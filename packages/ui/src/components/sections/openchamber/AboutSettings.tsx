@@ -15,6 +15,7 @@ import { copyTextToClipboard } from '@/lib/clipboard';
 import { reloadOpenCodeConfiguration } from '@/stores/useAgentsStore';
 import { fetchOpenCodeUpgradeStatus, runOpenCodeUpgrade, type OpenCodeUpgradeStatus } from '@/components/update/openCodeUpgrade';
 import { InstanceServiceUrls } from './InstanceServiceUrls';
+import { canManuallyCheckForUpdate } from '@/components/update/web-update-status';
 import {
   SettingsSection,
   SETTINGS_BRAND_TITLE_CLASS,
@@ -164,6 +165,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
     downloaded: s.downloaded,
     progress: s.progress,
     runtimeType: s.runtimeType,
+    installation: s.installation,
     checkForUpdates: s.checkForUpdates,
     downloadUpdate: s.downloadUpdate,
     restartToUpdate: s.restartToUpdate,
@@ -332,7 +334,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
       const timer = setTimeout(() => {
         setShowChecking(false);
         // Show toast if check completed with no update available
-        if (didInitiateCheck.current && !update.available && !update.error) {
+        if (didInitiateCheck.current && !update.available && !update.error && (isNativeApp || updateStore.installation?.state !== 'no-validated-release')) {
           toast.success(isNativeApp
             ? t('settings.openchamber.about.toast.serverLatestVersion')
             : t('settings.openchamber.about.toast.latestVersion'));
@@ -341,9 +343,11 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
       }, MIN_CHECKING_DURATION);
       return () => clearTimeout(timer);
     }
-  }, [t, isNativeApp, update.checking, showChecking, update.available, update.error]);
+  }, [t, isNativeApp, update.checking, showChecking, update.available, update.error, updateStore.installation?.state]);
 
   const isChecking = update.checking || showChecking;
+  const hasNoValidatedRelease = !isNativeApp && updateStore.installation?.state === 'no-validated-release';
+  const canCheckManually = canManuallyCheckForUpdate(update.available, update.error);
 
   if (isMobile) {
     return (
@@ -369,7 +373,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
         </div>
 
         <div className="flex justify-center">
-          {!update.available && !update.error && (
+          {canCheckManually && (
             <Button
               type="button"
               variant="outline"
@@ -410,6 +414,11 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
         {update.error && (
           <p className="rounded-xl border border-[var(--status-error-border)] bg-[var(--status-error-background)] px-3 py-2 typography-meta text-[var(--status-error)]">
             {update.error}
+          </p>
+        )}
+        {hasNoValidatedRelease && (
+          <p className="rounded-xl border border-border px-3 py-2 typography-meta text-muted-foreground">
+            {t('updateDialog.status.noValidatedRelease')}
           </p>
         )}
 
@@ -499,7 +508,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
               </Button>
             )}
 
-            {!update.checking && !update.available && !update.error && (
+            {!update.checking && !update.available && !update.error && !hasNoValidatedRelease && (
               <span className="typography-meta text-muted-foreground">{t('settings.openchamber.about.state.upToDate')}</span>
             )}
 
@@ -524,6 +533,11 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
         {update.error && (
           <div className="px-3 py-2 border-b border-border/40">
             <p className="typography-meta text-[var(--status-error)]">{update.error}</p>
+          </div>
+        )}
+        {hasNoValidatedRelease && (
+          <div className="px-3 py-2 border-b border-border/40">
+            <p className="typography-meta text-muted-foreground">{t('updateDialog.status.noValidatedRelease')}</p>
           </div>
         )}
 
