@@ -12,6 +12,7 @@ const createRuntime = (server) => createGracefulShutdownRuntime({
   openCodeWatcherRuntime: { stop: vi.fn() },
   sessionRuntime: { dispose: vi.fn() },
   scheduledTasksRuntime: { stop: vi.fn() },
+  featureRoutesRuntime: { close: vi.fn() },
   getHealthCheckInterval: () => null,
   clearHealthCheckInterval: vi.fn(),
   getTerminalRuntime: () => null,

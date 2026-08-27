@@ -55,6 +55,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
   const {
     clientReloadDelayMs,
   } = dependencies;
+  let gitRoutesRuntime = null;
 
   let quotaProviders = null;
   const getQuotaProviders = async () => {
@@ -131,6 +132,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       writeSseEvent,
       emitSessionCreatedEvent,
       permissionAutoAcceptRuntime,
+      globalEventHub,
     } = routeDependencies;
 
     registerSettingsUtilityRoutes(app, {
@@ -300,7 +302,8 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     registerWalkthroughRoutes(app, { getWalkthroughService });
     registerSessionGoalRoutes(app);
     registerGitHubRoutes(app);
-    registerGitRoutes(app);
+    gitRoutesRuntime?.close?.();
+    gitRoutesRuntime = registerGitRoutes(app, { emitSessionCreatedEvent, globalEventHub });
     registerDevServerRoutes(app, { scanner: devServerScanner, getOwnPorts });
     registerMagicPromptRoutes(app, {
       fsPromises,
@@ -332,5 +335,9 @@ export const createFeatureRoutesRuntime = (dependencies) => {
 
   return {
     registerRoutes,
+    close: () => {
+      gitRoutesRuntime?.close?.();
+      gitRoutesRuntime = null;
+    },
   };
 };

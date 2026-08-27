@@ -1453,6 +1453,7 @@ const gracefulShutdownRuntime = createGracefulShutdownRuntime({
   },
   tunnelAuthController,
   scheduledTasksRuntime,
+  featureRoutesRuntime,
 });
 
 const gracefulShutdown = (...args) => gracefulShutdownRuntime.gracefulShutdown(...args);
@@ -1907,6 +1908,7 @@ async function main(options = {}) {
     openChamberControlService,
     waitForOpenCodeReady,
     emitSessionCreatedEvent,
+    globalEventHub: globalMessageStreamHub,
     getOpenChamberEventClients: () => uiOpenChamberEventClients,
     writeSseEvent,
     permissionAutoAcceptRuntime,

@@ -1,4 +1,7 @@
-export function registerGitRoutes(app) {
+import { createWorktreeRefreshRegistry } from './worktree-refresh-registry.js';
+
+export function registerGitRoutes(app, options = {}) {
+  const worktreeRefresh = createWorktreeRefreshRegistry(options);
   let gitLibraries = null;
   const getGitLibraries = async () => {
     if (!gitLibraries) {
@@ -1069,6 +1072,7 @@ export function registerGitRoutes(app) {
       }
 
       const worktrees = await getWorktrees(directory);
+      void worktreeRefresh.ensure(directory);
       res.json(worktrees);
     } catch (error) {
       // Worktrees are an optional feature. Avoid repeated 500s (and repeated client retries)
@@ -1310,4 +1314,5 @@ export function registerGitRoutes(app) {
     }
   });
 
+  return { close: () => worktreeRefresh.close() };
 }
