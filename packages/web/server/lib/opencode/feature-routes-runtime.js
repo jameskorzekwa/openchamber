@@ -9,6 +9,7 @@ import { registerGuestRoutes } from '../guests/routes.js';
 import { registerBuiltInGuests } from '../guests/catalog.js';
 import { extensionsPersistPath } from '../guests/persist.js';
 import { registerGitRoutes } from '../git/routes.js';
+import { registerOpmStatusRoutes } from '../opm-status/routes.js';
 import { registerDevServerRoutes } from '../dev-servers/routes.js';
 import { registerMagicPromptRoutes } from '../magic-prompts/routes.js';
 import { registerSessionFoldersRoutes } from '../session-folders/routes.js';
@@ -62,6 +63,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
   const {
     clientReloadDelayMs,
   } = dependencies;
+  let opmStatusRoutesRuntime = null;
 
   let quotaProviders = null;
   const getQuotaProviders = async () => {
@@ -339,6 +341,8 @@ export const createFeatureRoutesRuntime = (dependencies) => {
         }
       },
     });
+    opmStatusRoutesRuntime?.close?.();
+    opmStatusRoutesRuntime = registerOpmStatusRoutes(app);
     registerDevServerRoutes(app, { scanner: devServerScanner, getOwnPorts });
     registerMagicPromptRoutes(app, {
       fsPromises,
@@ -372,5 +376,9 @@ export const createFeatureRoutesRuntime = (dependencies) => {
 
   return {
     registerRoutes,
+    close: () => {
+      opmStatusRoutesRuntime?.close?.();
+      opmStatusRoutesRuntime = null;
+    },
   };
 };
