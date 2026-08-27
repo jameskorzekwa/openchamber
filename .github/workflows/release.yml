@@ -328,6 +328,7 @@ jobs:
           REVISION: ${{ needs.metadata.outputs.revision }}
           VERSION: ${{ needs.metadata.outputs.version }}
           RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
+          RESUME: ${{ needs.metadata.outputs.resume }}
         run: |
           set -euo pipefail
           repo="$RUNNER_TEMP/release-repository"
@@ -339,6 +340,9 @@ jobs:
           test "$fetched_source" = "$SOURCE_COMMIT"
 
           current_j2k="$(git -C "$repo" ls-remote origin refs/heads/j2k/current | cut -f1)"
+          if [[ -n "$current_j2k" ]]; then
+            git -C "$repo" fetch --no-tags origin "+refs/heads/j2k/current:refs/remotes/origin/j2k-current"
+          fi
           if [[ "$SOURCE_REF" == 'j2k/current' ]]; then
             test "$current_j2k" = "$SOURCE_COMMIT"
           elif [[ "$current_j2k" != "$EXPECTED_J2K" && "$current_j2k" != "$SOURCE_COMMIT" ]]; then
@@ -360,7 +364,12 @@ jobs:
           source_refspec="refs/remotes/origin/source:refs/heads/$SOURCE_REF"
           refs=("$source_refspec")
           push_options=(--atomic "--force-with-lease=refs/heads/$SOURCE_REF:$SOURCE_COMMIT")
-          if [[ "$current_j2k" != "$SOURCE_COMMIT" ]]; then
+          preserve_current=false
+          if [[ "$RESUME" == 'true' && -n "$current_j2k" && "$current_j2k" != "$SOURCE_COMMIT" ]] \
+            && git -C "$repo" merge-base --is-ancestor "$SOURCE_COMMIT" refs/remotes/origin/j2k-current; then
+            preserve_current=true
+          fi
+          if [[ "$current_j2k" != "$SOURCE_COMMIT" && "$preserve_current" != 'true' ]]; then
             git -C "$repo" update-ref refs/heads/release-source "$SOURCE_COMMIT"
             refs+=('refs/heads/release-source:refs/heads/j2k/current')
             if [[ -n "$current_j2k" ]]; then
@@ -384,11 +393,20 @@ jobs:
               printf '%s\n' "$error_text" >&2
               exit 1
             fi
-            notes="Validated OpenChamber channel build $VERSION. Upstream base: $UPSTREAM_TAG. Source commit: $SOURCE_COMMIT."
-            release_json="$(gh api --method POST "repos/${{ github.repository }}/releases" \
-              -f tag_name="$RELEASE_TAG" -f target_commitish="$SOURCE_COMMIT" \
-              -f name="OpenChamber $RELEASE_TAG" -f body="$notes" \
-              -F draft=true -F prerelease=false)"
+            releases_json="$(gh api "repos/${{ github.repository }}/releases?per_page=100")"
+            release_json="$(RELEASES_JSON="$releases_json" RELEASE_TAG="$RELEASE_TAG" node <<'NODE'
+            const matches = JSON.parse(process.env.RELEASES_JSON).filter((release) => release.tag_name === process.env.RELEASE_TAG);
+            if (matches.length > 1) throw new Error(`Multiple GitHub Releases use tag ${process.env.RELEASE_TAG}`);
+            if (matches.length === 1) process.stdout.write(JSON.stringify(matches[0]));
+            NODE
+            )"
+            if [[ -z "$release_json" ]]; then
+              notes="Validated OpenChamber channel build $VERSION. Upstream base: $UPSTREAM_TAG. Source commit: $SOURCE_COMMIT."
+              release_json="$(gh api --method POST "repos/${{ github.repository }}/releases" \
+                -f tag_name="$RELEASE_TAG" -f target_commitish="$SOURCE_COMMIT" \
+                -f name="OpenChamber $RELEASE_TAG" -f body="$notes" \
+                -F draft=true -F prerelease=false)"
+            fi
           fi
 
           RELEASE_JSON="$release_json" RELEASE_TAG="$RELEASE_TAG" SOURCE_COMMIT="$SOURCE_COMMIT" node <<'NODE'
@@ -419,11 +437,11 @@ jobs:
                 echo "Published release is missing $asset; refusing to mutate it." >&2
                 exit 1
               fi
-              gh release upload "$RELEASE_TAG" "artifacts/$asset"
+              gh release upload "$RELEASE_TAG" "artifacts/$asset" --repo "${{ github.repository }}"
             fi
           done
 
-          release_json="$(gh api "repos/${{ github.repository }}/releases/tags/$RELEASE_TAG")"
+          release_json="$(gh api "repos/${{ github.repository }}/releases/$release_id")"
           RELEASE_JSON="$release_json" VERSION="$VERSION" node <<'NODE'
           const { statSync } = require('node:fs');
           const release = JSON.parse(process.env.RELEASE_JSON);
