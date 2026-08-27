@@ -67,8 +67,8 @@ jobs:
           done < <(git tag --list 'v*' --sort=-v:refname)
           test -n "$latest_tag"
 
-          if git show-ref --verify --quiet refs/remotes/origin/j2k; then
-            series_ref=origin/j2k
+          if git show-ref --verify --quiet refs/remotes/origin/j2k/current; then
+            series_ref=origin/j2k/current
           else
             series_ref=''
             while IFS= read -r candidate; do
