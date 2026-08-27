@@ -825,6 +825,7 @@ export function createValidatedReleaseInstaller(options = {}) {
   }
 
   function syncStatusFromDisk() {
+    if (activeInstall) return status;
     try {
       const persisted = parsePersistedState(JSON.parse(fs.readFileSync(statePath, 'utf8')));
       if (persisted && persisted.updatedAt !== status.updatedAt) {
