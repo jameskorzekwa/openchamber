@@ -54,7 +54,7 @@ const verifySignedApp = ({ appPath, certificateSha256 }) => {
   const directory = mkdtempSync(join(tmpdir(), 'openchamber-signature-'));
   try {
     const prefix = join(directory, 'certificate');
-    run('codesign', ['--display', '--extract-certificates', prefix, appPath]);
+    run('codesign', ['--display', `--extract-certificates=${prefix}`, appPath]);
     const fingerprint = run('openssl', [
       'x509', '-inform', 'DER', '-in', `${prefix}0`, '-noout', '-fingerprint', '-sha256',
     ]).stdout.trim().split('=').at(-1);
