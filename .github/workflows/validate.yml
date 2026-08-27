@@ -3,11 +3,11 @@ name: J2K Validate
 on:
   push:
     branches:
-      - j2k
+      - 'j2k/current'
       - 'j2k/**'
   pull_request:
     branches:
-      - j2k
+      - 'j2k/current'
   workflow_dispatch:
 
 permissions:

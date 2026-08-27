@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       source_ref:
-        description: 'Validated j2k or j2k/vX.Y.Z branch to release'
+        description: 'Validated j2k/current or j2k/vX.Y.Z branch to release'
         required: true
         type: string
 
@@ -32,11 +32,11 @@ jobs:
   metadata:
     if: >-
       (github.event_name == 'workflow_dispatch' &&
-       github.ref == 'refs/heads/j2k' &&
-       github.workflow_ref == format('{0}/.github/workflows/release.yml@refs/heads/j2k', github.repository)) ||
+       github.ref == 'refs/heads/j2k/current' &&
+       github.workflow_ref == format('{0}/.github/workflows/release.yml@refs/heads/j2k/current', github.repository)) ||
       (github.event.workflow_run.conclusion == 'success' &&
        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') &&
-       (github.event.workflow_run.head_branch == 'j2k' || startsWith(github.event.workflow_run.head_branch, 'j2k/v')))
+       (github.event.workflow_run.head_branch == 'j2k/current' || startsWith(github.event.workflow_run.head_branch, 'j2k/v')))
     runs-on: ubuntu-latest
     outputs:
       source_ref: ${{ steps.identity.outputs.source_ref }}
@@ -76,14 +76,14 @@ jobs:
             source_ref="$INPUT_SOURCE_REF"
             workflow_sha=''
           fi
-          if [[ "$source_ref" != 'j2k' && ! "$source_ref" =~ ^j2k/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Source ref must be j2k or j2k/vX.Y.Z; got $source_ref" >&2
+          if [[ "$source_ref" != 'j2k/current' && ! "$source_ref" =~ ^j2k/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Source ref must be j2k/current or j2k/vX.Y.Z; got $source_ref" >&2
             exit 1
           fi
 
           git fetch origin "+refs/heads/$source_ref:refs/remotes/origin/$source_ref" '+refs/tags/*:refs/tags/*'
-          if git ls-remote --exit-code --heads origin refs/heads/j2k >/dev/null 2>&1; then
-            git fetch origin '+refs/heads/j2k:refs/remotes/origin/j2k'
+          if git ls-remote --exit-code --heads origin refs/heads/j2k/current >/dev/null 2>&1; then
+            git fetch origin '+refs/heads/j2k/current:refs/remotes/origin/j2k/current'
           fi
           source_commit="$(git rev-parse "origin/$source_ref^{commit}")"
           if [[ -n "$workflow_sha" && "$source_commit" != "$workflow_sha" ]]; then
@@ -112,11 +112,11 @@ jobs:
           test "$package_version" = "$base_version"
 
           expected_j2k=''
-          if git show-ref --verify --quiet refs/remotes/origin/j2k; then
-            expected_j2k="$(git rev-parse refs/remotes/origin/j2k)"
+          if git show-ref --verify --quiet refs/remotes/origin/j2k/current; then
+            expected_j2k="$(git rev-parse refs/remotes/origin/j2k/current)"
           fi
-          if [[ "$source_ref" == 'j2k' && "$expected_j2k" != "$source_commit" ]]; then
-            echo "Validated j2k SHA is no longer the remote j2k head." >&2
+          if [[ "$source_ref" == 'j2k/current' && "$expected_j2k" != "$source_commit" ]]; then
+            echo "Validated j2k/current SHA is no longer the remote head." >&2
             exit 1
           fi
 
@@ -275,8 +275,8 @@ jobs:
     if: >-
       needs.metadata.result == 'success' &&
       needs.validate-release.result == 'success' &&
-      github.workflow_ref == format('{0}/.github/workflows/release.yml@refs/heads/j2k', github.repository) &&
-      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/j2k')
+      github.workflow_ref == format('{0}/.github/workflows/release.yml@refs/heads/j2k/current', github.repository) &&
+      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/j2k/current')
     needs:
       - metadata
       - validate-release
@@ -336,8 +336,8 @@ jobs:
           fetched_source="$(git -C "$repo" rev-parse refs/remotes/origin/source)"
           test "$fetched_source" = "$SOURCE_COMMIT"
 
-          current_j2k="$(git -C "$repo" ls-remote origin refs/heads/j2k | cut -f1)"
-          if [[ "$SOURCE_REF" == 'j2k' ]]; then
+          current_j2k="$(git -C "$repo" ls-remote origin refs/heads/j2k/current | cut -f1)"
+          if [[ "$SOURCE_REF" == 'j2k/current' ]]; then
             test "$current_j2k" = "$SOURCE_COMMIT"
           elif [[ "$current_j2k" != "$EXPECTED_J2K" && "$current_j2k" != "$SOURCE_COMMIT" ]]; then
             echo "j2k moved from $EXPECTED_J2K to unrelated commit $current_j2k during validation." >&2
@@ -360,11 +360,11 @@ jobs:
           push_options=(--atomic "--force-with-lease=refs/heads/$SOURCE_REF:$SOURCE_COMMIT")
           if [[ "$current_j2k" != "$SOURCE_COMMIT" ]]; then
             git -C "$repo" update-ref refs/heads/release-source "$SOURCE_COMMIT"
-            refs+=('refs/heads/release-source:refs/heads/j2k')
+            refs+=('refs/heads/release-source:refs/heads/j2k/current')
             if [[ -n "$current_j2k" ]]; then
-              push_options+=("--force-with-lease=refs/heads/j2k:$EXPECTED_J2K")
+              push_options+=("--force-with-lease=refs/heads/j2k/current:$EXPECTED_J2K")
             else
-              push_options+=('--force-with-lease=refs/heads/j2k:')
+              push_options+=('--force-with-lease=refs/heads/j2k/current:')
             fi
           fi
           if [[ -z "$tag_commit" ]]; then

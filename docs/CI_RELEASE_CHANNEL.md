@@ -3,15 +3,15 @@
 The fork keeps two permanent branches with different jobs:
 
 - `main` is an exact, fast-forward-only mirror of `openchamber/openchamber:main`.
-- `j2k` is the latest validated customization series.
+- `j2k/current` is the latest validated customization series.
 
-Set the fork's default branch to `j2k`. GitHub runs scheduled workflows only
+Set the fork's default branch to `j2k/current`. GitHub runs scheduled workflows only
 from the default branch, so this setting lets the custom sync workflow run
 without adding fork-only commits to `main`.
 
-Bootstrap this once after committing Phase 2: create remote `j2k` at the
+Bootstrap this once after committing Phase 2: create remote `j2k/current` at the
 committed Phase 2 tip that contains these workflow, tooling, and documentation
-files. Then change the fork's default branch to `j2k`. Never point the bootstrap
+files. Then change the fork's default branch to `j2k/current`. Never point the bootstrap
 branch at the earlier Phase 1 tip, because GitHub accepts scheduled and manual
 workflow events only for files already on the default branch.
 
@@ -48,8 +48,8 @@ left for manual conflict resolution.
 
 ### J2K Validate
 
-`.github/workflows/validate.yml` runs for pushes to `j2k` and `j2k/**`, pull
-requests targeting `j2k`, and manual dispatches. It has `contents: read` only
+`.github/workflows/validate.yml` runs for pushes to `j2k/current` and `j2k/**`, pull
+requests targeting `j2k/current`, and manual dispatches. It has `contents: read` only
 and cancels superseded validation for the same ref.
 
 The Ubuntu job pins Bun 1.3.14 and Node 22, then runs:
@@ -98,22 +98,22 @@ with the exact failed SHA and run URL.
 ### J2K Release
 
 `.github/workflows/release.yml` starts after successful push or manually
-dispatched validation of either `j2k` or `j2k/vX.Y.Z`. It can also be dispatched
+dispatched validation of either `j2k/current` or `j2k/vX.Y.Z`. It can also be dispatched
 manually with either branch name. Pull-request validation cannot start a
 release, and release-created ref updates use `GITHUB_TOKEN`, so they do not
 recursively start another workflow.
 
 Manual dispatch fails closed unless GitHub reports both `github.ref` as
-`refs/heads/j2k` and `github.workflow_ref` as this repository's
-`.github/workflows/release.yml@refs/heads/j2k`. The write-permission job repeats
+`refs/heads/j2k/current` and `github.workflow_ref` as this repository's
+`.github/workflows/release.yml@refs/heads/j2k/current`. The write-permission job repeats
 that immutable-context check directly in its job-level condition. A workflow
 definition run from a candidate branch therefore cannot reach `contents: write`
 by changing an output from an earlier unprivileged job.
 
-A validated ordinary patch commit on long-lived `j2k` uses the newest stable
+A validated ordinary patch commit on long-lived `j2k/current` uses the newest stable
 upstream tag in its ancestry and creates the next `vX.Y.Z-j2k.N` revision. A
 validated `j2k/vX.Y.Z` branch retains the automatic upstream-version flow and
-advances `j2k` only during publication. In both cases, metadata verifies that
+advances `j2k/current` only during publication. In both cases, metadata verifies that
 the validated SHA is still the exact remote branch tip before packaging or
 publishing.
 
@@ -139,9 +139,9 @@ closure, package identity, version, tag, and source commit before `GH_TOKEN` is
 made available to the publication step.
 
 Before publishing, the workflow verifies that the source branch and prior
-`j2k` head have not moved. It replaces rebased `j2k` history only with an exact
+`j2k/current` head have not moved. It replaces rebased `j2k/current` history only with an exact
 prior-head `--force-with-lease`. An absent branch uses the explicit creation
-lease `--force-with-lease=refs/heads/j2k:`. The branch update and new annotated
+lease `--force-with-lease=refs/heads/j2k/current:`. The branch update and new annotated
 tag are one atomic Git push.
 
 The same atomic push includes a no-op update of `SOURCE_REF` back to the exact
