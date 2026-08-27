@@ -1997,6 +1997,7 @@ async function main(options = {}) {
     openChamberControlService,
     waitForOpenCodeReady,
     emitSessionCreatedEvent,
+    openchamberBuildRevision: process.env.OPENCHAMBER_BUILD_REVISION || OPENCHAMBER_VERSION,
     getOpenChamberEventClients: () => uiOpenChamberEventClients,
     writeSseEvent,
     permissionAutoAcceptRuntime,

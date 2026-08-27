@@ -144,6 +144,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       messageQueueRuntime,
       routingRuntime,
       openchamberVersion,
+      openchamberBuildRevision,
     } = routeDependencies;
 
     registerSettingsUtilityRoutes(app, {
@@ -201,6 +202,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       scheduledTaskService,
       getOpenChamberEventClients,
       writeSseEvent,
+      openchamberBuildRevision,
     });
 
     registerOpenChamberSessionRoutes(app, {

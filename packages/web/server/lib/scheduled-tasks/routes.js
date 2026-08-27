@@ -17,6 +17,7 @@ export const registerScheduledTaskRoutes = (app, dependencies) => {
     scheduledTasksRuntime,
     getOpenChamberEventClients,
     writeSseEvent,
+    openchamberBuildRevision,
     scheduledTaskService = createScheduledTaskService(dependencies),
   } = dependencies;
 
@@ -159,6 +160,7 @@ export const registerScheduledTaskRoutes = (app, dependencies) => {
         type: 'openchamber:event-stream-ready',
         properties: {
           connectedAt: Date.now(),
+          buildRevision: openchamberBuildRevision,
         },
       });
     } catch {
