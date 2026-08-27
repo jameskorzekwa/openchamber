@@ -10,8 +10,42 @@ const {
   checkForUpdates,
   detectPackageManager,
   executeUpdate,
+  getUpdateCommand,
   getCurrentVersion,
 } = await import('./package-manager.js');
+
+describe('getUpdateCommand', () => {
+  const originalPackageManager = process.env.OPENCHAMBER_PACKAGE_MANAGER;
+  const originalPackageManagerCommand = process.env.OPENCHAMBER_PACKAGE_MANAGER_COMMAND;
+
+  afterEach(() => {
+    if (originalPackageManager === undefined) delete process.env.OPENCHAMBER_PACKAGE_MANAGER;
+    else process.env.OPENCHAMBER_PACKAGE_MANAGER = originalPackageManager;
+    if (originalPackageManagerCommand === undefined) delete process.env.OPENCHAMBER_PACKAGE_MANAGER_COMMAND;
+    else process.env.OPENCHAMBER_PACKAGE_MANAGER_COMMAND = originalPackageManagerCommand;
+  });
+
+  it('uses a matching absolute package-manager command override', () => {
+    process.env.OPENCHAMBER_PACKAGE_MANAGER = 'npm';
+    process.env.OPENCHAMBER_PACKAGE_MANAGER_COMMAND = '/opt/openchamber/npm';
+
+    expect(getUpdateCommand('npm')).toBe('/opt/openchamber/npm install -g @openchamber/web@latest');
+  });
+
+  it('quotes shell metacharacters in the configured command', () => {
+    process.env.OPENCHAMBER_PACKAGE_MANAGER = 'npm';
+    process.env.OPENCHAMBER_PACKAGE_MANAGER_COMMAND = '/opt/openchamber/npm$managed';
+
+    expect(getUpdateCommand('npm')).toBe("'/opt/openchamber/npm$managed' install -g @openchamber/web@latest");
+  });
+
+  it('ignores relative and mismatched overrides', () => {
+    process.env.OPENCHAMBER_PACKAGE_MANAGER = 'bun';
+    process.env.OPENCHAMBER_PACKAGE_MANAGER_COMMAND = 'relative/npm';
+
+    expect(getUpdateCommand('npm')).toBe('npm install -g @openchamber/web@latest');
+  });
+});
 
 /** Helper: create a fetch mock that routes by URL pattern */
 function createFetchMock() {
