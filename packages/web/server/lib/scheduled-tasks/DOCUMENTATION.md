@@ -215,6 +215,9 @@ project write lock on every `syncProject` when the project path is known:
   - `POST /api/projects/:projectId/scheduled-tasks/:taskId/run`
   - `GET /api/openchamber/scheduled-tasks/status`
   - `GET /api/openchamber/events`
+    - The initial `openchamber:event-stream-ready` envelope includes the
+      running package build revision. A hosted client with older assets reloads
+      once for that revision and uses session storage to prevent reload loops.
 
 The shared `/api/openchamber/events` stream also carries web notifications.
 Its connection ownership and browser capability flag stay unchanged. Delivery

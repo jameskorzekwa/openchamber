@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { adoptRelayTunnel, deactivateRelayTunnel } from './relay/runtime-tunnel';
 import type { RelayTunnelClient } from './relay/tunnel-client';
 import { setRuntimeBearerToken } from './runtime-auth';
+import { shouldReloadForBuildRevision } from './buildRevision';
 
 class MockEventSource {
   static CLOSED = 2;
@@ -232,5 +233,26 @@ describe('openchamber events', () => {
       { type: 'file-open-request', path: '/repo/out/report.csv', directory: '/repo', sessionId: null },
     ]);
     unsubscribe();
+  });
+});
+
+describe('build revision reload guard', () => {
+  test('reloads once for a different server revision', () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    };
+
+    expect(shouldReloadForBuildRevision('1.22.0-j2k.1', '1.21.0-j2k.1', storage)).toBe(true);
+    expect(shouldReloadForBuildRevision('1.22.0-j2k.1', '1.21.0-j2k.1', storage)).toBe(false);
+  });
+
+  test('does not reload matching or missing revisions', () => {
+    const storage = { getItem: () => null, setItem: () => undefined };
+
+    expect(shouldReloadForBuildRevision('1.21.0', '1.21.0', storage)).toBe(false);
+    expect(shouldReloadForBuildRevision('', '1.21.0', storage)).toBe(false);
+    expect(shouldReloadForBuildRevision('1.21.0', '', storage)).toBe(false);
   });
 });
