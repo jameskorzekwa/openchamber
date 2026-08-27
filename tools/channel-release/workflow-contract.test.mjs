@@ -10,8 +10,8 @@ const sync = readFileSync('.github/workflows/sync-upstream.yml', 'utf8');
 const validate = readFileSync('.github/workflows/validate.yml', 'utf8');
 const docs = readFileSync('docs/CI_RELEASE_CHANNEL.md', 'utf8');
 
-test('release supports exact-SHA j2k and upstream release branches without push recursion', () => {
-  assert.match(release, /head_branch == 'j2k'/);
+test('release supports exact-SHA j2k/current and upstream release branches without push recursion', () => {
+  assert.match(release, /head_branch == 'j2k\/current'/);
   assert.match(release, /startsWith\(github\.event\.workflow_run\.head_branch, 'j2k\/v'\)/);
   assert.doesNotMatch(release, /^\s+push:\s*$/m);
   assert.match(release, /source_commit.*WORKFLOW_HEAD_SHA|workflow_sha.*WORKFLOW_HEAD_SHA/s);
@@ -26,7 +26,7 @@ test('release publication is resumable and keeps candidate code outside the toke
   assert.doesNotMatch(tokenStep, /tools\/channel-release/);
   assert.match(tokenStep, /-F draft=true/);
   assert.match(tokenStep, /cmp -s/);
-  assert.match(tokenStep, /--force-with-lease=refs\/heads\/j2k:/);
+  assert.match(tokenStep, /--force-with-lease=refs\/heads\/j2k\/current:/);
   assert.match(release, /persist-credentials: false/);
   assert.match(release, /runs-on: macos-15/);
   assert.match(release, /node_abi="\$\(node -p 'process\.versions\.modules'\)"/);
@@ -44,13 +44,13 @@ test('release smoke uses the strict channel and stage-version has no misplaced c
   assert.match(smoke, /--channel-repository "jameskorzekwa\/openchamber"/);
 });
 
-test('manual dispatch and the privileged job require the trusted j2k workflow definition', () => {
+test('manual dispatch and the privileged job require the trusted j2k/current workflow definition', () => {
   const metadata = release.slice(release.indexOf('  metadata:'), release.indexOf('  validate-release:'));
   const publish = release.slice(release.indexOf('  publish:'));
-  const trustedWorkflow = /github\.workflow_ref == format\('\{0\}\/\.github\/workflows\/release\.yml@refs\/heads\/j2k', github\.repository\)/;
-  assert.match(metadata, /github\.ref == 'refs\/heads\/j2k'/);
+  const trustedWorkflow = /github\.workflow_ref == format\('\{0\}\/\.github\/workflows\/release\.yml@refs\/heads\/j2k\/current', github\.repository\)/;
+  assert.match(metadata, /github\.ref == 'refs\/heads\/j2k\/current'/);
   assert.match(metadata, trustedWorkflow);
-  assert.match(publish, /github\.event_name != 'workflow_dispatch' \|\| github\.ref == 'refs\/heads\/j2k'/);
+  assert.match(publish, /github\.event_name != 'workflow_dispatch' \|\| github\.ref == 'refs\/heads\/j2k\/current'/);
   assert.match(publish, trustedWorkflow);
   assert.ok(publish.match(trustedWorkflow).index < publish.indexOf('contents: write'));
 });
@@ -115,7 +115,7 @@ test('failed release-branch validation is deduplicated and safely redispatched',
   assert.match(sync, /Redispatching validation for stranded branch/);
 });
 
-test('bootstrap documentation points j2k at the committed Phase 2 tip', () => {
+test('bootstrap documentation points j2k/current at the committed Phase 2 tip', () => {
   assert.match(docs, /committed Phase 2 tip/);
-  assert.doesNotMatch(docs, /create `j2k` at the approved Phase\s+1/);
+  assert.doesNotMatch(docs, /create `j2k\/current` at the approved Phase\s+1/);
 });
