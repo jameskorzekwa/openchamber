@@ -261,7 +261,7 @@ jobs:
           [[ -d "$app" ]] || app='packages/electron/dist/mac/OpenChamber.app'
           dmg="packages/electron/dist/OpenChamber-$version-mac-arm64.dmg"
           opencode_version="$(node -p 'require(`./package.json`).dependencies[`@opencode-ai/sdk`]')"
-          electron_version="$(node -p 'require(`./node_modules/electron/package.json`).version')"
+          electron_version="$(node -p 'require(require.resolve(`electron/package.json`, { paths: [`./packages/electron`] })).version')"
           node tools/desktop-release/verify-macos-app.mjs \
             --app "$app" --dmg "$dmg" --version "$version" \
             --source-commit '${{ needs.metadata.outputs.source_commit }}' \
