@@ -46,9 +46,11 @@ test('release publication is resumable and keeps candidate code outside the toke
 
 test('release smoke uses the strict channel and stage-version has no misplaced channel option', () => {
   const stage = release.slice(release.indexOf('node tools/channel-release/channel-release.mjs stage-version'), release.indexOf('bun run build'));
+  const smokeStep = release.slice(release.indexOf('      - name: Create and verify release assets'), release.indexOf('      - name: Upload immutable release candidates'));
   const smoke = release.slice(release.indexOf('node tools/channel-release/smoke-installed-package.mjs'), release.indexOf('      - name: Upload immutable release candidates'));
   assert.doesNotMatch(stage, /channel-repository/);
   assert.match(smoke, /--channel-repository "jameskorzekwa\/openchamber"/);
+  assert.match(smokeStep, /OPENCHAMBER_UPDATE_GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
 });
 
 test('manual dispatch and the privileged job require the trusted j2k/current workflow definition', () => {
