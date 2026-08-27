@@ -12,6 +12,14 @@ if (process.platform === 'win32' && !env.CSC_LINK && !env.WINDOWS_CSC_LINK) {
   console.log('[electron] Windows code signing disabled; building unsigned installer.');
 }
 
+if (process.platform === 'darwin' && env.OPENCHAMBER_PRIVATE_MAC_SIGNING === '1') {
+  if (!env.CSC_NAME || !env.CSC_KEYCHAIN) {
+    console.error('[electron] private macOS signing requires CSC_NAME and CSC_KEYCHAIN.');
+    process.exit(1);
+  }
+  builderArgs.push('--config.mac.notarize=false');
+}
+
 const bunBinaryCandidates = [
   process.env.npm_execpath,
   process.env.BUN_INSTALL ? path.join(process.env.BUN_INSTALL, 'bin', process.platform === 'win32' ? 'bun.exe' : 'bun') : null,
@@ -32,6 +40,7 @@ if (process.platform === 'linux' && !builderArgs.some((argument) => (
 }
 
 const child = spawn(bunBinary, ['x', 'electron-builder', ...builderArgs], {
+  cwd: path.resolve(import.meta.dirname, '..'),
   env,
   stdio: 'inherit',
 });
