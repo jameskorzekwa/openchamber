@@ -28,6 +28,11 @@ test('release publication is resumable and keeps candidate code outside the toke
   assert.doesNotMatch(tokenStep, /tools\/channel-release/);
   assert.match(tokenStep, /-F draft=true/);
   assert.match(tokenStep, /cmp -s/);
+  assert.match(tokenStep, /gh release upload "\$RELEASE_TAG" "artifacts\/\$asset" --repo "\$\{\{ github\.repository \}\}"/);
+  assert.match(tokenStep, /releases\?per_page=100/);
+  assert.match(tokenStep, /releases\/\$release_id/);
+  assert.match(tokenStep, /RESUME: \$\{\{ needs\.metadata\.outputs\.resume \}\}/);
+  assert.match(tokenStep, /merge-base --is-ancestor "\$SOURCE_COMMIT" refs\/remotes\/origin\/j2k-current/);
   assert.match(tokenStep, /--force-with-lease=refs\/heads\/j2k\/current:/);
   assert.match(release, /persist-credentials: false/);
   assert.match(release, /runs-on: macos-15/);
