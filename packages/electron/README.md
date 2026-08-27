@@ -111,7 +111,7 @@ The repository must define these Actions secrets before the workflow can run:
 
 Create a self-signed root certificate in Keychain Access with the exact common name `Developer ID Application: OpenChamber Private Updates`, certificate type `Code Signing`, a long explicit validity period, digital-signature key usage, and code-signing extended key usage. Export the identity as a password-protected `.p12` for the workflow. Export the public certificate separately for installation on managed Macs. Never copy the private key to client Macs.
 
-The workflow checks the certificate name and pinned fingerprint, imports the identity into a temporary runner Keychain, disables Apple notarization explicitly, and removes the certificate file and Keychain in an `always()` cleanup step. Back up the `.p12` and its password securely. Losing or replacing this identity breaks update continuity for installed versions.
+The workflow checks the certificate name and pinned fingerprint, imports the identity into a temporary runner Keychain, and adds only the public certificate to the disposable runner's System trust store before normal validated identity discovery. Apple notarization remains disabled. The final app verifier extracts the signing certificate and checks its SHA-256 fingerprint. Cleanup removes the private certificate file and Keychain in an `always()` step, and GitHub destroys the runner after the job. Back up the `.p12` and its password securely. Losing or replacing this identity breaks update continuity for installed versions.
 
 Before the first private build runs, add the three secrets under the repository's Actions secrets. To compute the fingerprint from the login Keychain without exporting private material:
 
