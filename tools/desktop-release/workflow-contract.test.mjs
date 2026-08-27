@@ -33,6 +33,8 @@ test('candidate build has no write token and publisher runs trusted verifier onl
   assert.match(publish, /ref: \$\{\{ github\.workflow_sha \}\}/);
   assert.match(publish, /node trusted\/tools\/desktop-release\/desktop-release\.mjs verify-release/);
   assert.doesNotMatch(publish, /node artifacts\//);
+  assert.match(build, /require\.resolve\(`electron\/package\.json`, \{ paths: \[`\.\/packages\/electron`\] \}\)/);
+  assert.doesNotMatch(build, /require\(`\.\/node_modules\/electron\/package\.json`\)/);
 });
 
 test('publication is an immutable resumable draft with exact asset comparison', () => {
