@@ -16,6 +16,7 @@ declare module "bun:test" {
     rejects: {
       toThrow(expected?: string | RegExp | (new (...args: never[]) => unknown)): Promise<void>;
     };
+    toBeCloseTo(expected: number, numDigits?: number): void;
     toBeGreaterThan(expected: number): void;
     toBeGreaterThanOrEqual(expected: number): void;
     toBeLessThan(expected: number): void;
