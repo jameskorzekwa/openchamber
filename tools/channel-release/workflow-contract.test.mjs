@@ -32,7 +32,8 @@ test('release publication is resumable and keeps candidate code outside the toke
   assert.match(tokenStep, /releases\?per_page=100/);
   assert.match(tokenStep, /releases\/\$release_id/);
   assert.match(tokenStep, /RELEASES_JSON=.*node -e/);
-  assert.match(tokenStep, /RESUME: \$\{\{ needs\.metadata\.outputs\.resume \}\}/);
+  assert.doesNotMatch(tokenStep, /RESUME:/);
+  assert.match(tokenStep, /if \[\[ -n "\$current_j2k" && "\$current_j2k" != "\$SOURCE_COMMIT" \]\]/);
   assert.match(tokenStep, /merge-base --is-ancestor "\$SOURCE_COMMIT" refs\/remotes\/origin\/j2k-current/);
   assert.match(tokenStep, /--force-with-lease=refs\/heads\/j2k\/current:/);
   assert.match(release, /persist-credentials: false/);
