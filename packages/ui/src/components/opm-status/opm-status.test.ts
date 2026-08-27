@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { getOpmCounts, ownerGuidanceKind, parseOpmSnapshot } from './opm-status';
+import { getOpmCounts, getSalientOpmCount, ownerGuidanceKind, parseOpmSnapshot } from './opm-status';
 
 const row = (overrides = {}) => ({
   project: 'openchamber', projectName: 'OpenChamber', ref: '1', title: 'Work', phase: 'active', activityState: 'working',
@@ -36,6 +36,20 @@ describe('OPM status parser', () => {
 
   test('keeps unavailable distinct from successful empty work', () => {
     expect(parseOpmSnapshot({ available: false, fetchedAt: 100, error: 'down' })).toEqual({ available: false, fetchedAt: 100, error: 'down' });
+  });
+
+  test('selects the salient mobile count by priority, shows zero for idle, and none when unavailable', () => {
+    const withGroups = (groups: Record<string, unknown[]>) => {
+      const parsed = parseOpmSnapshot({ ...snapshot(), groups: { needsYou: [], blocked: [], active: [], waiting: [], queued: [], ...groups } });
+      return getSalientOpmCount(parsed);
+    };
+    expect(withGroups({ needsYou: [row({ kind: 'needs-owner' }), row({ ref: '2', kind: 'needs-owner' })], active: [row()] })).toBe('2');
+    expect(withGroups({ blocked: [row({ phase: 'blocked' })], active: [row()], waiting: [row({ ref: '3' })] })).toBe('1');
+    expect(withGroups({ active: [row(), row({ ref: '2' })], waiting: [row({ ref: '3' })] })).toBe('2');
+    expect(withGroups({ waiting: [row({ phase: 'waiting_external' })] })).toBe('1');
+    expect(withGroups({ queued: [row({ phase: 'planned' }), row({ ref: '2', phase: 'planned' }), row({ ref: '3', phase: 'planned' })] })).toBe('3');
+    expect(withGroups({})).toBe('0');
+    expect(getSalientOpmCount({ available: false, fetchedAt: 100, error: 'down' })).toBeNull();
   });
 
   test('classifies localized owner guidance without trusting English server copy', () => {

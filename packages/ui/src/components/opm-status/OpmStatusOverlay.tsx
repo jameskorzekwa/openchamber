@@ -17,6 +17,7 @@ import { useSessionUIStore } from '@/sync/session-ui-store';
 import {
   fetchOpmStatus,
   getOpmCounts,
+  getSalientOpmCount,
   openOpmRowSession,
   ownerGuidanceKind,
   type OpmAvailableSnapshot,
@@ -29,6 +30,147 @@ import {
 const POLL_INTERVAL_MS = 15_000;
 const NOTIFIED_KEY = 'opmStatus.notified';
 const notifiedKeysSchema = z.array(z.string());
+
+// The pill lives on the outer edge, wherever the owner drags it. The position
+// is stored as (edge, fractional offset along that edge) so it survives
+// resizes and viewport changes; inline styles override the default CSS
+// position only when a stored position exists.
+const PILL_POS_KEY = 'opmStatus.pillPos';
+const PILL_EDGE_MARGIN = 6;
+const PILL_DRAG_THRESHOLD_PX = 5;
+
+const pillPositionSchema = z.object({
+  edge: z.enum(['left', 'right', 'top', 'bottom']),
+  offset: z.number().min(0).max(1),
+});
+type PillPosition = z.infer<typeof pillPositionSchema>;
+
+const readPillPosition = (): PillPosition | null => {
+  try {
+    const parsed = pillPositionSchema.safeParse(JSON.parse(localStorage.getItem(PILL_POS_KEY) ?? 'null'));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+};
+
+const writePillPosition = (position: PillPosition) => {
+  try {
+    localStorage.setItem(PILL_POS_KEY, JSON.stringify(position));
+  } catch {
+    // Local storage is optional.
+  }
+};
+
+const applyPillPosition = (pill: HTMLElement, position: PillPosition | null) => {
+  if (!position) return;
+  const rect = pill.getBoundingClientRect();
+  const width = rect.width || 90;
+  const height = rect.height || 30;
+  const maxX = Math.max(0, window.innerWidth - width - PILL_EDGE_MARGIN * 2);
+  const maxY = Math.max(0, window.innerHeight - height - PILL_EDGE_MARGIN * 2);
+  pill.style.left = pill.style.right = pill.style.top = pill.style.bottom = 'auto';
+  if (position.edge === 'left' || position.edge === 'right') {
+    pill.style[position.edge] = `${PILL_EDGE_MARGIN}px`;
+    pill.style.top = `${Math.round(PILL_EDGE_MARGIN + position.offset * maxY)}px`;
+  } else {
+    pill.style[position.edge] = position.edge === 'top'
+      ? `calc(env(safe-area-inset-top, 0px) + ${PILL_EDGE_MARGIN}px)`
+      : `${PILL_EDGE_MARGIN}px`;
+    pill.style.left = `${Math.round(PILL_EDGE_MARGIN + position.offset * maxX)}px`;
+  }
+};
+
+const snapPillToEdge = (pill: HTMLElement, x: number, y: number): PillPosition => {
+  const rect = pill.getBoundingClientRect();
+  const width = rect.width || 90;
+  const height = rect.height || 30;
+  const distances = {
+    left: x,
+    right: window.innerWidth - (x + width),
+    top: y,
+    bottom: window.innerHeight - (y + height),
+  };
+  const edges = Object.keys(distances) as Array<keyof typeof distances>;
+  const edge = edges.reduce((a, b) => (distances[a] <= distances[b] ? a : b));
+  const maxX = Math.max(1, window.innerWidth - width - PILL_EDGE_MARGIN * 2);
+  const maxY = Math.max(1, window.innerHeight - height - PILL_EDGE_MARGIN * 2);
+  const offset = (edge === 'left' || edge === 'right')
+    ? Math.min(1, Math.max(0, (y - PILL_EDGE_MARGIN) / maxY))
+    : Math.min(1, Math.max(0, (x - PILL_EDGE_MARGIN) / maxX));
+  return { edge, offset };
+};
+
+// Pointer-based drag along the viewport edges. A 5px travel threshold keeps
+// plain taps opening the dashboard; anything past it drags freely and snaps
+// to the nearest edge on release. The release also suppresses the click that
+// browsers fire after pointerup, so a drag never opens the dashboard.
+const usePillDrag = () => {
+  const pillRef = React.useRef<HTMLButtonElement | null>(null);
+  const dragStateRef = React.useRef<{ startX: number; startY: number; dx: number; dy: number } | null>(null);
+  const dragMovedRef = React.useRef(false);
+
+  // The pill mounts only after the first successful poll, so the stored
+  // position is applied from the callback ref rather than a mount effect.
+  const attachPill = React.useCallback((node: HTMLButtonElement | null) => {
+    pillRef.current = node;
+    if (node) applyPillPosition(node, readPillPosition());
+  }, []);
+
+  React.useEffect(() => {
+    const handleResize = () => {
+      if (pillRef.current) applyPillPosition(pillRef.current, readPillPosition());
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const onPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    dragStateRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      dx: event.clientX - rect.left,
+      dy: event.clientY - rect.top,
+    };
+    dragMovedRef.current = false;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  const onPointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const state = dragStateRef.current;
+    if (!state) return;
+    if (!dragMovedRef.current) {
+      const travel = Math.hypot(event.clientX - state.startX, event.clientY - state.startY);
+      if (travel < PILL_DRAG_THRESHOLD_PX) return;
+      dragMovedRef.current = true;
+    }
+    // Once a drag is recognized, keep iOS from scrolling underneath it.
+    if (event.nativeEvent.cancelable) event.preventDefault();
+    const pill = event.currentTarget;
+    pill.style.left = `${event.clientX - state.dx}px`;
+    pill.style.top = `${event.clientY - state.dy}px`;
+    pill.style.right = pill.style.bottom = 'auto';
+  };
+
+  const onPointerEnd = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (!dragStateRef.current) return;
+    dragStateRef.current = null;
+    if (!dragMovedRef.current) return;
+    const pill = event.currentTarget;
+    const rect = pill.getBoundingClientRect();
+    const position = snapPillToEdge(pill, rect.left, rect.top);
+    writePillPosition(position);
+    applyPillPosition(pill, position);
+    // Suppress the click that follows a drag release.
+    window.setTimeout(() => {
+      dragMovedRef.current = false;
+    }, 0);
+  };
+
+  return { attachPill, dragMovedRef, onPointerDown, onPointerMove, onPointerEnd };
+};
 
 type Translate = ReturnType<typeof useI18n>['t'];
 
@@ -250,6 +392,7 @@ export const OpmStatusOverlay = ({
   const [notificationPermission, setNotificationPermission] = React.useState<NotificationPermission | 'unsupported'>(
     globalThis.Notification ? Notification.permission : 'unsupported',
   );
+  const { attachPill, dragMovedRef, onPointerDown, onPointerMove, onPointerEnd } = usePillDrag();
 
   React.useEffect(() => {
     const refresh = async () => {
@@ -295,6 +438,7 @@ export const OpmStatusOverlay = ({
             : counts.queued > 0
               ? t('opm.pill.queued', { count: counts.queued })
               : t('opm.pill.idle');
+  const pillCount = getSalientOpmCount(snapshot);
 
   const copyCommand = (command: string) => {
     void navigator.clipboard?.writeText(command).then(() => {
@@ -317,14 +461,31 @@ export const OpmStatusOverlay = ({
   return (
     <>
       <Button
+        ref={attachPill}
         aria-label={t('opm.pill.aria')}
+        aria-haspopup="dialog"
+        aria-expanded={open}
         variant="outline"
         size="sm"
-        className="fixed bottom-[max(0.75rem,env(safe-area-inset-bottom))] right-3 z-40 rounded-full bg-[var(--surface-elevated)] shadow-none"
-        onClick={() => setOpen(true)}
+        className={cn(
+          'fixed bottom-[max(0.75rem,env(safe-area-inset-bottom))] right-3 z-40 rounded-full bg-[var(--surface-elevated)] shadow-none',
+          // iOS drag support: the pill is always the pointer target, and no
+          // child ever starts a text-selection or callout during a drag.
+          'touch-none select-none [-webkit-touch-callout:none] [-webkit-user-select:none]',
+          '[&_*]:pointer-events-none [&_*]:select-none [&_*]:[-webkit-touch-callout:none] [&_*]:[-webkit-user-select:none]',
+        )}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerEnd}
+        onPointerCancel={onPointerEnd}
+        onClick={() => {
+          if (dragMovedRef.current) return;
+          setOpen(true);
+        }}
       >
         <StatusDot snapshot={snapshot} />
-        <span>{pillText}</span>
+        <span className="hidden sm:inline">{pillText}</span>
+        {pillCount !== null ? <span className="font-bold sm:hidden">{pillCount}</span> : null}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-4xl gap-3 p-4 sm:p-5">

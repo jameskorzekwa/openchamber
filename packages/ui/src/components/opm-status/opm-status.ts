@@ -168,6 +168,15 @@ export const getOpmCounts = (snapshot: OpmAvailableSnapshot) => ({
   queued: snapshot.groups.queued.length,
 });
 
+// The one number the compact mobile pill shows: the count backing the most
+// salient state, in the same priority order the pill text uses. `"0"` means
+// idle; `null` means unavailable, where a number would imply a live answer.
+export const getSalientOpmCount = (snapshot: OpmSnapshot): string | null => {
+  if (!snapshot.available) return null;
+  const counts = getOpmCounts(snapshot);
+  return String(counts.needsYou || counts.blocked || counts.active || counts.waiting || counts.queued || 0);
+};
+
 export const ownerGuidanceKind = (row: OpmRow) => {
   if (row.kind === 'needs-owner') return 'authorize';
   if (row.kind === 'dead-letter') return 'deadLetter';

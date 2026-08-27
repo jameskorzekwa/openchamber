@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { createPushoverNotifier } from './pushover-notifier.js';
+
 const DEFAULT_CONTROL_URL = 'http://127.0.0.1:47651';
 const POLL_INTERVAL_MS = 10_000;
 const FETCH_TIMEOUT_MS = 3_000;
@@ -257,7 +259,7 @@ const fetchJson = async (url) => {
   return response.json();
 };
 
-export const createOpmStatusPoller = ({ controlUrl, issueUrls, now = Date.now }) => {
+export const createOpmStatusPoller = ({ controlUrl, issueUrls, now = Date.now, notifier = null }) => {
   let snapshot = { available: false, fetchedAt: null, error: 'not yet polled' };
   let inFlight = false;
   const poll = async () => {
@@ -269,6 +271,13 @@ export const createOpmStatusPoller = ({ controlUrl, issueUrls, now = Date.now })
         fetchJson(`${controlUrl}/status`),
       ]);
       snapshot = buildSnapshot({ activity, status, issueUrls, now: now() });
+      if (notifier) {
+        try {
+          await notifier.notify(snapshot);
+        } catch {
+          // Notification delivery must never turn a good snapshot unavailable.
+        }
+      }
     } catch (error) {
       snapshot = {
         available: false,
@@ -285,7 +294,8 @@ export const createOpmStatusPoller = ({ controlUrl, issueUrls, now = Date.now })
 
 export function registerOpmStatusRoutes(app, options = {}) {
   const config = options.config ?? readOpmStatusConfig(options.configPath);
-  const poller = options.poller ?? createOpmStatusPoller(config);
+  const poller = options.poller
+    ?? createOpmStatusPoller({ ...config, notifier: options.notifier ?? createPushoverNotifier() });
   void poller.poll();
   const timer = setInterval(() => void poller.poll(), options.pollIntervalMs ?? POLL_INTERVAL_MS);
   timer.unref?.();
