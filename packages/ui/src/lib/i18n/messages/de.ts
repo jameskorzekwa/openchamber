@@ -1,9 +1,11 @@
 import { settingsDict } from './de.settings';
 import { opmStatusI18n } from './opm-status.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
   ...settingsDict,
   ...opmStatusI18n.de,
+  ...updateStatusI18n.de,
   'common.language.german': 'Deutsch',
   'common.loading': 'Wird geladen...',
   'common.unavailable': 'Nicht verfügbar',

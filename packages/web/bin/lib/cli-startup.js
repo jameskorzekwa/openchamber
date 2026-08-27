@@ -9,6 +9,16 @@ import { hasUiPasswordConfigured } from './cli-network.js';
 import { searchPathFor } from './cli-executables.js';
 
 const STARTUP_SERVICE_ID = 'dev.openchamber.web';
+const SYSTEMD_UNIT_PATTERN = /^[A-Za-z0-9:_.@-]+\.service$/;
+const SYSTEMD_COMMAND_TIMEOUT_MS = 10_000;
+
+function getManagedInstallRoot() {
+  return path.join(os.homedir(), '.local', 'share', 'openchamber');
+}
+
+function getManagedLauncherPath() {
+  return path.join(getManagedInstallRoot(), 'bin', 'openchamber-managed');
+}
 
 function getStartupServicePaths() {
   if (process.platform === 'darwin') {
@@ -178,11 +188,55 @@ function buildStartupArgs(options = {}) {
   return args;
 }
 
+function buildServeArgs(options = {}) {
+  return buildStartupArgs(options).slice(1);
+}
+
+function atomicWriteFileSync(filePath, content, mode) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  const temporary = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  const descriptor = fs.openSync(temporary, 'wx', mode);
+  try {
+    fs.writeFileSync(descriptor, content);
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  fs.renameSync(temporary, filePath);
+  const directoryDescriptor = fs.openSync(path.dirname(filePath), 'r');
+  try {
+    fs.fsyncSync(directoryDescriptor);
+  } finally {
+    fs.closeSync(directoryDescriptor);
+  }
+}
+
+function buildManagedLauncher({ installRoot = getManagedInstallRoot(), launcherPath = getManagedLauncherPath(), fallbackCliPath = resolveCliEntrypoint(), nodePath = process.execPath } = {}) {
+  const selectedCli = path.join(installRoot, 'current', 'bin', 'cli.js');
+  return `#!/bin/sh
+set -eu
+selected=${startupShellQuote(selectedCli)}
+export OPENCHAMBER_MANAGED_LAUNCHER=${startupShellQuote(launcherPath)}
+export OPENCHAMBER_MANAGED_INSTALL_ROOT=${startupShellQuote(installRoot)}
+if [ -f "$selected" ]; then
+  exec ${startupShellQuote(nodePath)} "$selected" "$@"
+fi
+exec ${startupShellQuote(nodePath)} ${startupShellQuote(fallbackCliPath)} "$@"
+`;
+}
+
+function writeManagedLauncher(options = {}) {
+  const launcherPath = options.launcherPath || getManagedLauncherPath();
+  atomicWriteFileSync(launcherPath, buildManagedLauncher(options), 0o700);
+  return launcherPath;
+}
+
 function writeMacosStartupWrapper(options = {}) {
   const wrapperPath = getMacosStartupWrapperPath();
-  const args = buildStartupArgs(options).map(startupShellQuote).join(' ');
+  const launcherPath = writeManagedLauncher(options);
+  const args = buildServeArgs(options).map(startupShellQuote).join(' ');
   const content = `#!/bin/sh
-exec ${startupShellQuote(process.execPath)} ${args}
+exec ${startupShellQuote(launcherPath)} ${args}
 `;
   fs.mkdirSync(path.dirname(wrapperPath), { recursive: true, mode: 0o700 });
   fs.writeFileSync(wrapperPath, content, { mode: 0o700 });
@@ -226,7 +280,8 @@ ${envXml}  <key>ProcessType</key>
 }
 
 function buildSystemdUserService(options = {}) {
-  const args = buildStartupArgs(options).map((arg) => `"${systemdEscapeArg(arg)}"`).join(' ');
+  const launcherPath = options.launcherPath || getManagedLauncherPath();
+  const args = buildServeArgs(options).map((arg) => `"${systemdEscapeArg(arg)}"`).join(' ');
   const envFilePath = getStartupEnvFilePath();
   return `[Unit]
 Description=OpenChamber web server
@@ -235,7 +290,7 @@ After=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=-${systemdEscapeArg(envFilePath)}
-ExecStart="${systemdEscapeArg(process.execPath)}" ${args}
+ExecStart="${systemdEscapeArg(launcherPath)}" ${args}
 WorkingDirectory=${systemdUnitPath(os.homedir())}
 Restart=always
 RestartSec=5
@@ -245,10 +300,150 @@ WantedBy=default.target
 `;
 }
 
+function parseSystemdExecStart(value) {
+  const tokens = [];
+  let index = 0;
+  while (index < value.length) {
+    while (index < value.length && /\s/.test(value[index])) index += 1;
+    if (index === value.length) break;
+    const start = index;
+    let token = '';
+    let quote = null;
+    while (index < value.length) {
+      const character = value[index];
+      if (!quote && /\s/.test(character)) break;
+      if (character === '"' || character === "'") {
+        if (!quote) quote = character;
+        else if (quote === character) quote = null;
+        else token += character;
+        index += 1;
+        continue;
+      }
+      if (character === '\\') {
+        index += 1;
+        if (index === value.length) throw new Error('Systemd ExecStart ends with an incomplete escape');
+        token += value[index];
+        index += 1;
+        continue;
+      }
+      token += character;
+      index += 1;
+    }
+    if (quote) throw new Error('Systemd ExecStart contains an unterminated quote');
+    tokens.push({ value: token, start });
+  }
+  return tokens;
+}
+
+function migrateSystemdServiceToManagedLauncher({
+  unit,
+  installRoot = getManagedInstallRoot(),
+  fallbackCliPath = resolveCliEntrypoint(),
+  nodePath = process.execPath,
+  spawnSyncImpl = spawnSync,
+  servicePath: suppliedServicePath,
+  userSystemdRoot: suppliedUserSystemdRoot,
+  deferApply = false,
+} = {}) {
+  if (!SYSTEMD_UNIT_PATTERN.test(unit || '')) throw new Error('Systemd service unit is invalid');
+  let servicePath = suppliedServicePath;
+  if (!servicePath) {
+    const show = spawnSyncImpl('systemctl', ['--user', 'show', unit, '--property=FragmentPath', '--value'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: SYSTEMD_COMMAND_TIMEOUT_MS,
+      windowsHide: true,
+    });
+    if (show.error) throw show.error;
+    if (show.status !== 0) throw new Error((show.stderr || show.stdout || '').trim() || `Could not resolve ${unit}`);
+    servicePath = (show.stdout || '').trim();
+  }
+  const userSystemdRoot = suppliedUserSystemdRoot || path.join(os.homedir(), '.config', 'systemd', 'user');
+  servicePath = fs.realpathSync(servicePath);
+  const canonicalSystemdRoot = fs.realpathSync(userSystemdRoot);
+  const relativeServicePath = path.relative(canonicalSystemdRoot, servicePath);
+  if (!servicePath || relativeServicePath.startsWith('..') || path.isAbsolute(relativeServicePath) || path.extname(servicePath) !== '.service') {
+    throw new Error(`Systemd service ${unit} is not a writable user service`);
+  }
+  const originalService = fs.readFileSync(servicePath, 'utf8');
+  const execMatches = originalService.match(/^ExecStart=.*$/gm) || [];
+  if (execMatches.length !== 1) throw new Error(`Systemd service ${unit} must contain exactly one ExecStart`);
+  const originalExecStart = execMatches[0].slice('ExecStart='.length);
+  const execTokens = parseSystemdExecStart(originalExecStart);
+  const serveTokenIndex = execTokens.findIndex((token, index) => index > 0 && token.value === 'serve');
+  if (serveTokenIndex < 0) throw new Error(`Systemd service ${unit} ExecStart must invoke OpenChamber serve`);
+  const prefix = execTokens.slice(0, serveTokenIndex).map((token) => token.value);
+  if (/^[-@:+!|]/.test(prefix[0] || '')) {
+    throw new Error(`Systemd service ${unit} uses an unsupported ExecStart control prefix`);
+  }
+  const directExecutable = prefix.length === 1 ? path.basename(prefix[0]).toLowerCase() : '';
+  const directLaunch = directExecutable === 'openchamber' || directExecutable === 'openchamber-managed';
+  const nodeLaunch = prefix.length === 2
+    && ['node', 'nodejs'].includes(path.basename(prefix[0]).toLowerCase())
+    && path.basename(prefix[1]).toLowerCase() === 'cli.js'
+    && prefix[1].toLowerCase().includes('openchamber');
+  if (!directLaunch && !nodeLaunch) {
+    throw new Error(`Systemd service ${unit} uses an unsupported ExecStart prefix; remove inline env, Node flags, or custom wrappers before enabling in-app updates`);
+  }
+  const preservedArguments = originalExecStart.slice(execTokens[serveTokenIndex].start);
+  const launcherPath = path.join(installRoot, 'bin', 'openchamber-managed');
+  const launcherExisted = fs.existsSync(launcherPath);
+  const originalLauncher = launcherExisted ? fs.readFileSync(launcherPath) : null;
+  const launcherMode = launcherExisted ? fs.statSync(launcherPath).mode & 0o777 : 0o700;
+  const serviceMode = fs.statSync(servicePath).mode & 0o777;
+  const replacement = `ExecStart="${systemdEscapeArg(launcherPath)}" ${preservedArguments}`;
+  let migrated = false;
+  const rollback = () => {
+    if (!migrated) return;
+    atomicWriteFileSync(servicePath, originalService, serviceMode);
+    if (launcherExisted) atomicWriteFileSync(launcherPath, originalLauncher, launcherMode);
+    else {
+      try { fs.unlinkSync(launcherPath); } catch {}
+    }
+    const reload = spawnSyncImpl('systemctl', ['--user', 'daemon-reload'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: SYSTEMD_COMMAND_TIMEOUT_MS, windowsHide: true });
+    if (reload.error || reload.status !== 0) throw reload.error || new Error((reload.stderr || reload.stdout || '').trim() || 'systemctl --user daemon-reload failed during rollback');
+    migrated = false;
+  };
+  const apply = () => {
+    if (migrated) return;
+    try {
+      writeManagedLauncher({ launcherPath, installRoot, fallbackCliPath, nodePath });
+      atomicWriteFileSync(servicePath, originalService.replace(/^ExecStart=.*$/m, replacement), serviceMode);
+      const reload = spawnSyncImpl('systemctl', ['--user', 'daemon-reload'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: SYSTEMD_COMMAND_TIMEOUT_MS, windowsHide: true });
+      if (reload.error || reload.status !== 0) throw reload.error || new Error((reload.stderr || reload.stdout || '').trim() || 'systemctl --user daemon-reload failed');
+      migrated = true;
+    } catch (error) {
+      migrated = true;
+      try { rollback(); } catch (rollbackError) {
+        throw new Error(`${error instanceof Error ? error.message : error}; service rollback failed: ${rollbackError instanceof Error ? rollbackError.message : rollbackError}`);
+      }
+      throw error;
+    }
+  };
+  const result = {
+    launcherPath,
+    servicePath,
+    apply,
+    rollback,
+    rollbackState: {
+      servicePath,
+      serviceMode,
+      originalService: Buffer.from(originalService).toString('base64'),
+      launcherPath,
+      launcherExisted,
+      launcherMode,
+      originalLauncher: originalLauncher ? Buffer.from(originalLauncher).toString('base64') : null,
+    },
+  };
+  if (!deferApply) apply();
+  return result;
+}
+
 function runStartupCommand(command, args, options = {}) {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
     stdio: options.stdio || 'pipe',
+    timeout: options.timeout ?? SYSTEMD_COMMAND_TIMEOUT_MS,
     windowsHide: true,
   });
   if (result.error) {
@@ -311,8 +506,9 @@ function enableStartupService(options = {}) {
 
   if (paths.platform === 'linux') {
     writeStartupEnvFile(options, { quoteValue: systemdEnvFileQuote });
+    const launcherPath = writeManagedLauncher(options);
     fs.mkdirSync(path.dirname(paths.servicePath), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(paths.servicePath, buildSystemdUserService(options), { mode: 0o600 });
+    fs.writeFileSync(paths.servicePath, buildSystemdUserService({ ...options, launcherPath }), { mode: 0o600 });
     runStartupCommand('systemctl', ['--user', 'daemon-reload']);
     runStartupCommand('systemctl', ['--user', 'enable', '--now', 'openchamber.service']);
     return getStartupStatus();
@@ -364,6 +560,9 @@ function disableStartupService() {
 
 
 export {
+  buildManagedLauncher,
+  buildSystemdUserService,
+  migrateSystemdServiceToManagedLauncher,
   getStartupStatus,
   enableStartupService,
   disableStartupService,

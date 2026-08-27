@@ -1,9 +1,11 @@
 import { settingsDict } from './en.settings';
 import { opmStatusI18n } from './opm-status.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
   ...settingsDict,
   ...opmStatusI18n.en,
+  ...updateStatusI18n.en,
   'terminalView.actions.attachSelection': 'Attach selected output',
   'terminalView.actions.restart': 'Restart terminal',
   'chat.message.terminalContext': '{terminal}, lines {start}-{end}',

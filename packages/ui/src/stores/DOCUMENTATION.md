@@ -40,6 +40,8 @@ Examples:
 
 These stores coordinate visible app state, navigation, selected context-panel tabs, dialogs, and lightweight feature flags. `useUIStore.activeSurface` selects the primary mobile view and the few desktop views that are promoted out of the context panel. It is not a desktop tab selection.
 
+`useUpdateStore.ts` owns the web installer lifecycle returned by the server. Update checks parse and retain the authoritative `available`, `downloading`, `installing`, `restarting`, `installed`, `failed`, `rollback`, or `no-validated-release` record. Active states poll even when the dialog is closed, and opening the dialog refreshes the same store so reloads and separate tabs recover helper-written terminal state. The server retains `restarting` until the restart transaction verifies the exact target or previous release; components must not infer success from process startup, update availability, or generic reachability. The store refuses a second POST while an active state exists; the server's interprocess lock remains the final cross-process authority. A no-validated-release notice suppresses installation, not the user's manual check action.
+
 Context-panel session chats mount only the active chat iframe. After installing
 its message listener, the iframe requests its authoritative visibility from the
 parent. The parent accepts requests only from a currently mounted chat frame and
