@@ -365,6 +365,9 @@ an authoritative loopback callback URL even when OpenChamber binds port `0`.
     - Foreground servers running under a systemd user unit queue installation in
       a separate transient unit and restart the configured service afterwards.
       `OPENCHAMBER_SYSTEMD_UNIT` overrides the default `openchamber.service`.
+    - Foreground servers under another process manager may set
+      `OPENCHAMBER_UPDATE_RESTART_ON_EXIT=true`; OpenChamber installs in a
+      detached process, exits only after success, and lets the manager restart it.
   - `GET /api/openchamber/models-metadata`
   - `GET /api/zen/models`
 

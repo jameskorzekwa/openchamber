@@ -23,6 +23,9 @@ const createApp = ({ environment = {}, storedOptions = {} } = {}) => {
   const dependencies = {
     fs: {
       existsSync: vi.fn(() => false),
+      mkdirSync: vi.fn(),
+      openSync: vi.fn(() => 42),
+      closeSync: vi.fn(),
       promises: {
         readFile: vi.fn(async () => JSON.stringify({
           launchMode: 'foreground',
@@ -36,6 +39,7 @@ const createApp = ({ environment = {}, storedOptions = {} } = {}) => {
       env: environment,
       platform: 'linux',
       execPath: '/usr/bin/node',
+      pid: 1234,
     },
     server: {
       address: () => ({ port: 7897 }),
@@ -62,6 +66,7 @@ beforeEach(() => {
     packageManager: 'npm',
   });
   packageManager.getUpdateCommand.mockReturnValue('npm install -g @openchamber/web@latest');
+  childProcess.spawn.mockReturnValue({ unref: vi.fn() });
 });
 
 afterEach(() => {
@@ -137,5 +142,38 @@ describe('OpenChamber foreground update route', () => {
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 5000,
     });
+  });
+
+  it('queues a foreground update for an external process manager', async () => {
+    const { app, dependencies } = createApp({
+      environment: {
+        OPENCHAMBER_UPDATE_RESTART_ON_EXIT: 'true',
+        PATH: '/usr/bin:/bin',
+      },
+    });
+
+    await request(app)
+      .post('/api/openchamber/update-install')
+      .expect(200, {
+        success: true,
+        message: 'Update queued; OpenChamber will exit after installation completes',
+        version: '1.17.1',
+        packageManager: 'npm',
+        autoRestart: true,
+        restartManager: 'process-manager',
+        logPath: '/tmp/openchamber/update-install.log',
+      });
+
+    expect(childProcess.spawn).toHaveBeenCalledWith('/bin/sh', ['-c', [
+      'set -eu',
+      'sleep 1',
+      'npm install -g @openchamber/web@latest',
+      'kill -TERM 1234',
+    ].join('\n')], {
+      detached: true,
+      stdio: ['ignore', 42, 42],
+      env: dependencies.process.env,
+    });
+    expect(dependencies.fs.closeSync).toHaveBeenCalledWith(42);
   });
 });

@@ -12,6 +12,13 @@ function resolveSystemdServiceUnit(environment) {
   return SYSTEMD_SERVICE_UNIT_PATTERN.test(unit) ? unit : null;
 }
 
+function shouldRestartOnUpdateExit(environment) {
+  const value = typeof environment.OPENCHAMBER_UPDATE_RESTART_ON_EXIT === 'string'
+    ? environment.OPENCHAMBER_UPDATE_RESTART_ON_EXIT.trim().toLowerCase()
+    : '';
+  return value === '1' || value === 'true';
+}
+
 function quotePosixShell(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
@@ -131,6 +138,38 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
       const systemdServiceUnit = isForegroundService ? resolveSystemdServiceUnit(process.env) : null;
 
       if (isForegroundService) {
+        if (!systemdServiceUnit && process.platform !== 'win32' && shouldRestartOnUpdateExit(process.env)) {
+          const updateLogPath = path.join(openchamberDataDir, 'update-install.log');
+          const updateScript = [
+            'set -eu',
+            'sleep 1',
+            updateCmd,
+            `kill -TERM ${process.pid}`,
+          ].join('\n');
+          let logFd = null;
+          try {
+            fs.mkdirSync(path.dirname(updateLogPath), { recursive: true });
+            logFd = fs.openSync(updateLogPath, 'a');
+            const child = spawnChild('/bin/sh', ['-c', updateScript], {
+              detached: true,
+              stdio: ['ignore', logFd, logFd],
+              env: process.env,
+            });
+            child.unref();
+          } finally {
+            if (logFd !== null) fs.closeSync(logFd);
+          }
+          return res.json({
+            success: true,
+            message: 'Update queued; OpenChamber will exit after installation completes',
+            version: updateInfo.version,
+            packageManager: pm,
+            autoRestart: true,
+            restartManager: 'process-manager',
+            logPath: updateLogPath,
+          });
+        }
+
         if (!systemdServiceUnit) {
           return res.status(409).json({
             error: 'Foreground servers must be updated by their service manager. Set OPENCHAMBER_SYSTEMD_UNIT when running under systemd, or run openchamber update and restart the service.',
