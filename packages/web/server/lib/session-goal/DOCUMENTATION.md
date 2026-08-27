@@ -58,6 +58,9 @@ authority under `~/.local/state/opencode/session-worktrees`:
   file rename, but only while `<sessionId>.json` names the same managed goal.
   The controller's original `managedGoal` remains the fallback if the progress
   file is missing or stale.
+- Tests may inject a managed-worktree state directory into the runtime. Production
+  defaults remain `~/.local/state/opencode/session-worktrees`, so lifecycle tests
+  never read or write the live controller state.
 - `managedGoalObjective` is the complete objective used for audits and
   continuations. This avoids judging the managed lifecycle against a shortened
   metadata objective.
