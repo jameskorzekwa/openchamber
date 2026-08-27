@@ -87,6 +87,8 @@ import { resolveChatPromptReadOnly } from './chatPromptReadOnly';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { createFirstVisibleSessionPerformanceTracker } from '@/sync/session-load-performance';
 import { isChatDirectoryPath } from '@/lib/chatDirectories';
+import { PtyWaitingBanner } from './PtyWaitingBanner';
+import { getPtyWaitingState } from '@/lib/ptyWaitingState';
 
 const EMPTY_MESSAGES: Array<{ info: Message; parts: Part[] }> = [];
 const IDLE_SESSION_STATUS = { type: 'idle' as const };
@@ -175,6 +177,7 @@ type HydratingToolSkeletonRow = {
 type ChatViewportProps = {
     currentSessionId: string;
     currentSessionKey: string;
+    currentSession: Session | null | undefined;
     isDesktopExpandedInput: boolean;
     isMobile: boolean;
     /** The composer floats over the transcript and reserves its band via
@@ -220,6 +223,7 @@ type ChatViewportProps = {
 const ChatViewport = React.memo(({
     currentSessionId,
     currentSessionKey,
+    currentSession,
     isDesktopExpandedInput,
     isMobile,
     floatingComposer,
@@ -389,6 +393,8 @@ const ChatViewport = React.memo(({
 
             <SessionErrorNotice sessionId={currentSessionId} directory={directory} />
 
+            <PtyWaitingBanner session={currentSession} />
+
             {/* Tail spacer. With a floating composer it reserves the band the
                 composer covers, plus any panel docked above it (queue, BTW),
                 so the end of the transcript stays readable above them; the
@@ -407,7 +413,7 @@ const ChatViewport = React.memo(({
                 aria-hidden="true"
             />
         </>
-    ), [currentSessionId, directory, floatingComposer, isMobile, sessionPermissions, sessionQuestions]);
+    ), [currentSession, currentSessionId, directory, floatingComposer, isMobile, sessionPermissions, sessionQuestions]);
 
     // Opening a session paints the timeline as one finished picture: the root
     // stays invisible while any renderer holds a provisional first paint, then
@@ -554,6 +560,7 @@ const ChatViewport = React.memo(({
 }, (prev, next) => {
     return prev.currentSessionId === next.currentSessionId
         && prev.currentSessionKey === next.currentSessionKey
+        && arePtyWaitingStatesEqual(prev.currentSession, next.currentSession)
         && prev.isDesktopExpandedInput === next.isDesktopExpandedInput
         && prev.isMobile === next.isMobile
         && prev.floatingComposer === next.floatingComposer
@@ -586,6 +593,17 @@ const ChatViewport = React.memo(({
 });
 
 ChatViewport.displayName = 'ChatViewport';
+
+const arePtyWaitingStatesEqual = (
+    previous: Session | null | undefined,
+    next: Session | null | undefined,
+): boolean => {
+    const previousWaiting = getPtyWaitingState(previous);
+    const nextWaiting = getPtyWaitingState(next);
+    return previousWaiting.count === nextWaiting.count
+        && previousWaiting.oldestCreatedAt === nextWaiting.oldestCreatedAt
+        && previousWaiting.description === nextWaiting.description;
+};
 
 const HYDRATING_SKELETON_ITEMS: Array<{
     id: number;
@@ -1588,6 +1606,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
             <ChatViewport
                 currentSessionId={currentSessionId ?? ''}
                 currentSessionKey={currentSessionKey ?? currentSessionId ?? ''}
+                currentSession={currentSession}
                 isDesktopExpandedInput={isDesktopExpandedInput}
                 isMobile={isMobile}
                 floatingComposer={floatingComposer}
