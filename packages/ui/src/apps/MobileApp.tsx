@@ -17,6 +17,7 @@ import { SpaceAccessDialog } from '@/components/session/spaces/SpaceAccessDialog
 import { SpaceActionsSheet, SpaceDeleteDialog } from '@/components/session/spaces/SpaceActions';
 import { SpaceApplyDialog } from '@/components/session/spaces/SpaceApplyDialog';
 import { SpaceSetupOutputDialog } from '@/components/session/spaces/SpaceSetupOutput';
+import { OpmStatusOverlay } from '@/components/opm-status/OpmStatusOverlay';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { RunOverview } from '@/components/multirun/RunOverview';
 import { RuntimeAPIProvider } from '@/contexts/RuntimeAPIProvider';
@@ -1375,6 +1376,7 @@ function MobileAppContent({ apis }: MobileAppProps) {
                 switchRuntimeEndpoint({ apiBaseUrl: '', clientToken: null, runtimeKey: MOBILE_DISCONNECTED_RUNTIME_KEY });
                 setConnectionEpoch((value) => value + 1);
               }} />
+              <OpmStatusOverlay />
               <AppLinkConfirmDialog />
               <SharedTrustConfirmDialog />
               {isolatedSpacesEnabled ? <><SpaceAccessDialog /><SpaceActionsSheet /><SpaceApplyDialog /><SpaceDeleteDialog /><SpaceSetupOutputDialog /></> : null}

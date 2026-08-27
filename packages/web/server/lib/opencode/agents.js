@@ -470,6 +470,7 @@ function updateAgent(agentName, updates, workingDirectory) {
         throw new Error(`Invalid prompt file reference for agent ${agentName}`);
       }
       if (entity.system !== current.config.system) {
+        assertProjectMutationAllowed(promptFilePath);
         writePromptFile(promptFilePath, entity.system ?? '');
       }
       entity.system = rawSystem;

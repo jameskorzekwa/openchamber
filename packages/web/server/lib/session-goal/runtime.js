@@ -350,11 +350,15 @@ export const createSessionGoalRuntime = ({
   maxAutoTurns = MAX_AUTO_TURNS,
   persistSessionGoal = null,
   readSessionMetadata = null,
+  managedWorktreeStateDirectory,
 }) => {
   const timers = new Map();
   const inflight = new Set();
   const goalEnforcementPending = new Set();
   let stopped = false;
+  const managedWorktreeOptions = managedWorktreeStateDirectory
+    ? { stateDirectory: managedWorktreeStateDirectory }
+    : {};
 
   const clearTimer = (sessionId) => {
     const existing = timers.get(sessionId);
@@ -426,7 +430,7 @@ export const createSessionGoalRuntime = ({
     const nextGoal = { ...currentGoal, ...mutate(currentGoal), updatedAt: Date.now() };
     await persistSessionGoal(sessionId, directory, nextGoal);
     if (nextGoal.managedWorktree) {
-      await writeManagedWorktreeGoalProgress(sessionId, nextGoal).catch((error) => {
+      await writeManagedWorktreeGoalProgress(sessionId, nextGoal, managedWorktreeOptions).catch((error) => {
         console.warn('[session-goal] managed worktree progress write failed:', error?.message || error);
       });
     }
@@ -569,7 +573,7 @@ export const createSessionGoalRuntime = ({
     // die just because a file went away.
     let effectiveObjective = goal.objective;
     if (goal.managedWorktree) {
-      const managedObjective = await readManagedWorktreeGoalObjective(sessionId, goal.id);
+      const managedObjective = await readManagedWorktreeGoalObjective(sessionId, goal.id, managedWorktreeOptions);
       if (managedObjective) effectiveObjective = managedObjective;
     }
     if (goal.objectiveFile) {
@@ -800,7 +804,7 @@ export const createSessionGoalRuntime = ({
 
       if (audit?.verdict === 'complete') {
         if (goal.managedWorktree) {
-          const gate = await readManagedWorktreeGoalGate(sessionId, goal.id);
+          const gate = await readManagedWorktreeGoalGate(sessionId, goal.id, managedWorktreeOptions);
           if (!gate.complete) audit = { ...audit, verdict: 'continue', note: gate.note };
         }
         if (audit.verdict === 'complete') {
@@ -898,7 +902,7 @@ export const createSessionGoalRuntime = ({
     const goal = parseGoalMetadata({ metadata });
     staleRecovery.observe({ sessionId, directory, goal });
     if (goal?.managedWorktree) {
-      await writeManagedWorktreeGoalProgress(sessionId, goal).catch((error) => {
+      await writeManagedWorktreeGoalProgress(sessionId, goal, managedWorktreeOptions).catch((error) => {
         console.warn('[session-goal] managed worktree progress event write failed:', error?.message || error);
       });
       if (goal.statusReason === 'worktree-moving' || goal.statusReason === 'worktree-resume-dispatching') {
@@ -968,7 +972,7 @@ export const createSessionGoalRuntime = ({
     const update = extractSessionUpdate(payload);
     if (update && !update.parentID && !goalEnforcementPending.has(update.sessionId)) {
       const enforceManagedGoal = async () => {
-        const record = await readManagedWorktreeGoalRecord(update.sessionId);
+        const record = await readManagedWorktreeGoalRecord(update.sessionId, managedWorktreeOptions);
         if (!record?.protected) return;
         const directory = update.directory || directoryHint;
         const liveGoal = await readGoal(update.sessionId);

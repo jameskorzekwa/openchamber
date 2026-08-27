@@ -63,12 +63,14 @@ describe('graceful shutdown runtime', () => {
       }),
     };
 
-    const runtime = createRuntime(server);
+    const featureRoutesRuntime = { close: vi.fn() };
+    const runtime = createRuntime(server, { featureRoutesRuntime });
     await runtime.gracefulShutdown({ exitProcess: false });
 
     await vi.advanceTimersByTimeAsync(1000);
 
     expect(warnSpy).not.toHaveBeenCalledWith('Server close timeout reached, forcing shutdown');
+    expect(featureRoutesRuntime.close).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
   });
 

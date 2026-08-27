@@ -113,6 +113,7 @@ import { findInstalledGuest } from './lib/guests/catalog.js';
 import { extensionsPersistPath } from './lib/guests/persist.js';
 import { createGuestSurfaceRuntime } from './lib/guests/surface.js';
 import { BROWSER_PROVIDER_IDLE_MS } from '@openchamber/sdk';
+import { resolveRuntimeBuildRevision } from './lib/opencode/build-revision.js';
 import { createProjectConfigRuntime } from './lib/projects/project-config.js';
 import { migrateLegacyUserDirs } from './lib/data-dir-migration.js';
 import { createProjectContextRuntime } from './lib/project-context/runtime.js';
@@ -237,6 +238,7 @@ const OPENCHAMBER_VERSION = (() => {
   }
   return 'unknown';
 })();
+const OPENCHAMBER_BUILD_REVISION = resolveRuntimeBuildRevision({ packageVersion: OPENCHAMBER_VERSION });
 
 const isEnvFlagEnabled = (value) => {
   if (value === true || value === 1) return true;
@@ -2361,7 +2363,7 @@ async function main(options = {}) {
     openChamberControlService,
     waitForOpenCodeReady,
     emitSessionCreatedEvent,
-    openchamberBuildRevision: process.env.OPENCHAMBER_BUILD_REVISION || OPENCHAMBER_VERSION,
+    openchamberBuildRevision: OPENCHAMBER_BUILD_REVISION,
     getOpenChamberEventClients: () => uiOpenChamberEventClients,
     writeSseEvent,
     permissionAutoAcceptRuntime,

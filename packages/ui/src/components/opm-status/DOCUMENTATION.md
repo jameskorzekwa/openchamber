@@ -2,13 +2,13 @@
 
 ## Purpose
 
-This component renders OPM status in the shared desktop layout used by hosted web and Electron. It probes the active runtime's explicit `/api/opm/status` route and renders nothing when that route is unsupported, so VS Code and older servers do not show the feature.
+This component renders OPM status in connected hosted web, Electron, and mobile shells. It probes the active runtime's explicit `/api/opm/status` route and renders nothing when that route is unsupported, so VS Code and older servers do not show the feature.
 
 ## Ownership
 
 - `opm-status.ts` owns route transport, boundary parsing, derived counts, and owner-guidance classification used for localization.
 - `OpmStatusOverlay.tsx` owns the fixed pill, dashboard dialog, visible-only polling, browser notifications, copy actions, and session navigation.
-- `MainLayout.tsx` owns the mount because it is shared by hosted desktop web and Electron but not `VSCodeLayout`.
+- `MainLayout.tsx` owns the hosted desktop and Electron mount. `MobileApp.tsx` mounts it inside the connected provider shell. Unavailable/disconnected mobile screens and `VSCodeLayout` do not mount it.
 
 ## Invariants
 

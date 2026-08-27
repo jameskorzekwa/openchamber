@@ -82,7 +82,11 @@ export const createManagedGoalStaleRecovery = ({
 
   const observe = (update) => {
     if (!update || update.parentID || typeof update.sessionId !== 'string' || !update.sessionId) return;
-    if (update.goal?.managedWorktree === true && update.goal?.status === 'active') {
+    if (
+      update.goal?.managedWorktree === true
+      && update.goal?.status === 'active'
+      && !HELD_STATUS_REASONS.has(update.goal?.statusReason)
+    ) {
       roots.set(update.sessionId, update.directory || '');
     } else {
       roots.delete(update.sessionId);
