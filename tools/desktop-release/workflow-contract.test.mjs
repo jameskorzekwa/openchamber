@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const workflow = readFileSync(new URL('../../.github/workflows/desktop-release.yml', import.meta.url), 'utf8');
 const webWorkflow = readFileSync(new URL('../../.github/workflows/release.yml', import.meta.url), 'utf8');
+const macVerifier = readFileSync(new URL('./verify-macos-app.mjs', import.meta.url), 'utf8');
 
 test('desktop release runs manually only from trusted j2k/current workflow code', () => {
   assert.match(workflow, /workflow_dispatch:/);
@@ -23,6 +24,8 @@ test('private signing is fingerprint-pinned and never requests Apple notarizatio
   assert.match(workflow, /OPENCHAMBER_PRIVATE_MAC_SIGNING: '1'/);
   assert.match(workflow, /--certificate-sha256/);
   assert.doesNotMatch(workflow, /APPLE_ID|APPLE_PASSWORD|APPLE_TEAM_ID|notarytool|stapler staple/);
+  assert.match(macVerifier, /`--extract-certificates=\$\{prefix\}`/);
+  assert.doesNotMatch(macVerifier, /'--extract-certificates', prefix/);
 });
 
 test('candidate build has no write token and publisher runs trusted verifier only', () => {
