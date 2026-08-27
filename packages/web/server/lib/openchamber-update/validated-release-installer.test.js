@@ -510,7 +510,9 @@ describe('validated release installation', () => {
   it('serializes installer instances and recovers a stale host-independent lock directory', async () => {
     let releaseHandoff;
     const handoffWait = new Promise((resolve) => { releaseHandoff = resolve; });
-    const harness = await makeHarness();
+    const observedStates = [];
+    let harness;
+    harness = await makeHarness(makeFetch(), () => observedStates.push(harness.installer.getStatus().state));
     const second = createValidatedReleaseInstaller({
       fetchImpl: makeFetch(),
       installRoot: harness.installRoot,
@@ -524,6 +526,7 @@ describe('validated release installation', () => {
     releaseHandoff();
     await firstInstall;
     expect(await fsp.realpath(path.join(harness.installRoot, 'current'))).toBe(selectedBeforeRelease);
+    expect(observedStates).not.toContain('failed');
 
     const old = new Date(Date.now() - 31 * 60 * 1000);
     const staleRoot = path.join(harness.root, 'stale-install');
