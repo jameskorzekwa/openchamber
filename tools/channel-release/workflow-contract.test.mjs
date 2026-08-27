@@ -16,6 +16,8 @@ test('release supports exact-SHA j2k/current and upstream release branches witho
   assert.doesNotMatch(release, /^\s+push:\s*$/m);
   assert.match(release, /source_commit.*WORKFLOW_HEAD_SHA|workflow_sha.*WORKFLOW_HEAD_SHA/s);
   assert.match(release, /matching_tag/);
+  assert.match(release, /git remote add upstream https:\/\/github\.com\/openchamber\/openchamber\.git/);
+  assert.match(release, /git fetch upstream '\+refs\/tags\/v\*:refs\/tags\/v\*'/);
 });
 
 test('release publication is resumable and keeps candidate code outside the token step', () => {
