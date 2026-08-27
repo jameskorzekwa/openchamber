@@ -18,6 +18,8 @@ test('desktop release runs manually only from trusted j2k/current workflow code'
 test('private signing is fingerprint-pinned and never requests Apple notarization', () => {
   assert.match(workflow, /MACOS_PRIVATE_CERTIFICATE_SHA256/);
   assert.match(workflow, /actual_sha256.*expected_sha256/);
+  assert.match(workflow, /sudo security add-trusted-cert -d -r trustRoot -p codeSign -k \/Library\/Keychains\/System\.keychain "\$leaf"/);
+  assert.match(workflow, /security find-identity -v -p codesigning/);
   assert.match(workflow, /OPENCHAMBER_PRIVATE_MAC_SIGNING: '1'/);
   assert.match(workflow, /--certificate-sha256/);
   assert.doesNotMatch(workflow, /APPLE_ID|APPLE_PASSWORD|APPLE_TEAM_ID|notarytool|stapler staple/);
