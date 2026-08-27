@@ -330,7 +330,6 @@ jobs:
           REVISION: ${{ needs.metadata.outputs.revision }}
           VERSION: ${{ needs.metadata.outputs.version }}
           RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
-          RESUME: ${{ needs.metadata.outputs.resume }}
         run: |
           set -euo pipefail
           repo="$RUNNER_TEMP/release-repository"
@@ -367,7 +366,7 @@ jobs:
           refs=("$source_refspec")
           push_options=(--atomic "--force-with-lease=refs/heads/$SOURCE_REF:$SOURCE_COMMIT")
           preserve_current=false
-          if [[ "$RESUME" == 'true' && -n "$current_j2k" && "$current_j2k" != "$SOURCE_COMMIT" ]] \
+          if [[ -n "$current_j2k" && "$current_j2k" != "$SOURCE_COMMIT" ]] \
             && git -C "$repo" merge-base --is-ancestor "$SOURCE_COMMIT" refs/remotes/origin/j2k-current; then
             preserve_current=true
           fi
