@@ -1,0 +1,8 @@
+version: 1.21.0-j2k.1
+files:
+  - url: https://github.com/jameskorzekwa/openchamber/releases/download/desktop-v1.21.0-j2k.1/OpenChamber-1.21.0-j2k.1-mac-arm64.zip
+    sha512: vKZTq0WoB+FwwrjH/FpFoW5md8PIccfFK5pys104rYrXMgBlVqfYSZCN1emMv+acWA3pPk/DiMv59s/0Yv0f4w==
+    size: 206025718
+path: https://github.com/jameskorzekwa/openchamber/releases/download/desktop-v1.21.0-j2k.1/OpenChamber-1.21.0-j2k.1-mac-arm64.zip
+sha512: vKZTq0WoB+FwwrjH/FpFoW5md8PIccfFK5pys104rYrXMgBlVqfYSZCN1emMv+acWA3pPk/DiMv59s/0Yv0f4w==
+releaseDate: '2026-08-27T22:46:03.000Z'
