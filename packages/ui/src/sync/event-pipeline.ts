@@ -361,7 +361,7 @@ export function createEventPipeline(input: EventPipelineInput): EventPipeline {
       buffer: [],
       coalesced: new Map(),
       timer: undefined,
-      last: 0,
+      last: Date.now(),
     }
     directories.set(directory, d)
     return d
