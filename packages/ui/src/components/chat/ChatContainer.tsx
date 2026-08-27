@@ -62,6 +62,8 @@ import { resolveChatPromptReadOnly } from './chatPromptReadOnly';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { createFirstVisibleSessionPerformanceTracker } from '@/sync/session-load-performance';
 import { isChatDirectoryPath } from '@/lib/chatDirectories';
+import { PtyWaitingBanner } from './PtyWaitingBanner';
+import { getPtyWaitingState } from '@/lib/ptyWaitingState';
 
 const EMPTY_MESSAGES: Array<{ info: Message; parts: Part[] }> = [];
 const IDLE_SESSION_STATUS = { type: 'idle' as const };
@@ -150,6 +152,7 @@ type HydratingToolSkeletonRow = {
 type ChatViewportProps = {
     currentSessionId: string;
     currentSessionKey: string;
+    currentSession: Session | null | undefined;
     isDesktopExpandedInput: boolean;
     isMobile: boolean;
     directory?: string;
@@ -194,6 +197,7 @@ type ChatViewportProps = {
 const ChatViewport = React.memo(({
     currentSessionId,
     currentSessionKey,
+    currentSession,
     isDesktopExpandedInput,
     isMobile,
     directory,
@@ -360,9 +364,11 @@ const ChatViewport = React.memo(({
 
             <SessionRecapNote sessionId={currentSessionId} directory={directory} isMobile={isMobile} />
 
+            <PtyWaitingBanner session={currentSession} />
+
             <div className="flex-shrink-0" style={{ height: isMobile ? '40px' : '10vh' }} aria-hidden="true" />
         </>
-    ), [currentSessionId, directory, isMobile, sessionPermissions, sessionQuestions]);
+    ), [currentSession, currentSessionId, directory, isMobile, sessionPermissions, sessionQuestions]);
 
     const scrollContainerProps = React.useMemo(() => ({
         className: 'absolute inset-0 overflow-y-auto overflow-x-hidden z-0 chat-scroll overlay-scrollbar-target',
@@ -431,6 +437,7 @@ const ChatViewport = React.memo(({
 }, (prev, next) => {
     return prev.currentSessionId === next.currentSessionId
         && prev.currentSessionKey === next.currentSessionKey
+        && arePtyWaitingStatesEqual(prev.currentSession, next.currentSession)
         && prev.isDesktopExpandedInput === next.isDesktopExpandedInput
         && prev.isMobile === next.isMobile
         && prev.directory === next.directory
@@ -460,6 +467,17 @@ const ChatViewport = React.memo(({
 });
 
 ChatViewport.displayName = 'ChatViewport';
+
+const arePtyWaitingStatesEqual = (
+    previous: Session | null | undefined,
+    next: Session | null | undefined,
+): boolean => {
+    const previousWaiting = getPtyWaitingState(previous);
+    const nextWaiting = getPtyWaitingState(next);
+    return previousWaiting.count === nextWaiting.count
+        && previousWaiting.oldestCreatedAt === nextWaiting.oldestCreatedAt
+        && previousWaiting.description === nextWaiting.description;
+};
 
 const HYDRATING_SKELETON_ITEMS: Array<{
     id: number;
@@ -1392,6 +1410,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
             <ChatViewport
                 currentSessionId={currentSessionId ?? ''}
                 currentSessionKey={currentSessionKey ?? currentSessionId ?? ''}
+                currentSession={currentSession}
                 isDesktopExpandedInput={isDesktopExpandedInput}
                 isMobile={isMobile}
                 directory={effectiveSessionDirectory}
