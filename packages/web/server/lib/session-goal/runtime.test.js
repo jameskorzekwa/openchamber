@@ -489,4 +489,30 @@ describe('session goal runtime', () => {
       properties: { sessionID: SESSION_ID, aborted: true, reason: 'user' },
     })).not.toThrow();
   });
+
+  it('preserves managedWorktree metadata and holds ticks during worktree movement', async () => {
+    const paths = [];
+    const heldSession = {
+      ...session,
+      metadata: {
+        openchamber: {
+          goal: {
+            ...goal,
+            managedWorktree: true,
+            statusReason: 'worktree-moving',
+          },
+        },
+      },
+    };
+    const { runtime, getSmallModelService } = await startIdleTick(vi.fn(async (input) => {
+      const pathname = requestPath(input);
+      paths.push(pathname);
+      if (pathname === `/session/${SESSION_ID}`) return jsonResponse(heldSession);
+      throw new Error(`Unexpected request: ${pathname}`);
+    }));
+
+    expect(paths).toEqual([`/session/${SESSION_ID}`]);
+    expect(getSmallModelService).not.toHaveBeenCalled();
+    runtime.stop();
+  });
 });
