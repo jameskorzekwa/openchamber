@@ -978,7 +978,6 @@ export function createValidatedReleaseInstaller(options = {}) {
     }
     activeInstall = (async () => {
       const lock = admittedLock;
-      const canonicalInstallRoot = await fsp.realpath(installRoot);
       let stagingDirectory = null;
       let archivePath = null;
       let previousTarget = null;
@@ -987,6 +986,7 @@ export function createValidatedReleaseInstaller(options = {}) {
       let restartPreparation = null;
       let channel = null;
       try {
+        const canonicalInstallRoot = await fsp.realpath(installRoot);
         const resolved = await resolveChannel();
         channel = resolved.channel;
         if (channel.version !== targetVersion) fail('Validated release version does not match the requested update');
