@@ -624,12 +624,13 @@ async function resolveBundledDependency(packageDirectory, dependency, releaseDir
 async function validateBundledDependencies(releaseDirectory, channelTarget) {
   const rootModules = await fsp.lstat(path.join(releaseDirectory, 'node_modules')).catch(() => null);
   if (!rootModules?.isDirectory() || rootModules.isSymbolicLink()) fail('Validated release does not bundle production node_modules');
-  const pending = [releaseDirectory];
+  const canonicalReleaseDirectory = await fsp.realpath(releaseDirectory);
+  const pending = [canonicalReleaseDirectory];
   const visited = new Set();
   while (pending.length > 0) {
     const packageDirectory = pending.pop();
     const canonical = await fsp.realpath(packageDirectory);
-    if (!isPathInside(releaseDirectory, canonical)) fail('Bundled dependency escapes the release directory');
+    if (!isPathInside(canonicalReleaseDirectory, canonical)) fail('Bundled dependency escapes the release directory');
     if (visited.has(canonical)) continue;
     visited.add(canonical);
     const packageJson = await readJsonFile(path.join(canonical, 'package.json'), 'Bundled dependency package.json');
@@ -646,12 +647,12 @@ async function validateBundledDependencies(releaseDirectory, channelTarget) {
     const requiredPeers = peerDependencies.filter((dependency) => !isPlainObject(peerMetadata[dependency]) || peerMetadata[dependency].optional !== true);
     const optionalPeers = peerDependencies.filter((dependency) => isPlainObject(peerMetadata[dependency]) && peerMetadata[dependency].optional === true);
     for (const dependency of new Set([...dependencies, ...requiredPeers])) {
-      const resolved = await resolveBundledDependency(canonical, dependency, releaseDirectory);
+      const resolved = await resolveBundledDependency(canonical, dependency, canonicalReleaseDirectory);
       if (!resolved) fail(`Validated release is missing bundled dependency ${dependency}`);
       pending.push(resolved);
     }
     for (const dependency of new Set([...optionalDependencies, ...optionalPeers])) {
-      const resolved = await resolveBundledDependency(canonical, dependency, releaseDirectory);
+      const resolved = await resolveBundledDependency(canonical, dependency, canonicalReleaseDirectory);
       if (resolved) pending.push(resolved);
     }
   }

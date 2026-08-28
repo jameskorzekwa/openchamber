@@ -308,6 +308,25 @@ describe('validated release installation', () => {
     expect(await fsp.realpath(path.join(harness.installRoot, 'current'))).toBe(harness.oldInstall);
   });
 
+  it('installs through a symlinked install root without weakening dependency containment', async () => {
+    const harness = await makeHarness();
+    const linkedInstallRoot = path.join(harness.root, 'linked-install');
+    await fsp.symlink(harness.installRoot, linkedInstallRoot);
+    const installer = createValidatedReleaseInstaller({
+      fetchImpl: makeFetch(),
+      installRoot: linkedInstallRoot,
+      currentInstallDir: harness.oldInstall,
+      currentVersion: '1.0.0',
+      platform: 'darwin',
+      arch: 'arm64',
+      nodeAbi: NODE_ABI,
+    });
+
+    await expect(installer.install({ targetVersion: VERSION, handoffRestart: vi.fn() })).resolves.toMatchObject({ state: 'restarting' });
+    const selected = await fsp.realpath(path.join(linkedInstallRoot, 'current'));
+    expect(JSON.parse(await fsp.readFile(path.join(selected, 'package.json'), 'utf8')).version).toBe(VERSION);
+  });
+
   it('rejects source commits that do not descend from the claimed upstream tag', async () => {
     const compareUrl = `https://api.github.com/repos/jameskorzekwa/openchamber/compare/${UPSTREAM_COMMIT}...${COMMIT}`;
     const fetchImpl = makeFetch({ overrides: new Map([[compareUrl, JSON.stringify({ status: 'diverged', merge_base_commit: { sha: 'b'.repeat(40) } })]]) });
