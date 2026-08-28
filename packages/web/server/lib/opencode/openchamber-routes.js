@@ -51,9 +51,10 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
     repository: process.env.OPENCHAMBER_UPDATE_CHANNEL_REPO,
   });
   const managedInstallRoot = path.join(os.homedir(), '.local', 'share', 'openchamber');
-  const survivingTransactionPath = path.join(managedInstallRoot, 'restart-transaction.json');
   void (async () => {
     try {
+      const canonicalManagedInstallRoot = await fs.promises.realpath(managedInstallRoot);
+      const survivingTransactionPath = path.join(canonicalManagedInstallRoot, 'restart-transaction.json');
       const raw = JSON.parse(await fs.promises.readFile(survivingTransactionPath, 'utf8'));
       if (raw?.schemaVersion !== 3 || raw.transactionId?.constructor !== String) return;
       const { fileURLToPath } = await import('node:url');

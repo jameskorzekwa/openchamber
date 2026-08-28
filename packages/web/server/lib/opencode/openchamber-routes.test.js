@@ -60,7 +60,7 @@ function createInstaller() {
   };
 }
 
-function createApp({ environment = {}, storedOptions = {}, installer = createInstaller(), platform = 'linux', survivingTransaction = null } = {}) {
+function createApp({ environment = {}, storedOptions = {}, installer = createInstaller(), platform = 'linux', survivingTransaction = null, canonicalManagedInstallRoot = null } = {}) {
   const app = express();
   const processMock = {
     env: environment,
@@ -73,6 +73,7 @@ function createApp({ environment = {}, storedOptions = {}, installer = createIns
     fs: {
       existsSync: vi.fn(() => false),
       promises: {
+        realpath: vi.fn(async (filePath) => canonicalManagedInstallRoot || filePath),
         readFile: vi.fn(async (filePath) => {
           if (String(filePath).endsWith('restart-transaction.json')) {
             if (survivingTransaction) return JSON.stringify(survivingTransaction);
@@ -132,10 +133,12 @@ describe('OpenChamber validated update routes', () => {
 
   it('starts an ID-bound detached fallback for a journal surviving startup', async () => {
     const transactionId = '12345678-1234-4123-8123-123456789abc';
-    createApp({ survivingTransaction: { schemaVersion: 3, transactionId } });
+    const canonicalManagedInstallRoot = '/Volumes/T9-OpenCode/openchamber';
+    createApp({ survivingTransaction: { schemaVersion: 3, transactionId }, canonicalManagedInstallRoot });
     await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
     expect(spawn).toHaveBeenCalledWith(process.execPath, expect.arrayContaining([
       '--delayed-fallback',
+      path.join(canonicalManagedInstallRoot, 'restart-transaction.json'),
       '--transaction-id',
       transactionId,
     ]), expect.objectContaining({ detached: true }));
