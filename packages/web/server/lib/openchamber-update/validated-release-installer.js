@@ -966,6 +966,7 @@ export function createValidatedReleaseInstaller(options = {}) {
     }
     activeInstall = (async () => {
       const lock = admittedLock;
+      const canonicalInstallRoot = await fsp.realpath(installRoot);
       let stagingDirectory = null;
       let archivePath = null;
       let previousTarget = null;
@@ -982,7 +983,7 @@ export function createValidatedReleaseInstaller(options = {}) {
         const declaredChecksum = parseChecksumFile(checksumBytes, channel.archive.name);
         if (declaredChecksum !== channel.archive.sha256) fail('Checksum asset does not match the update channel');
         await persist(statePayload('installing', currentVersion, { targetVersion: channel.version }));
-        stagingDirectory = path.join(installRoot, 'staging', crypto.randomUUID());
+        stagingDirectory = path.join(canonicalInstallRoot, 'staging', crypto.randomUUID());
         await ensureDirectoryDurable(stagingDirectory);
         archivePath = path.join(stagingDirectory, '.archive.tgz');
         await downloadArchive(fetchImpl, archiveAsset.url, archivePath, archiveAsset.size, channel.archive.sha256);
@@ -993,7 +994,7 @@ export function createValidatedReleaseInstaller(options = {}) {
         await validateBundledDependencies(stagingDirectory, channel);
         await syncDirectory(stagingDirectory);
 
-        const releaseDirectory = path.join(installRoot, 'releases', `${channel.version}-${channel.sourceCommit.slice(0, 12)}`);
+        const releaseDirectory = path.join(canonicalInstallRoot, 'releases', `${channel.version}-${channel.sourceCommit.slice(0, 12)}`);
         await ensureDirectoryDurable(path.dirname(releaseDirectory));
         const releaseExists = await fsp.lstat(releaseDirectory).catch(() => null);
         if (releaseExists) {
@@ -1021,9 +1022,9 @@ export function createValidatedReleaseInstaller(options = {}) {
           const previousStat = await fsp.stat(previousTarget).catch(() => null);
           if (!previousStat?.isDirectory()) previousTarget = null;
         }
-        if (!previousTarget || !isPathInside(installRoot, previousTarget)) {
+        if (!previousTarget || !isPathInside(canonicalInstallRoot, previousTarget)) {
           const archiveSource = previousTarget || currentInstallDir;
-          const archiveDirectory = path.join(installRoot, 'archives', `${currentVersion}-${Date.now()}`);
+          const archiveDirectory = path.join(canonicalInstallRoot, 'archives', `${currentVersion}-${Date.now()}`);
           await ensureDirectoryDurable(path.dirname(archiveDirectory));
           await archiveInstalledPackage(archiveSource, archiveDirectory);
           await syncTree(archiveDirectory);
@@ -1033,8 +1034,8 @@ export function createValidatedReleaseInstaller(options = {}) {
         const previousIdentity = await readInstalledIdentity(previousTarget);
         if (previousIdentity.version !== currentVersion) fail('Rollback archive version does not match the running version');
         const restartContext = {
-          installRoot,
-          statusPath: statePath,
+          installRoot: canonicalInstallRoot,
+          statusPath: path.join(canonicalInstallRoot, 'update-status.json'),
           targetVersion,
           targetRevision: channel.sourceCommit,
           targetDirectory: releaseDirectory,
