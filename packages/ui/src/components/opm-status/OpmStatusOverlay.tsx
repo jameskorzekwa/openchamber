@@ -20,7 +20,9 @@ import {
   getSalientOpmCount,
   openOpmRowSession,
   ownerGuidanceKind,
+  postOpmCommand,
   type OpmAvailableSnapshot,
+  type OpmCommandResult,
   type OpmRow,
   type OpmSnapshot,
   type OpmStatusLoadResult,
@@ -28,6 +30,7 @@ import {
 } from './opm-status';
 
 const POLL_INTERVAL_MS = 15_000;
+const SENT_RESET_MS = 10_000;
 const NOTIFIED_KEY = 'opmStatus.notified';
 const notifiedKeysSchema = z.array(z.string());
 
@@ -268,64 +271,118 @@ const notifyNeedsOwner = (snapshot: OpmSnapshot, t: Translate) => {
   }
 };
 
+type RunState =
+  | { status: 'pending' }
+  | { status: 'sent' }
+  | { status: 'error'; message: string };
+
 const OpmWorkRow = ({
   row,
   nested = false,
   onCopy,
   copiedCommand,
   onOpenSession,
+  runState,
+  onRun,
+  expanded,
+  onToggleExpand,
 }: {
   row: OpmRow;
   nested?: boolean;
   onCopy: (command: string) => void;
   copiedCommand: string | null;
   onOpenSession: (row: OpmRow) => void;
+  runState: RunState | undefined;
+  onRun: (row: OpmRow) => void;
+  expanded: boolean;
+  onToggleExpand: (row: OpmRow) => void;
 }) => {
   const { locale, t } = useI18n();
   const projectLabel = `${row.projectName || row.project || 'OPM'} #${row.ref}`;
+  const phasePill = (
+    <span className={cn('shrink-0 rounded-full px-2 py-0.5 typography-micro', phaseTone(row))}>{phaseLabel(row.phase, t)}</span>
+  );
   return (
     <article className={cn('rounded-lg border p-3', rowTone(row), nested && 'ml-4')}>
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Small screens: a two-line summary (ref + phase + age / truncated
+          title) that toggles the detail below. Desktop always shows detail. */}
+      <button
+        type="button"
+        className="flex w-full min-w-0 flex-col gap-1 text-left sm:hidden"
+        aria-expanded={expanded}
+        onClick={() => onToggleExpand(row)}
+      >
+        <span className="flex w-full min-w-0 items-center gap-2">
+          <span className="min-w-0 truncate font-medium text-foreground">{projectLabel}</span>
+          {phasePill}
+          <span className="ml-auto shrink-0 typography-micro text-muted-foreground">{relativeAge(row.updatedAt, locale)}</span>
+          <Icon name="arrow-down-s" className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-180')} />
+        </span>
+        <span className="w-full min-w-0 truncate typography-ui-label text-foreground">{row.title}</span>
+      </button>
+      <div data-testid="opm-row-detail" className={cn(expanded ? 'mt-2 block' : 'hidden', 'sm:mt-0 sm:block')}>
+        <div className="hidden flex-wrap items-center gap-2 sm:flex">
+          {row.url ? (
+            <a className="inline-flex min-w-0 items-center gap-1 break-words font-medium text-foreground hover:underline" href={row.url} target="_blank" rel="noreferrer">
+              {projectLabel}<Icon name="external-link" className="size-3" />
+            </a>
+          ) : <span className="min-w-0 break-words font-medium text-foreground">{projectLabel}</span>}
+          {phasePill}
+          {row.parentRef ? <span className="typography-micro text-muted-foreground">{t('opm.row.childOf', { ref: row.parentRef })}</span> : null}
+          <span className="ml-auto shrink-0 typography-micro text-muted-foreground">{relativeAge(row.updatedAt, locale)}</span>
+        </div>
         {row.url ? (
-          <a className="inline-flex items-center gap-1 font-medium text-foreground hover:underline" href={row.url} target="_blank" rel="noreferrer">
-            {projectLabel}<Icon name="external-link" className="size-3" />
+          <a className="inline-flex min-w-0 max-w-full items-center gap-1 typography-micro text-muted-foreground hover:underline sm:hidden" href={row.url} target="_blank" rel="noreferrer">
+            <span className="min-w-0 truncate">{projectLabel}</span><Icon name="external-link" className="size-3 shrink-0" />
           </a>
-        ) : <span className="font-medium text-foreground">{projectLabel}</span>}
-        <span className={cn('rounded-full px-2 py-0.5 typography-micro', phaseTone(row))}>{phaseLabel(row.phase, t)}</span>
-        {row.parentRef ? <span className="typography-micro text-muted-foreground">{t('opm.row.childOf', { ref: row.parentRef })}</span> : null}
-        <span className="ml-auto typography-micro text-muted-foreground">{relativeAge(row.updatedAt, locale)}</span>
-      </div>
-      <p className="mt-1 typography-ui-label text-foreground">{row.title}</p>
-      {row.reason ? <p className="mt-1 typography-ui-label text-muted-foreground">{row.reason}</p> : null}
-      {row.nextAction && row.nextAction !== row.reason ? <p className="mt-1 typography-ui-label text-muted-foreground">{t('opm.row.nextAction', { action: row.nextAction })}</p> : null}
-      <div className={cn(
-        'mt-2 rounded-md px-2.5 py-2 typography-ui-label',
-        row.owner.required ? 'bg-status-error/10 text-status-error' : 'bg-status-success/10 text-status-success',
-      )}>
-        {ownerText(row, t)}
-      </div>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        {row.command ? (
-          <>
-            <code className="min-w-0 flex-1 [overflow-wrap:anywhere] rounded-md bg-background px-2 py-1.5 typography-micro text-foreground">{row.command}</code>
-            <Button size="xs" variant="outline" onClick={() => onCopy(row.command ?? '')}>
-              <Icon name={copiedCommand === row.command ? 'check' : 'clipboard'} className="size-3" />
-              {copiedCommand === row.command ? t('opm.actions.copied') : t('opm.actions.copy')}
+        ) : null}
+        <p className="mt-1 hidden min-w-0 break-words typography-ui-label text-foreground sm:block">{row.title}</p>
+        {row.reason ? <p className="mt-1 min-w-0 break-words [overflow-wrap:anywhere] typography-ui-label text-muted-foreground">{row.reason}</p> : null}
+        {row.nextAction && row.nextAction !== row.reason ? <p className="mt-1 min-w-0 break-words [overflow-wrap:anywhere] typography-ui-label text-muted-foreground">{t('opm.row.nextAction', { action: row.nextAction })}</p> : null}
+        <div className={cn(
+          'mt-2 min-w-0 break-words rounded-md px-2.5 py-2 typography-ui-label',
+          row.owner.required ? 'bg-status-error/10 text-status-error' : 'bg-status-success/10 text-status-success',
+        )}>
+          {ownerText(row, t)}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {row.command ? (
+            <>
+              <code className="min-w-0 flex-1 break-all rounded-md bg-background px-2 py-1.5 typography-micro text-foreground">{row.command}</code>
+              <Button
+                size="xs"
+                variant="default"
+                disabled={runState?.status === 'pending' || runState?.status === 'sent'}
+                onClick={() => onRun(row)}
+              >
+                {runState?.status === 'pending'
+                  ? t('opm.actions.running')
+                  : runState?.status === 'sent'
+                    ? t('opm.actions.sent')
+                    : t('opm.actions.run')}
+              </Button>
+              <Button size="xs" variant="outline" onClick={() => onCopy(row.command ?? '')}>
+                <Icon name={copiedCommand === row.command ? 'check' : 'clipboard'} className="size-3" />
+                {copiedCommand === row.command ? t('opm.actions.copied') : t('opm.actions.copy')}
+              </Button>
+            </>
+          ) : null}
+          {row.sessionId ? (
+            <Button size="xs" variant="outline" onClick={() => onOpenSession(row)}>
+              {t('opm.actions.openSession')}
             </Button>
-          </>
+          ) : null}
+        </div>
+        {runState?.status === 'error' ? (
+          <p className="mt-1 min-w-0 break-words typography-micro text-status-error" role="alert">{runState.message}</p>
         ) : null}
-        {row.sessionId ? (
-          <Button size="xs" variant="outline" onClick={() => onOpenSession(row)}>
-            {t('opm.actions.openSession')}
-          </Button>
+        {(row.branch || row.sessionId || row.effect) ? (
+          <p className="mt-2 min-w-0 break-all font-mono typography-micro text-muted-foreground">
+            {[row.branch && t('opm.row.branch', { branch: row.branch }), row.sessionId && t('opm.row.session', { session: row.sessionId }), row.effect?.kind && t('opm.row.effect', { kind: row.effect.kind, status: row.effect.status ?? '' })].filter(Boolean).join(' · ')}
+          </p>
         ) : null}
+        {row.effect?.error ? <p className="mt-1 min-w-0 break-words [overflow-wrap:anywhere] typography-micro text-status-error">{row.effect.error}</p> : null}
       </div>
-      {(row.branch || row.sessionId || row.effect) ? (
-        <p className="mt-2 break-all font-mono typography-micro text-muted-foreground">
-          {[row.branch && t('opm.row.branch', { branch: row.branch }), row.sessionId && t('opm.row.session', { session: row.sessionId }), row.effect?.kind && t('opm.row.effect', { kind: row.effect.kind, status: row.effect.status ?? '' })].filter(Boolean).join(' · ')}
-        </p>
-      ) : null}
-      {row.effect?.error ? <p className="mt-1 typography-micro text-status-error">{row.effect.error}</p> : null}
     </article>
   );
 };
@@ -377,18 +434,26 @@ const SupervisorSummary = ({ snapshot }: { snapshot: OpmAvailableSnapshot }) => 
   );
 };
 
+const rowKey = (row: OpmRow) => `${row.project}#${row.ref}`;
+
 export const OpmStatusOverlay = ({
   loadStatus = fetchOpmStatus,
   openSession = (sessionId, workspacePath) => useSessionUIStore.getState().setCurrentSession(sessionId, workspacePath),
+  sendCommand = postOpmCommand,
 }: {
   loadStatus?: () => Promise<OpmStatusLoadResult>;
   openSession?: (sessionId: string, workspacePath: string | null) => void;
+  sendCommand?: (row: OpmRow) => Promise<OpmCommandResult>;
 }) => {
   const { locale, t } = useI18n();
   const [snapshot, setSnapshot] = React.useState<OpmSnapshot | null>(null);
   const [supported, setSupported] = React.useState<boolean | null>(null);
   const [open, setOpen] = React.useState(false);
   const [copiedCommand, setCopiedCommand] = React.useState<string | null>(null);
+  const [runStates, setRunStates] = React.useState<Record<string, RunState>>({});
+  // Mobile-only collapse overrides; a row without an override is expanded
+  // exactly when it needs the owner (needs-owner and dead-letter rows).
+  const [expandedOverrides, setExpandedOverrides] = React.useState<Record<string, boolean>>({});
   const [notificationPermission, setNotificationPermission] = React.useState<NotificationPermission | 'unsupported'>(
     globalThis.Notification ? Notification.permission : 'unsupported',
   );
@@ -449,6 +514,38 @@ export const OpmStatusOverlay = ({
   const openRowSession = (row: OpmRow) => {
     if (openOpmRowSession(row, openSession)) setOpen(false);
   };
+  const isRowExpanded = (row: OpmRow) => expandedOverrides[rowKey(row)] ?? (row.owner.required || row.kind !== null);
+  const toggleRow = (row: OpmRow) => {
+    const next = !isRowExpanded(row);
+    setExpandedOverrides((previous) => ({ ...previous, [rowKey(row)]: next }));
+  };
+  const runCommand = async (row: OpmRow) => {
+    const key = rowKey(row);
+    setRunStates((previous) => ({ ...previous, [key]: { status: 'pending' } }));
+    const result = await sendCommand(row);
+    if (result.ok) {
+      setRunStates((previous) => ({ ...previous, [key]: { status: 'sent' } }));
+      window.setTimeout(() => {
+        setRunStates((previous) => {
+          const rest = { ...previous };
+          delete rest[key];
+          return rest;
+        });
+      }, SENT_RESET_MS);
+    } else {
+      setRunStates((previous) => ({ ...previous, [key]: { status: 'error', message: result.error } }));
+    }
+  };
+  const rowProps = (row: OpmRow) => ({
+    row,
+    onCopy: copyCommand,
+    copiedCommand,
+    onOpenSession: openRowSession,
+    runState: runStates[rowKey(row)],
+    onRun: (target: OpmRow) => void runCommand(target),
+    expanded: isRowExpanded(row),
+    onToggleExpand: toggleRow,
+  });
   const requestNotifications = async () => {
     if (!globalThis.Notification) return;
     try {
@@ -488,51 +585,71 @@ export const OpmStatusOverlay = ({
         {pillCount !== null ? <span className="font-bold sm:hidden">{pillCount}</span> : null}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-4xl gap-3 p-4 sm:p-5">
-          <DialogHeader className="pr-8">
-            <DialogTitle className="flex items-center gap-2"><StatusDot snapshot={snapshot} />OPM</DialogTitle>
-            <DialogDescription>
+        <DialogContent
+          showCloseButton={false}
+          className="max-w-4xl gap-0 p-0 pb-[max(1rem,env(safe-area-inset-bottom))]"
+        >
+          {/* The popup itself scrolls, so the header is sticky, opaque, and
+              z-raised: body content scrolls under it, never over the title or
+              the close button. The close button lives inside this bar for the
+              same reason. */}
+          <DialogHeader className="sticky top-0 z-20 gap-1 border-b border-border/60 bg-background px-4 pb-3 pt-[max(1rem,env(safe-area-inset-top))] sm:px-5 sm:pt-5">
+            <div className="flex items-start justify-between gap-2">
+              <DialogTitle className="flex min-w-0 items-center gap-2"><StatusDot snapshot={snapshot} />OPM</DialogTitle>
+              <Button size="xs" variant="ghost" aria-label={t('dialog.common.actions.close')} className="-mr-1 shrink-0 px-1.5" onClick={() => setOpen(false)}>
+                <Icon name="close" className="size-4" />
+              </Button>
+            </div>
+            <DialogDescription className="min-w-0 break-words">
               {snapshot.available
                 ? `${phaseLabel(snapshot.state, t)} · ${snapshot.summary || t('opm.dialog.noSummary')} · ${t('opm.dialog.updated', { age: relativeAge(snapshot.fetchedAt, locale) })}`
                 : t('opm.dialog.unavailable')}
             </DialogDescription>
           </DialogHeader>
-          {!snapshot.available ? (
-            <div className="rounded-lg border border-status-warning/30 bg-status-warning/10 p-3 text-status-warning typography-ui-label">
-              {t('opm.dialog.controlUnreachable')}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <SupervisorSummary snapshot={snapshot} />
-              {snapshot.groups.needsYou.length > 0 ? (
-                <section aria-labelledby="opm-needs-you">
-                  <h3 id="opm-needs-you" className="mb-2 font-medium text-status-error">{t('opm.section.needsYou', { count: snapshot.groups.needsYou.length })}</h3>
-                  <div className="space-y-2">
-                    {snapshot.groups.needsYou.map((row) => <OpmWorkRow key={`${row.project}#${row.ref}`} row={row} onCopy={copyCommand} copiedCommand={copiedCommand} onOpenSession={openRowSession} />)}
-                  </div>
-                </section>
-              ) : null}
-              <section aria-labelledby="opm-work-items">
-                <h3 id="opm-work-items" className="mb-2 font-medium text-foreground">{t('opm.section.workItems')}</h3>
-                {snapshot.tree.length === 0 ? <p className="text-muted-foreground typography-ui-label">{t('opm.section.empty')}</p> : (
-                  <div className="space-y-2">
-                    {snapshot.tree.map((root: OpmTreeRow) => (
-                      <div key={`${root.project}#${root.ref}`} className="space-y-2">
-                        <OpmWorkRow row={root} onCopy={copyCommand} copiedCommand={copiedCommand} onOpenSession={openRowSession} />
-                        {root.childRows.map((child) => <OpmWorkRow key={`${child.project}#${child.ref}`} row={child} nested onCopy={copyCommand} copiedCommand={copiedCommand} onOpenSession={openRowSession} />)}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-              <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3 typography-micro text-muted-foreground">
-                <span>{t('opm.footer.counts', { needsYou: counts.needsYou, blocked: counts.blocked, working: counts.active, waiting: counts.waiting, queued: counts.queued })}</span>
-                {notificationPermission === 'default' ? (
-                  <Button size="xs" variant="outline" onClick={() => void requestNotifications()}>{t('opm.actions.enableNotifications')}</Button>
+          <div className="px-4 pt-3 sm:px-5">
+            {!snapshot.available ? (
+              <div className="rounded-lg border border-status-warning/30 bg-status-warning/10 p-3 text-status-warning typography-ui-label">
+                {t('opm.dialog.controlUnreachable')}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <SupervisorSummary snapshot={snapshot} />
+                {snapshot.groups.needsYou.length > 0 ? (
+                  <section aria-labelledby="opm-needs-you">
+                    <h3 id="opm-needs-you" className="mb-2 font-medium text-status-error">{t('opm.section.needsYou', { count: snapshot.groups.needsYou.length })}</h3>
+                    <div className="space-y-2">
+                      {snapshot.groups.needsYou.map((row) => <OpmWorkRow key={rowKey(row)} {...rowProps(row)} />)}
+                    </div>
+                  </section>
                 ) : null}
-              </footer>
-            </div>
-          )}
+                <section aria-labelledby="opm-work-items">
+                  <h3 id="opm-work-items" className="mb-2 font-medium text-foreground">{t('opm.section.workItems')}</h3>
+                  {snapshot.tree.length === 0 ? <p className="text-muted-foreground typography-ui-label">{t('opm.section.empty')}</p> : (
+                    <div className="space-y-2">
+                      {snapshot.tree.map((root: OpmTreeRow) => (
+                        <div key={rowKey(root)} className="space-y-2">
+                          <OpmWorkRow {...rowProps(root)} />
+                          {root.childRows.length > 0 ? (
+                            // On small screens the children collapse with their
+                            // parent; desktop always shows the full family.
+                            <div className={cn('space-y-2', !isRowExpanded(root) && 'hidden sm:block')}>
+                              {root.childRows.map((child) => <OpmWorkRow key={rowKey(child)} nested {...rowProps(child)} />)}
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+                <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3 typography-micro text-muted-foreground">
+                  <span>{t('opm.footer.counts', { needsYou: counts.needsYou, blocked: counts.blocked, working: counts.active, waiting: counts.waiting, queued: counts.queued })}</span>
+                  {notificationPermission === 'default' ? (
+                    <Button size="xs" variant="outline" onClick={() => void requestNotifications()}>{t('opm.actions.enableNotifications')}</Button>
+                  ) : null}
+                </footer>
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </>

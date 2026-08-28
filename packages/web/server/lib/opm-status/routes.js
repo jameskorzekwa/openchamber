@@ -1,12 +1,19 @@
+import { execFile as nodeExecFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+import express from 'express';
 
 import { createPushoverNotifier } from './pushover-notifier.js';
 
 const DEFAULT_CONTROL_URL = 'http://127.0.0.1:47651';
 const POLL_INTERVAL_MS = 10_000;
 const FETCH_TIMEOUT_MS = 3_000;
+const COMMAND_TIMEOUT_MS = 15_000;
+const RESUME_COMMAND = '/agent resume';
+// Phases where "/agent resume" can never apply: the item is finished.
+const TERMINAL_PHASES = new Set(['completed', 'cancelled', 'verified']);
 
 const AUTHORIZE_COMMAND = /\/agent authorize [a-f0-9]{40}/;
 const NEEDS_OWNER = /needs owner authorisation/;
@@ -25,7 +32,21 @@ export const readOpmStatusConfig = (configPath) => {
     || (typeof parsed.controlUrl === 'string' && parsed.controlUrl)
     || DEFAULT_CONTROL_URL).replace(/\/+$/, '');
   const issueUrls = parsed.issueUrls && typeof parsed.issueUrls === 'object' ? parsed.issueUrls : {};
-  return { controlUrl, issueUrls };
+  const repos = parsed.repos && typeof parsed.repos === 'object' ? parsed.repos : {};
+  return { controlUrl, issueUrls, repos };
+};
+
+// "owner/name" from the explicit repos map, else derived from the issueUrls
+// template (https://github.com/OWNER/REPO/issues/{ref}); null when neither
+// names the project.
+export const resolveRepo = ({ repos, issueUrls }, project) => {
+  const explicit = repos?.[project];
+  if (typeof explicit === 'string' && /^[\w.-]+\/[\w.-]+$/.test(explicit)) return explicit;
+  const template = issueUrls?.[project];
+  const match = typeof template === 'string'
+    ? template.match(/^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/issues\//)
+    : null;
+  return match ? `${match[1]}/${match[2]}` : null;
 };
 
 const issueUrlFor = (issueUrls, project, ref) => {
@@ -253,6 +274,37 @@ export const buildSnapshot = ({ activity, status, issueUrls = {}, now = Date.now
   };
 };
 
+const collectRows = (snapshot) => {
+  const rows = [];
+  const visit = (row) => {
+    rows.push(row);
+    for (const child of Array.isArray(row.childRows) ? row.childRows : []) visit(child);
+  };
+  for (const row of Array.isArray(snapshot.tree) ? snapshot.tree : []) visit(row);
+  for (const group of Object.values(snapshot.groups ?? {})) {
+    for (const row of Array.isArray(group) ? group : []) rows.push(row);
+  }
+  return rows;
+};
+
+// Never execute arbitrary input: a submitted command must re-derive from the
+// current snapshot. It is allowed when it exactly equals the (project, ref)
+// row's own command, or when it is the literal "/agent resume" for a
+// non-terminal row or for a stalled supervisor attention entry on that ref.
+export const isCommandAllowed = (snapshot, { project, ref, command }) => {
+  if (!snapshot?.available) return false;
+  const rows = collectRows(snapshot)
+    .filter((row) => String(row.project) === String(project) && String(row.ref) === String(ref));
+  for (const row of rows) {
+    if (row.command && row.command === command) return true;
+    if (command === RESUME_COMMAND && !TERMINAL_PHASES.has(row.phase)) return true;
+  }
+  return command === RESUME_COMMAND
+    && (snapshot.supervisor?.attention ?? []).some((item) => String(item.ref) === String(ref));
+};
+
+const parseJsonBody = express.json({ limit: '256kb' });
+
 const fetchJson = async (url) => {
   const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!response.ok) throw new Error(`${url} returned ${response.status}`);
@@ -300,9 +352,57 @@ export function registerOpmStatusRoutes(app, options = {}) {
   const timer = setInterval(() => void poller.poll(), options.pollIntervalMs ?? POLL_INTERVAL_MS);
   timer.unref?.();
 
+  const execFile = options.execFile ?? nodeExecFile;
+
   app.get('/api/opm/status', (_req, res) => {
     res.set('Cache-Control', 'no-store');
     res.json(poller.current());
+  });
+
+  app.post('/api/opm/command', parseJsonBody, async (req, res) => {
+    try {
+      const body = req.body;
+      const project = typeof body?.project === 'string' ? body.project : null;
+      const ref = typeof body?.ref === 'string' || typeof body?.ref === 'number' ? String(body.ref) : null;
+      const command = typeof body?.command === 'string' ? body.command : null;
+      if (!project || !ref || !command) {
+        return res.status(400).json({ ok: false, error: 'project, ref, and command are required' });
+      }
+      if (!isCommandAllowed(poller.current(), { project, ref, command })) {
+        return res.status(400).json({
+          ok: false,
+          error: `Command does not match the current OPM state for ${project}#${ref}. Refresh and try again.`,
+        });
+      }
+      const repo = resolveRepo(config, project);
+      if (!repo) {
+        return res.status(400).json({
+          ok: false,
+          error: `No GitHub repository is configured for project "${project}". Add a repos entry to ~/.config/openchamber-opm-status.json.`,
+        });
+      }
+      try {
+        await new Promise((resolve, reject) => {
+          execFile(
+            'gh',
+            ['issue', 'comment', ref, '--repo', repo, '--body', command],
+            { timeout: COMMAND_TIMEOUT_MS },
+            (error, _stdout, stderr) => {
+              if (error) reject(new Error(String(stderr || error.message || error).trim() || 'gh issue comment failed'));
+              else resolve(undefined);
+            },
+          );
+        });
+      } catch (error) {
+        return res.status(502).json({ ok: false, error: error?.message || 'gh issue comment failed' });
+      }
+      // The comment changes OPM state; poll now so the next snapshot reflects
+      // reality sooner than the regular interval would.
+      void poller.poll();
+      return res.json({ ok: true });
+    } catch (error) {
+      return res.status(500).json({ ok: false, error: error?.message || 'unexpected error' });
+    }
   });
 
   let closed = false;
