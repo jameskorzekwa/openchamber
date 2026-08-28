@@ -3,8 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildSnapshot,
   createOpmStatusPoller,
+  isCommandAllowed,
   ownerGuidance,
   registerOpmStatusRoutes,
+  resolveRepo,
 } from './routes.js';
 
 const SHA = 'a'.repeat(40);
@@ -149,6 +151,7 @@ describe('OPM polling and route lifecycle', () => {
     const poller = { poll: vi.fn(), current: () => ({ available: true }) };
     const runtime = registerOpmStatusRoutes({
       get: (route, handler) => handlers.set(route, handler),
+      post: () => {},
     }, { poller });
     const response = { set: vi.fn(), json: vi.fn() };
 
@@ -159,5 +162,143 @@ describe('OPM polling and route lifecycle', () => {
     runtime.close();
     runtime.close();
     expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('OPM command endpoint', () => {
+  const AUTHORIZE = `/agent authorize ${SHA}`;
+
+  const commandSnapshot = () => buildSnapshot({
+    activity: {
+      blockers: [entry({ ref: '10', phase: 'blocked', reason: `needs owner authorisation; comment "${AUTHORIZE}"` })],
+      active: [entry({ ref: '20', phase: 'active' })],
+    },
+    status: { ok: true, attention: [{ kind: 'stalled_dispatch', ref: '77', detail: 'no progress' }] },
+  });
+
+  const register = ({ snapshot = commandSnapshot(), config, execFile } = {}) => {
+    const posted = new Map();
+    const poller = { poll: vi.fn(), current: () => snapshot };
+    const runtime = registerOpmStatusRoutes({
+      get: () => {},
+      post: (route, ...handlers) => posted.set(route, handlers.at(-1)),
+    }, {
+      poller,
+      config: config ?? { controlUrl: 'http://127.0.0.1:47651', issueUrls: {}, repos: { openchamber: 'owner/name' } },
+      execFile,
+    });
+    poller.poll.mockClear();
+    return { handler: posted.get('/api/opm/command'), poller, runtime };
+  };
+
+  const createRes = () => {
+    const res = { statusCode: 200, body: null };
+    res.status = (code) => { res.statusCode = code; return res; };
+    res.json = (payload) => { res.body = payload; return res; };
+    return res;
+  };
+
+  it('executes a valid needs-owner command through gh with exact args and polls immediately', async () => {
+    const execFile = vi.fn((_command, _args, _options, callback) => callback(null, '', ''));
+    const { handler, poller, runtime } = register({ execFile });
+    const res = createRes();
+
+    await handler({ body: { project: 'openchamber', ref: '10', command: AUTHORIZE } }, res);
+
+    expect(execFile).toHaveBeenCalledWith(
+      'gh',
+      ['issue', 'comment', '10', '--repo', 'owner/name', '--body', AUTHORIZE],
+      expect.objectContaining({ timeout: 15_000 }),
+      expect.any(Function),
+    );
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(poller.poll).toHaveBeenCalledTimes(1);
+    runtime.close();
+  });
+
+  it('rejects a mismatched command with 400 and never executes anything', async () => {
+    const execFile = vi.fn();
+    const { handler, poller, runtime } = register({ execFile });
+    const res = createRes();
+
+    await handler({ body: { project: 'openchamber', ref: '10', command: `/agent authorize ${'b'.repeat(40)}` } }, res);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toMatchObject({ ok: false, error: expect.stringContaining('does not match') });
+    expect(execFile).not.toHaveBeenCalled();
+    expect(poller.poll).not.toHaveBeenCalled();
+    runtime.close();
+  });
+
+  it('allows "/agent resume" for non-terminal rows and stalled attention refs, not for terminal rows', async () => {
+    const snapshot = commandSnapshot();
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '20', command: '/agent resume' })).toBe(true);
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '77', command: '/agent resume' })).toBe(true);
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '999', command: '/agent resume' })).toBe(false);
+    const terminal = buildSnapshot({
+      activity: { active: [entry({ ref: '30', phase: 'completed' })] },
+      status: { ok: true },
+    });
+    expect(isCommandAllowed(terminal, { project: 'openchamber', ref: '30', command: '/agent resume' })).toBe(false);
+    expect(isCommandAllowed({ available: false }, { project: 'openchamber', ref: '20', command: '/agent resume' })).toBe(false);
+
+    const execFile = vi.fn((_command, _args, _options, callback) => callback(null, '', ''));
+    const { handler, runtime } = register({ execFile });
+    const res = createRes();
+    await handler({ body: { project: 'openchamber', ref: '20', command: '/agent resume' } }, res);
+    expect(res.body).toEqual({ ok: true });
+    expect(execFile).toHaveBeenCalledWith(
+      'gh',
+      ['issue', 'comment', '20', '--repo', 'owner/name', '--body', '/agent resume'],
+      expect.objectContaining({ timeout: 15_000 }),
+      expect.any(Function),
+    );
+    runtime.close();
+  });
+
+  it('resolves the repo from the repos map first and the issueUrls template as fallback', async () => {
+    const config = {
+      controlUrl: 'http://127.0.0.1:47651',
+      issueUrls: { openchamber: 'https://github.com/fallback-owner/fallback-repo/issues/{ref}' },
+      repos: {},
+    };
+    expect(resolveRepo({ repos: { openchamber: 'owner/name' }, issueUrls: config.issueUrls }, 'openchamber')).toBe('owner/name');
+    expect(resolveRepo(config, 'openchamber')).toBe('fallback-owner/fallback-repo');
+    expect(resolveRepo({ repos: {}, issueUrls: {} }, 'openchamber')).toBeNull();
+
+    const execFile = vi.fn((_command, _args, _options, callback) => callback(null, '', ''));
+    const { handler, runtime } = register({ config, execFile });
+    const res = createRes();
+    await handler({ body: { project: 'openchamber', ref: '10', command: AUTHORIZE } }, res);
+    expect(execFile).toHaveBeenCalledWith(
+      'gh',
+      expect.arrayContaining(['--repo', 'fallback-owner/fallback-repo']),
+      expect.objectContaining({ timeout: 15_000 }),
+      expect.any(Function),
+    );
+    runtime.close();
+  });
+
+  it('reports a missing repo mapping as 400 and a gh failure as 502 with the error', async () => {
+    const unmapped = register({
+      config: { controlUrl: 'http://127.0.0.1:47651', issueUrls: {}, repos: {} },
+      execFile: vi.fn(),
+    });
+    const missingRes = createRes();
+    await unmapped.handler({ body: { project: 'openchamber', ref: '10', command: AUTHORIZE } }, missingRes);
+    expect(missingRes.statusCode).toBe(400);
+    expect(missingRes.body).toMatchObject({ ok: false, error: expect.stringContaining('No GitHub repository') });
+    unmapped.runtime.close();
+
+    const failing = register({
+      execFile: vi.fn((_command, _args, _options, callback) => callback(new Error('spawn gh ENOENT'), '', '')),
+    });
+    const failRes = createRes();
+    await failing.handler({ body: { project: 'openchamber', ref: '10', command: AUTHORIZE } }, failRes);
+    expect(failRes.statusCode).toBe(502);
+    expect(failRes.body).toMatchObject({ ok: false, error: expect.stringContaining('ENOENT') });
+    expect(failing.poller.poll).not.toHaveBeenCalled();
+    failing.runtime.close();
   });
 });
