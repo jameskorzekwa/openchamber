@@ -160,6 +160,35 @@ export const fetchOpmStatus = async (): Promise<OpmStatusLoadResult> => {
   }
 };
 
+export type OpmCommandResult = { ok: true } | { ok: false; error: string };
+
+const commandResultSchema = z.union([
+  z.object({ ok: z.literal(true) }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+]);
+
+// Posts a row's command for server-side re-validation and execution as a
+// GitHub issue comment. Every failure becomes { ok: false, error } so the
+// caller renders it inline instead of throwing.
+export const postOpmCommand = async (row: OpmRow): Promise<OpmCommandResult> => {
+  if (!row.command) return { ok: false, error: 'No command to run' };
+  let response: Response;
+  try {
+    response = await runtimeFetch('/api/opm/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: row.project, ref: row.ref, command: row.command }),
+    });
+  } catch {
+    return { ok: false, error: 'Request failed' };
+  }
+  try {
+    return commandResultSchema.parse(await response.json());
+  } catch {
+    return { ok: false, error: `Request returned ${response.status}` };
+  }
+};
+
 export const getOpmCounts = (snapshot: OpmAvailableSnapshot) => ({
   needsYou: snapshot.groups.needsYou.length,
   blocked: snapshot.groups.blocked.length,

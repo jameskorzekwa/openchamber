@@ -23,6 +23,8 @@ declare module "bun:test" {
     toBeLessThanOrEqual(expected: number): void;
     toHaveLength(expected: number): void;
     toBeInstanceOf(expected: unknown): void;
+    toHaveBeenCalledTimes(expected: number): void;
+    toMatchObject(expected: unknown): void;
     not: {
       toEqual(expected: unknown): void;
       toBe(expected: unknown): void;
