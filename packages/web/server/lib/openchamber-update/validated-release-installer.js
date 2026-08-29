@@ -50,6 +50,16 @@ function fail(message) {
   throw new Error(message);
 }
 
+export function resolveManagedInstallRoot(input = INSTALL_ROOT) {
+  const absolute = path.resolve(input);
+  try {
+    return fs.realpathSync(absolute);
+  } catch (error) {
+    if (error?.code !== 'ENOENT' || path.dirname(absolute) === absolute) throw error;
+    return path.join(resolveManagedInstallRoot(path.dirname(absolute)), path.basename(absolute));
+  }
+}
+
 function isPlainObject(value) {
   return value === Object(value) && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
 }
@@ -771,7 +781,7 @@ function parseCompare(raw, upstreamCommit, sourceCommit) {
 
 export function createValidatedReleaseInstaller(options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
-  const installRoot = options.installRoot || INSTALL_ROOT;
+  const installRoot = resolveManagedInstallRoot(options.installRoot || INSTALL_ROOT);
   const currentInstallDir = options.currentInstallDir || MODULE_PACKAGE_ROOT;
   const currentVersion = options.currentVersion || 'unknown';
   const repository = options.repository || REPOSITORY;

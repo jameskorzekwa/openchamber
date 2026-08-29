@@ -1,4 +1,7 @@
-import { createValidatedReleaseInstaller as createDefaultValidatedReleaseInstaller } from '../openchamber-update/validated-release-installer.js';
+import {
+  createValidatedReleaseInstaller as createDefaultValidatedReleaseInstaller,
+  resolveManagedInstallRoot,
+} from '../openchamber-update/validated-release-installer.js';
 
 const SYSTEMD_SERVICE_UNIT_PATTERN = /^[A-Za-z0-9:_.@-]+\.service$/;
 
@@ -46,11 +49,12 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
     activateRestartTransaction: injectedActivateRestartTransaction,
     cancelRestartTransaction: injectedCancelRestartTransaction,
   } = dependencies;
+  const managedInstallRoot = resolveManagedInstallRoot(process.env.OPENCHAMBER_MANAGED_INSTALL_ROOT || path.join(os.homedir(), '.local', 'share', 'openchamber'));
   const updateInstaller = createValidatedReleaseInstaller({
     currentVersion: openchamberVersion,
     repository: process.env.OPENCHAMBER_UPDATE_CHANNEL_REPO,
+    installRoot: managedInstallRoot,
   });
-  const managedInstallRoot = path.join(os.homedir(), '.local', 'share', 'openchamber');
   const survivingTransactionPath = path.join(managedInstallRoot, 'restart-transaction.json');
   void (async () => {
     try {

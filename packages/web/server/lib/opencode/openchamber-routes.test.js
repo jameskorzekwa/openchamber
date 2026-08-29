@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
+import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import request from 'supertest';
@@ -120,6 +121,20 @@ afterEach(() => {
 });
 
 describe('OpenChamber validated update routes', () => {
+  it('uses the canonical managed root for installation and restart recovery', async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'openchamber-route-root-'));
+    const actualInstallRoot = path.join(root, 'managed-install');
+    const configuredInstallRoot = path.join(root, 'install');
+    try {
+      await fsp.mkdir(actualInstallRoot);
+      await fsp.symlink(actualInstallRoot, configuredInstallRoot);
+      const { dependencies } = createApp({ environment: { OPENCHAMBER_MANAGED_INSTALL_ROOT: configuredInstallRoot } });
+      expect(dependencies.createValidatedReleaseInstaller).toHaveBeenCalledWith(expect.objectContaining({ installRoot: actualInstallRoot }));
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('reports available and lifecycle state without claiming installation', async () => {
     const { app, installer } = createApp();
     const response = await request(app).get('/api/openchamber/update-check?appType=web').expect(200);

@@ -83,6 +83,7 @@ import { createServerStartupRuntime } from './lib/opencode/server-startup-runtim
 import { createTunnelWiringRuntime } from './lib/opencode/tunnel-wiring-runtime.js';
 import { createStartupPipelineRuntime } from './lib/opencode/startup-pipeline-runtime.js';
 import { runCliEntryIfMain } from './lib/opencode/cli-entry-runtime.js';
+import { resolveManagedInstallRoot } from './lib/openchamber-update/validated-release-installer.js';
 import { registerNotificationRoutes } from './lib/notifications/routes.js';
 import { createNotificationEmitterRuntime } from './lib/notifications/emitter-runtime.js';
 import { createNotificationTriggerRuntime } from './lib/notifications/runtime.js';
@@ -1723,7 +1724,7 @@ async function main(options = {}) {
       return Number.isFinite(port) && port > 0 ? port : null;
     },
     getTunnelUrl: () => tunnelRuntimeContextHolder?.tunnelService?.getPublicUrl?.() ?? null,
-    updateTransactionPath: path.join(os.homedir(), '.local', 'share', 'openchamber', 'restart-transaction.json'),
+    updateTransactionPath: path.join(resolveManagedInstallRoot(process.env.OPENCHAMBER_MANAGED_INSTALL_ROOT), 'restart-transaction.json'),
     runtimePackageRoot: path.resolve(__dirname, '..'),
     verboseRequestLogs: OPENCHAMBER_VERBOSE_REQUEST_LOGS,
     uiPassword,
