@@ -68,7 +68,7 @@ button,
 /* Sonner uses an intentionally huge inline z-index. Keep existing notices
    alive, but place them below an open dialog so they cannot cover dialog
    titles, close controls, or other required actions. */
-html.oc-dialog-open [data-sonner-toaster] {
+html.oc-opm-dialog-open [data-sonner-toaster] {
   z-index: 40 !important;
 }
 

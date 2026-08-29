@@ -52,13 +52,26 @@ const activeRow = {
   owner: { required: false, instruction: 'Nothing needed.' },
 };
 
+const queuedRow = {
+  ...baseRow,
+  parentRef: '20',
+  ref: '30',
+  title: 'Nested follow-up task',
+  phase: 'planned',
+  activityState: 'queued',
+  reason: 'worker limit reached',
+  kind: null,
+  command: null,
+  owner: { required: false, instruction: 'Nothing needed.' },
+};
+
 const availableResult = (): OpmStatusLoadResult => ({
   status: 'supported',
   snapshot: parseOpmSnapshot({
     available: true, fetchedAt: 100, state: 'active', summary: 'Working', healthOk: true, paused: false,
-    counts: { needsYou: 1, blocked: 0, active: 1, waiting: 0, queued: 0 },
-    groups: { needsYou: [needsOwnerRow], blocked: [], active: [activeRow], waiting: [], queued: [] },
-    tree: [{ ...needsOwnerRow, childRows: [{ ...activeRow, childRows: [] }] }],
+    counts: { needsYou: 1, blocked: 0, active: 1, waiting: 0, queued: 1 },
+    groups: { needsYou: [needsOwnerRow], blocked: [], active: [activeRow], waiting: [], queued: [queuedRow] },
+    tree: [{ ...needsOwnerRow, childRows: [{ ...activeRow, childRows: [queuedRow] }] }],
     supervisor: { running: true, pausedReason: null, startedAt: null, lastPollAt: null, pollIntervalMs: null, counters: {}, attention: [], projects: [] },
   }),
 });
@@ -191,27 +204,42 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       const dialog = document.querySelector('[data-testid="opm-dialog"]');
       expect(dialog?.className).toContain('max-sm:fixed');
       expect(dialog?.className).toContain('max-sm:h-[100dvh]');
+      expect(dialog?.className).toContain('[@media(max-height:500px)]:fixed');
       expect(dialog?.className).toContain('overflow-x-hidden');
 
       const header = document.querySelector('[data-testid="opm-dialog-header"]');
       expect(header?.className).toContain('z-30');
       expect(header?.className).toContain('safe-area-inset-top');
+      expect(header?.className).toContain('safe-area-inset-left');
+      expect(header?.className).toContain('safe-area-inset-right');
       expect(document.querySelector('[aria-label="Close"]')).not.toBeNull();
+      expect(document.documentElement.classList.contains('oc-opm-dialog-open')).toBe(true);
 
       const overview = document.querySelector('[data-testid="opm-task-overview"]');
       expect(overview?.textContent).toContain('Waiting on you');
       expect(overview?.textContent).toContain('Working');
       expect(overview?.textContent).toContain('Queued');
+      expect(document.querySelector('[data-testid="opm-task-total"]')?.textContent).toBe('3');
 
       const parentSummary = [...document.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
         .find((button) => button.textContent?.includes('Protected change'));
       const childSummary = [...document.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
         .find((button) => button.textContent?.includes('Ordinary background'));
+      const grandchildSummary = [...document.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
+        .find((button) => button.textContent?.includes('Nested follow-up'));
       expect(parentSummary?.textContent).toContain('Parent');
       expect(parentSummary?.textContent).toContain('Blocked');
+      expect(childSummary?.textContent).toContain('Parent');
       expect(childSummary?.textContent).toContain('Child');
       expect(childSummary?.textContent).toContain('Working');
       expect(childSummary?.closest('article')?.className).toContain('overflow-hidden');
+      expect(grandchildSummary?.textContent).toContain('Child');
+      expect(grandchildSummary?.textContent).toContain('Planned');
+
+      await act(async () => {
+        document.querySelector<HTMLButtonElement>('[aria-label="Close"]')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 }));
+      });
+      expect(document.documentElement.classList.contains('oc-opm-dialog-open')).toBe(false);
     } finally {
       await unmount();
     }
