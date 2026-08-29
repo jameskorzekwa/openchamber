@@ -48,8 +48,12 @@ const rowBaseSchema = z.object({
   url: nullableString,
 });
 
-const childRowSchema = rowBaseSchema.extend({ childRows: z.array(rowBaseSchema).default([]) });
-const treeRowSchema = rowBaseSchema.extend({ childRows: z.array(childRowSchema) });
+export type OpmRow = z.infer<typeof rowBaseSchema>;
+export type OpmTreeRow = OpmRow & { childRows: OpmTreeRow[] };
+
+const treeRowSchema: z.ZodType<OpmTreeRow> = z.lazy(() => rowBaseSchema.extend({
+  childRows: z.array(treeRowSchema),
+}));
 const groupsSchema = z.object({
   needsYou: z.array(rowBaseSchema),
   blocked: z.array(rowBaseSchema),
@@ -115,8 +119,6 @@ const snapshotSchema = z.discriminatedUnion('available', [availableSnapshotSchem
 export type OpmSnapshot = z.infer<typeof snapshotSchema>;
 type OpmSnapshotPayload = z.input<typeof snapshotSchema>;
 export type OpmAvailableSnapshot = z.infer<typeof availableSnapshotSchema>;
-export type OpmRow = z.infer<typeof rowBaseSchema>;
-export type OpmTreeRow = z.infer<typeof treeRowSchema>;
 
 export type OpmStatusLoadResult =
   | { status: 'supported'; snapshot: OpmSnapshot }
