@@ -470,6 +470,8 @@
 - Sessions: switching quickly no longer saves the wrong scroll position, and the log no longer fills with worktree warnings for folders that are not Git repositories (thanks to @herjarsa).
 - VS Code: the extension starts in the current workspace folder instead of one restored from storage (thanks to @makeittech).
 
+- Mobile/OPM: the status dashboard now keeps its title and close button clear of notices, contains long text, shows task-state totals first, and presents parent and child tasks as compact expandable rows.
+
 ## [1.21.0] - 2026-08-26
 
 ### New
