@@ -10,10 +10,10 @@ import { parseOpmSnapshot, type OpmCommandResult, type OpmRow, type OpmStatusLoa
 // is replaced with plain elements — the repo-wide pattern for dialog tests.
 mock.module('@/components/ui/dialog', () => ({
   Dialog: ({ children, open }: React.PropsWithChildren<{ open?: boolean }>) => (open ? <>{children}</> : null),
-  DialogContent: ({ children }: React.PropsWithChildren) => <div>{children}</div>,
-  DialogDescription: ({ children }: React.PropsWithChildren) => <p>{children}</p>,
+  DialogContent: ({ children, className }: React.PropsWithChildren<{ className?: string; showCloseButton?: boolean }>) => <div data-testid="opm-dialog" className={className}>{children}</div>,
+  DialogDescription: ({ children, className }: React.PropsWithChildren<{ className?: string }>) => <p className={className}>{children}</p>,
   DialogFooter: ({ children }: React.PropsWithChildren) => <div>{children}</div>,
-  DialogHeader: ({ children }: React.PropsWithChildren) => <div>{children}</div>,
+  DialogHeader: ({ children, className }: React.PropsWithChildren<{ className?: string }>) => <div data-testid="opm-dialog-header" className={className}>{children}</div>,
   DialogTitle: ({ children }: React.PropsWithChildren) => <h2>{children}</h2>,
 }));
 
@@ -41,6 +41,7 @@ const needsOwnerRow = {
 
 const activeRow = {
   ...baseRow,
+  parentRef: '10',
   ref: '20',
   title: 'Ordinary background work item',
   phase: 'active',
@@ -51,13 +52,33 @@ const activeRow = {
   owner: { required: false, instruction: 'Nothing needed.' },
 };
 
+const queuedRow = {
+  ...baseRow,
+  parentRef: '20',
+  ref: '30',
+  title: 'Nested follow-up task',
+  phase: 'planned',
+  activityState: 'queued',
+  reason: 'worker limit reached',
+  kind: null,
+  command: null,
+  owner: { required: false, instruction: 'Nothing needed.' },
+};
+
+const nestedQueuedRow = {
+  ...queuedRow,
+  parentRef: '30',
+  ref: '40',
+  title: 'Deeply nested follow-up task',
+};
+
 const availableResult = (): OpmStatusLoadResult => ({
   status: 'supported',
   snapshot: parseOpmSnapshot({
     available: true, fetchedAt: 100, state: 'active', summary: 'Working', healthOk: true, paused: false,
-    counts: { needsYou: 1, blocked: 0, active: 1, waiting: 0, queued: 0 },
-    groups: { needsYou: [needsOwnerRow], blocked: [], active: [activeRow], waiting: [], queued: [] },
-    tree: [{ ...needsOwnerRow, childRows: [] }, { ...activeRow, childRows: [] }],
+    counts: { needsYou: 1, blocked: 0, active: 1, waiting: 0, queued: 2 },
+    groups: { needsYou: [needsOwnerRow], blocked: [], active: [activeRow], waiting: [], queued: [queuedRow, nestedQueuedRow] },
+    tree: [{ ...needsOwnerRow, childRows: [{ ...activeRow, childRows: [{ ...queuedRow, childRows: [{ ...nestedQueuedRow, childRows: [] }] }] }] }],
     supervisor: { running: true, pausedReason: null, startedAt: null, lastPollAt: null, pollIntervalMs: null, counters: {}, attention: [], projects: [] },
   }),
 });
@@ -129,9 +150,7 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       expect(sendCommand).toHaveBeenCalledTimes(1);
       expect(sent[0]).toMatchObject({ project: 'openchamber', ref: '10', command: AUTHORIZE });
       const sentButtons = buttonsByText('Sent ✓');
-      // The needs-you section and the work-item tree render the same row, and
-      // both copies share one run state keyed by project#ref.
-      expect(sentButtons).toHaveLength(2);
+      expect(sentButtons).toHaveLength(1);
       expect(sentButtons.every((button) => button.disabled)).toBe(true);
       expect(buttonsByText('Run')).toHaveLength(0);
     } finally {
@@ -159,14 +178,14 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
     }
   });
 
-  test('mobile rows collapse to a summary that expands on tap; needs-owner rows start expanded', async () => {
+  test('all rows stay condensed until their summary is expanded', async () => {
     await mountAndOpen(async () => ({ ok: true }));
     try {
       const summaries = [...document.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
-        .filter((button) => button.className.includes('sm:hidden'));
+        .filter((button) => button.textContent?.includes('OpenChamber'));
       const needsOwnerSummary = summaries.find((button) => button.textContent?.includes('Protected change'));
       const activeSummary = summaries.find((button) => button.textContent?.includes('Ordinary background'));
-      expect(needsOwnerSummary?.getAttribute('aria-expanded')).toBe('true');
+      expect(needsOwnerSummary?.getAttribute('aria-expanded')).toBe('false');
       expect(activeSummary?.getAttribute('aria-expanded')).toBe('false');
 
       const activeDetail = activeSummary?.closest('article')?.querySelector('[data-testid="opm-row-detail"]');
@@ -181,6 +200,58 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       const expandedDetail = expandedSummary?.closest('article')?.querySelector('[data-testid="opm-row-detail"]');
       expect(expandedDetail?.className).not.toContain('hidden');
       expect(expandedDetail?.className).toContain('block');
+    } finally {
+      await unmount();
+    }
+  });
+
+  test('mobile dialog protects its header and keeps every parent and child visible', async () => {
+    await mountAndOpen(async () => ({ ok: true }));
+    try {
+      const dialog = document.querySelector('[data-testid="opm-dialog"]');
+      expect(dialog?.className).toContain('max-sm:fixed');
+      expect(dialog?.className).toContain('max-sm:h-[100dvh]');
+      expect(dialog?.className).toContain('[@media(max-height:500px)]:fixed');
+      expect(dialog?.className).toContain('overflow-x-hidden');
+
+      const header = document.querySelector('[data-testid="opm-dialog-header"]');
+      expect(header?.className).toContain('z-30');
+      expect(header?.className).toContain('safe-area-inset-top');
+      expect(header?.className).toContain('safe-area-inset-left');
+      expect(header?.className).toContain('safe-area-inset-right');
+      expect(document.querySelector('[aria-label="Close"]')).not.toBeNull();
+      expect(document.documentElement.classList.contains('oc-opm-dialog-open')).toBe(true);
+
+      const overview = document.querySelector('[data-testid="opm-task-overview"]');
+      expect(overview?.textContent).toContain('Waiting on you');
+      expect(overview?.textContent).toContain('Working');
+      expect(overview?.textContent).toContain('Queued');
+      expect(document.querySelector('[data-testid="opm-task-total"]')?.textContent).toBe('4');
+
+      const parentSummary = [...document.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
+        .find((button) => button.textContent?.includes('Protected change'));
+      const childSummary = [...document.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
+        .find((button) => button.textContent?.includes('Ordinary background'));
+      const grandchildSummary = [...document.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
+        .find((button) => button.textContent?.includes('Nested follow-up'));
+      const level4Summary = [...document.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
+        .find((button) => button.textContent?.includes('Deeply nested'));
+      expect(parentSummary?.textContent).toContain('Parent');
+      expect(parentSummary?.textContent).toContain('Blocked');
+      expect(childSummary?.textContent).toContain('Parent');
+      expect(childSummary?.textContent).toContain('Child');
+      expect(childSummary?.textContent).toContain('Working');
+      expect(childSummary?.closest('article')?.className).toContain('overflow-hidden');
+      expect(grandchildSummary?.textContent).toContain('Child');
+      expect(grandchildSummary?.textContent).toContain('Parent');
+      expect(grandchildSummary?.textContent).toContain('Planned');
+      expect(level4Summary?.textContent).toContain('Child');
+      expect(level4Summary?.textContent).toContain('Planned');
+
+      await act(async () => {
+        document.querySelector<HTMLButtonElement>('[aria-label="Close"]')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 }));
+      });
+      expect(document.documentElement.classList.contains('oc-opm-dialog-open')).toBe(false);
     } finally {
       await unmount();
     }
