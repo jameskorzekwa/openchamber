@@ -26,12 +26,12 @@ import {
   type OpmRow,
   type OpmSnapshot,
   type OpmStatusLoadResult,
-  type OpmTreeRow,
 } from './opm-status';
 
 const POLL_INTERVAL_MS = 15_000;
 const SENT_RESET_MS = 10_000;
 const NOTIFIED_KEY = 'opmStatus.notified';
+const OPM_DIALOG_CLASS = 'oc-opm-dialog-open';
 const notifiedKeysSchema = z.array(z.string());
 
 // The pill lives on the outer edge, wherever the owner drags it. The position
@@ -278,7 +278,8 @@ type RunState =
 
 const OpmWorkRow = ({
   row,
-  relation,
+  isParent,
+  isChild,
   onCopy,
   copiedCommand,
   onOpenSession,
@@ -288,7 +289,8 @@ const OpmWorkRow = ({
   onToggleExpand,
 }: {
   row: OpmRow;
-  relation: 'parent' | 'child' | 'task';
+  isParent: boolean;
+  isChild: boolean;
   onCopy: (command: string) => void;
   copiedCommand: string | null;
   onOpenSession: (row: OpmRow) => void;
@@ -306,7 +308,7 @@ const OpmWorkRow = ({
     <article className={cn(
       'min-w-0 overflow-hidden rounded-lg border px-2.5 py-2',
       rowTone(row),
-      relation === 'child' && 'ml-3 rounded-l-none border-l-2',
+      isChild && 'ml-3 rounded-l-none border-l-2',
     )}>
       <button
         type="button"
@@ -318,9 +320,14 @@ const OpmWorkRow = ({
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-1.5">
             <span className="min-w-0 truncate font-medium text-foreground">{projectLabel}</span>
-            {relation !== 'task' ? (
+            {isParent ? (
               <span className="max-w-24 shrink-0 truncate rounded bg-[var(--surface-muted)] px-1.5 py-0.5 uppercase tracking-wide typography-micro text-muted-foreground">
-                {t(relation === 'parent' ? 'opm.row.parent' : 'opm.row.child')}
+                {t('opm.row.parent')}
+              </span>
+            ) : null}
+            {isChild ? (
+              <span className="max-w-24 shrink-0 truncate rounded bg-[var(--surface-muted)] px-1.5 py-0.5 uppercase tracking-wide typography-micro text-muted-foreground">
+                {t('opm.row.child')}
               </span>
             ) : null}
           </span>
@@ -394,10 +401,17 @@ const OpmWorkRow = ({
   );
 };
 
+type OpmHierarchyRow = OpmRow & { childRows?: OpmHierarchyRow[] };
+
+const countHierarchyRows = (rows: OpmHierarchyRow[]): number => rows.reduce(
+  (total, row) => total + 1 + countHierarchyRows(row.childRows ?? []),
+  0,
+);
+
 const TaskOverview = ({ snapshot }: { snapshot: OpmAvailableSnapshot }) => {
   const { t } = useI18n();
   const counts = getOpmCounts(snapshot);
-  const total = snapshot.tree.reduce((sum, row) => sum + 1 + row.childRows.length, 0);
+  const total = countHierarchyRows(snapshot.tree);
   const states = [
     { label: phaseLabel('waiting_owner', t), count: counts.needsYou, tone: 'text-status-error bg-status-error/10' },
     { label: phaseLabel('blocked', t), count: counts.blocked, tone: 'text-status-warning bg-status-warning/10' },
@@ -409,7 +423,7 @@ const TaskOverview = ({ snapshot }: { snapshot: OpmAvailableSnapshot }) => {
     <section aria-labelledby="opm-task-overview" data-testid="opm-task-overview" className="min-w-0 rounded-lg border border-border/60 bg-[var(--surface-elevated)] p-2.5">
       <div className="mb-2 flex items-center justify-between gap-2">
         <h3 id="opm-task-overview" className="font-medium text-foreground">{t('opm.section.workItems')}</h3>
-        <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 font-medium typography-micro text-foreground">{total}</span>
+        <span data-testid="opm-task-total" className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 font-medium typography-micro text-foreground">{total}</span>
       </div>
       <div className="grid min-w-0 grid-cols-2 gap-1.5 sm:grid-cols-5">
         {states.map((state) => (
@@ -526,6 +540,12 @@ export const OpmStatusOverlay = ({
     };
   }, [loadStatus, t]);
 
+  React.useEffect(() => {
+    if (!open) return;
+    document.documentElement.classList.add(OPM_DIALOG_CLASS);
+    return () => document.documentElement.classList.remove(OPM_DIALOG_CLASS);
+  }, [open]);
+
   if (supported !== true || !snapshot) return null;
 
   const counts = snapshot.available
@@ -577,9 +597,10 @@ export const OpmStatusOverlay = ({
       setRunStates((previous) => ({ ...previous, [key]: { status: 'error', message: result.error } }));
     }
   };
-  const rowProps = (row: OpmRow, relation: 'parent' | 'child' | 'task') => ({
+  const rowProps = (row: OpmRow, isParent: boolean, isChild: boolean) => ({
     row,
-    relation,
+    isParent,
+    isChild,
     onCopy: copyCommand,
     copiedCommand,
     onOpenSession: openRowSession,
@@ -587,6 +608,17 @@ export const OpmStatusOverlay = ({
     onRun: (target: OpmRow) => void runCommand(target),
     expanded: isRowExpanded(row),
     onToggleExpand: toggleRow,
+  });
+  const renderHierarchy = (rows: OpmHierarchyRow[], depth = 0): React.ReactNode => rows.map((row) => {
+    const children = row.childRows ?? [];
+    return (
+      <div key={rowKey(row)} className="min-w-0 space-y-1.5">
+        <OpmWorkRow {...rowProps(row, children.length > 0, depth > 0)} />
+        {children.length > 0 ? (
+          <div className="min-w-0 space-y-1.5">{renderHierarchy(children, depth + 1)}</div>
+        ) : null}
+      </div>
+    );
   });
   const requestNotifications = async () => {
     if (!globalThis.Notification) return;
@@ -629,13 +661,13 @@ export const OpmStatusOverlay = ({
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
           showCloseButton={false}
-          className="max-w-4xl gap-0 overflow-x-hidden p-0 pb-[max(1rem,env(safe-area-inset-bottom))] max-sm:fixed max-sm:inset-0 max-sm:h-[100dvh] max-sm:max-h-[100dvh] max-sm:w-screen max-sm:max-w-none max-sm:rounded-none max-sm:border-0"
+          className="max-w-4xl gap-0 overflow-x-hidden p-0 pb-[max(1rem,env(safe-area-inset-bottom))] max-sm:fixed max-sm:inset-0 max-sm:h-[100dvh] max-sm:max-h-[100dvh] max-sm:w-screen max-sm:max-w-none max-sm:rounded-none max-sm:border-0 [@media(max-height:500px)]:fixed [@media(max-height:500px)]:inset-0 [@media(max-height:500px)]:h-[100dvh] [@media(max-height:500px)]:max-h-[100dvh] [@media(max-height:500px)]:w-screen [@media(max-height:500px)]:max-w-none [@media(max-height:500px)]:rounded-none [@media(max-height:500px)]:border-0"
         >
           {/* The popup itself scrolls, so the header is sticky, opaque, and
               z-raised: body content scrolls under it, never over the title or
               the close button. The close button lives inside this bar for the
               same reason. */}
-          <DialogHeader className="sticky top-0 z-30 min-w-0 shrink-0 gap-1 border-b border-border/60 bg-background px-3 pb-2 pt-[max(0.75rem,env(safe-area-inset-top))] text-left sm:px-5 sm:pb-3 sm:pt-5">
+          <DialogHeader className="sticky top-0 z-30 min-w-0 shrink-0 gap-1 border-b border-border/60 bg-background pb-2 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-[max(0.75rem,env(safe-area-inset-top))] text-left sm:pb-3 sm:pl-[max(1.25rem,env(safe-area-inset-left))] sm:pr-[max(1.25rem,env(safe-area-inset-right))] sm:pt-[max(1.25rem,env(safe-area-inset-top))]">
             <div className="flex min-w-0 items-center justify-between gap-2">
               <DialogTitle className="flex min-w-0 items-center gap-2"><StatusDot snapshot={snapshot} />OPM</DialogTitle>
               <Button size="icon" variant="ghost" aria-label={t('dialog.common.actions.close')} className="-mr-1 shrink-0" onClick={() => setOpen(false)}>
@@ -648,7 +680,7 @@ export const OpmStatusOverlay = ({
                 : t('opm.dialog.unavailable')}
             </DialogDescription>
           </DialogHeader>
-          <div className="min-w-0 overflow-x-hidden px-3 pb-1 pt-2.5 sm:px-5 sm:pt-3">
+          <div className="min-w-0 overflow-x-hidden pb-1 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-2.5 sm:pl-[max(1.25rem,env(safe-area-inset-left))] sm:pr-[max(1.25rem,env(safe-area-inset-right))] sm:pt-3">
             {!snapshot.available ? (
               <div className="rounded-lg border border-status-warning/30 bg-status-warning/10 p-3 text-status-warning typography-ui-label">
                 {t('opm.dialog.controlUnreachable')}
@@ -660,18 +692,7 @@ export const OpmStatusOverlay = ({
                 <section aria-labelledby="opm-work-items">
                   <h3 id="opm-work-items" className="sr-only">{t('opm.section.workItems')}</h3>
                   {snapshot.tree.length === 0 ? <p className="text-muted-foreground typography-ui-label">{t('opm.section.empty')}</p> : (
-                    <div className="min-w-0 space-y-2">
-                      {snapshot.tree.map((root: OpmTreeRow) => (
-                        <div key={rowKey(root)} className="min-w-0 space-y-1.5">
-                          <OpmWorkRow {...rowProps(root, root.childRows.length > 0 ? 'parent' : 'task')} />
-                          {root.childRows.length > 0 ? (
-                            <div className="min-w-0 space-y-1.5">
-                              {root.childRows.map((child) => <OpmWorkRow key={rowKey(child)} {...rowProps(child, 'child')} />)}
-                            </div>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
+                    <div className="min-w-0 space-y-2">{renderHierarchy(snapshot.tree)}</div>
                   )}
                 </section>
                 {notificationPermission === 'default' ? (
