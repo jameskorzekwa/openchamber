@@ -30,6 +30,15 @@ describe('OPM status parser', () => {
     expect(getOpmCounts(parsed)).toEqual({ needsYou: 0, blocked: 0, active: 1, waiting: 0, queued: 0 });
   });
 
+  test('preserves arbitrary parent and child depth at the network boundary', () => {
+    const level4 = { ...row({ ref: '4', parentRef: '3' }), childRows: [] };
+    const level3 = { ...row({ ref: '3', parentRef: '2' }), childRows: [level4] };
+    const level2 = { ...row({ ref: '2', parentRef: '1' }), childRows: [level3] };
+    const parsed = parseOpmSnapshot({ ...snapshot(), tree: [{ ...row(), childRows: [level2] }] });
+    if (!parsed.available) throw new Error('expected available snapshot');
+    expect(parsed.tree[0].childRows[0].childRows[0].childRows[0].ref).toBe('4');
+  });
+
   test('rejects malformed rows instead of rendering partial network data', () => {
     expect(() => parseOpmSnapshot(snapshot(row({ owner: undefined })))).toThrow();
   });

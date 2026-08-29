@@ -26,6 +26,7 @@ import {
   type OpmRow,
   type OpmSnapshot,
   type OpmStatusLoadResult,
+  type OpmTreeRow,
 } from './opm-status';
 
 const POLL_INTERVAL_MS = 15_000;
@@ -401,10 +402,8 @@ const OpmWorkRow = ({
   );
 };
 
-type OpmHierarchyRow = OpmRow & { childRows?: OpmHierarchyRow[] };
-
-const countHierarchyRows = (rows: OpmHierarchyRow[]): number => rows.reduce(
-  (total, row) => total + 1 + countHierarchyRows(row.childRows ?? []),
+const countHierarchyRows = (rows: OpmTreeRow[]): number => rows.reduce(
+  (total, row) => total + 1 + countHierarchyRows(row.childRows),
   0,
 );
 
@@ -609,8 +608,8 @@ export const OpmStatusOverlay = ({
     expanded: isRowExpanded(row),
     onToggleExpand: toggleRow,
   });
-  const renderHierarchy = (rows: OpmHierarchyRow[], depth = 0): React.ReactNode => rows.map((row) => {
-    const children = row.childRows ?? [];
+  const renderHierarchy = (rows: OpmTreeRow[], depth = 0): React.ReactNode => rows.map((row) => {
+    const children = row.childRows;
     return (
       <div key={rowKey(row)} className="min-w-0 space-y-1.5">
         <OpmWorkRow {...rowProps(row, children.length > 0, depth > 0)} />
