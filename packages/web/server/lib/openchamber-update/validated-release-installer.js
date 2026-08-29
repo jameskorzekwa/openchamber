@@ -725,7 +725,8 @@ async function getLinkTarget(linkPath) {
   try {
     const stat = await fsp.lstat(linkPath);
     if (!stat.isSymbolicLink()) fail(`${linkPath} exists but is not a symbolic link`);
-    return await fsp.realpath(linkPath).catch(() => null);
+    const target = path.resolve(path.dirname(linkPath), await fsp.readlink(linkPath));
+    return await fsp.realpath(target).catch(() => null);
   } catch (error) {
     if (error?.code === 'ENOENT') return null;
     throw error;
