@@ -230,6 +230,15 @@ describe('validated release installation', () => {
     await expect(fsp.access(path.join(harness.installRoot, 'archives'))).rejects.toThrow();
   });
 
+  it('archives the running package when the current link target cannot be resolved', async () => {
+    const harness = await makeHarness();
+    await fsp.rm(path.join(harness.installRoot, 'current'));
+    await fsp.symlink('current', path.join(harness.installRoot, 'current'));
+    await harness.installer.install({ targetVersion: VERSION, handoffRestart: vi.fn() });
+    expect(await fsp.realpath(path.join(harness.installRoot, 'previous'))).toContain(path.join(harness.installRoot, 'archives'));
+    expect(harness.installer.getStatus().state).toBe('restarting');
+  });
+
   it('rejects a checksum mismatch without switching the current install', async () => {
     const harness = await makeHarness(makeFetch({ checksum: `${'f'.repeat(64)}  ${ARCHIVE_NAME}\n` }));
     await expect(harness.installer.install({ targetVersion: VERSION, handoffRestart: vi.fn() })).rejects.toThrow('Checksum asset does not match');
