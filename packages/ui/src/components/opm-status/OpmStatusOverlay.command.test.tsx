@@ -65,13 +65,20 @@ const queuedRow = {
   owner: { required: false, instruction: 'Nothing needed.' },
 };
 
+const nestedQueuedRow = {
+  ...queuedRow,
+  parentRef: '30',
+  ref: '40',
+  title: 'Deeply nested follow-up task',
+};
+
 const availableResult = (): OpmStatusLoadResult => ({
   status: 'supported',
   snapshot: parseOpmSnapshot({
     available: true, fetchedAt: 100, state: 'active', summary: 'Working', healthOk: true, paused: false,
-    counts: { needsYou: 1, blocked: 0, active: 1, waiting: 0, queued: 1 },
-    groups: { needsYou: [needsOwnerRow], blocked: [], active: [activeRow], waiting: [], queued: [queuedRow] },
-    tree: [{ ...needsOwnerRow, childRows: [{ ...activeRow, childRows: [queuedRow] }] }],
+    counts: { needsYou: 1, blocked: 0, active: 1, waiting: 0, queued: 2 },
+    groups: { needsYou: [needsOwnerRow], blocked: [], active: [activeRow], waiting: [], queued: [queuedRow, nestedQueuedRow] },
+    tree: [{ ...needsOwnerRow, childRows: [{ ...activeRow, childRows: [{ ...queuedRow, childRows: [{ ...nestedQueuedRow, childRows: [] }] }] }] }],
     supervisor: { running: true, pausedReason: null, startedAt: null, lastPollAt: null, pollIntervalMs: null, counters: {}, attention: [], projects: [] },
   }),
 });
@@ -219,7 +226,7 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       expect(overview?.textContent).toContain('Waiting on you');
       expect(overview?.textContent).toContain('Working');
       expect(overview?.textContent).toContain('Queued');
-      expect(document.querySelector('[data-testid="opm-task-total"]')?.textContent).toBe('3');
+      expect(document.querySelector('[data-testid="opm-task-total"]')?.textContent).toBe('4');
 
       const parentSummary = [...document.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
         .find((button) => button.textContent?.includes('Protected change'));
@@ -227,6 +234,8 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
         .find((button) => button.textContent?.includes('Ordinary background'));
       const grandchildSummary = [...document.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
         .find((button) => button.textContent?.includes('Nested follow-up'));
+      const level4Summary = [...document.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
+        .find((button) => button.textContent?.includes('Deeply nested'));
       expect(parentSummary?.textContent).toContain('Parent');
       expect(parentSummary?.textContent).toContain('Blocked');
       expect(childSummary?.textContent).toContain('Parent');
@@ -234,7 +243,10 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       expect(childSummary?.textContent).toContain('Working');
       expect(childSummary?.closest('article')?.className).toContain('overflow-hidden');
       expect(grandchildSummary?.textContent).toContain('Child');
+      expect(grandchildSummary?.textContent).toContain('Parent');
       expect(grandchildSummary?.textContent).toContain('Planned');
+      expect(level4Summary?.textContent).toContain('Child');
+      expect(level4Summary?.textContent).toContain('Planned');
 
       await act(async () => {
         document.querySelector<HTMLButtonElement>('[aria-label="Close"]')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 }));
