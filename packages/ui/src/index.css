@@ -65,6 +65,13 @@ button,
   cursor: not-allowed;
 }
 
+/* Sonner uses an intentionally huge inline z-index. Keep existing notices
+   alive, but place them below an open dialog so they cannot cover dialog
+   titles, close controls, or other required actions. */
+html.oc-dialog-open [data-sonner-toaster] {
+  z-index: 40 !important;
+}
+
 /* Fractional line heights (1.625 × font-size) make streamed content grow by
    sub-pixel amounts while scroll positions quantize to the device-pixel grid.
    The residue accumulates and bottom-anchored rows (status indicator) creep
