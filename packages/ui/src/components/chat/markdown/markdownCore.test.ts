@@ -36,7 +36,8 @@ mock.module('dompurify', () => ({
       sanitizeHooks.uponSanitizeAttribute?.(anchor, data);
       sanitizeHooks.afterSanitizeAttributes?.(anchor);
 
-      return data.forceKeepAttr || /^(?:https?|mailto|tel):/i.test(href) ? attribute : '';
+      const hasScheme = /^[a-z][a-z\d+.-]*:/i.test(href);
+      return data.forceKeepAttr || !hasScheme || /^(?:https?|mailto|tel):/i.test(href) ? attribute : '';
     }),
   },
 }));
