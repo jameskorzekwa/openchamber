@@ -146,11 +146,12 @@ function makeFetch({ archive, channel, checksum, releaseStatus = 200, overrides 
   });
 }
 
-async function makeHarness(fetchImpl = makeFetch(), onStateChange, installerOptions = {}) {
+async function makeHarness(fetchImpl = makeFetch(), onStateChange, installerOptions = {}, symlinkInstallRoot = false) {
   let root = await fsp.mkdtemp(path.join(os.tmpdir(), 'openchamber-update-'));
   root = await fsp.realpath(root);
   temporaryDirectories.push(root);
   const installRoot = path.join(root, 'install');
+  const actualInstallRoot = symlinkInstallRoot ? path.join(root, 'managed-install') : installRoot;
   let oldInstall = path.join(root, 'old');
   await fsp.mkdir(oldInstall, { recursive: true });
   oldInstall = await fsp.realpath(oldInstall);
@@ -161,8 +162,9 @@ async function makeHarness(fetchImpl = makeFetch(), onStateChange, installerOpti
   await fsp.writeFile(path.join(oldInstall, 'node_modules', 'fixture-dependency', 'package.json'), JSON.stringify({ name: 'fixture-dependency', version: '1.0.0', peerDependencies: { 'fixture-peer': '^1.0.0' } }));
   await fsp.mkdir(path.join(oldInstall, 'node_modules', 'fixture-peer'), { recursive: true });
   await fsp.writeFile(path.join(oldInstall, 'node_modules', 'fixture-peer', 'package.json'), JSON.stringify({ name: 'fixture-peer', version: '1.0.0' }));
-  await fsp.mkdir(installRoot, { recursive: true });
-  await fsp.symlink(oldInstall, path.join(installRoot, 'current'));
+  await fsp.mkdir(actualInstallRoot, { recursive: true });
+  if (symlinkInstallRoot) await fsp.symlink(actualInstallRoot, installRoot);
+  await fsp.symlink(oldInstall, path.join(actualInstallRoot, 'current'));
   const installer = createValidatedReleaseInstaller({
     fetchImpl,
     installRoot,
@@ -208,6 +210,15 @@ describe('validated release installation', () => {
     expect((await fsp.stat(path.join(root, 'one', 'two'))).isDirectory()).toBe(true);
     expect((await fsp.stat(nested)).isDirectory()).toBe(true);
   });
+
+  it('installs through a symlinked install root', async () => {
+    const harness = await makeHarness(makeFetch(), undefined, {}, true);
+    await harness.installer.install({ targetVersion: VERSION, handoffRestart: vi.fn() });
+    const selected = await fsp.realpath(path.join(harness.installRoot, 'current'));
+    expect(selected).toContain(path.join(harness.root, 'managed-install', 'releases'));
+    expect(harness.installer.getStatus().state).toBe('restarting');
+  });
+
   it('rejects a checksum mismatch without switching the current install', async () => {
     const harness = await makeHarness(makeFetch({ checksum: `${'f'.repeat(64)}  ${ARCHIVE_NAME}\n` }));
     await expect(harness.installer.install({ targetVersion: VERSION, handoffRestart: vi.fn() })).rejects.toThrow('Checksum asset does not match');

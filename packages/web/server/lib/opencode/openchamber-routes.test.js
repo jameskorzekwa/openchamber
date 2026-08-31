@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
+import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import request from 'supertest';
@@ -60,7 +61,7 @@ function createInstaller() {
   };
 }
 
-function createApp({ environment = {}, storedOptions = {}, installer = createInstaller(), platform = 'linux', survivingTransaction = null, canonicalManagedInstallRoot = null } = {}) {
+function createApp({ environment = {}, storedOptions = {}, installer = createInstaller(), platform = 'linux', survivingTransaction = null } = {}) {
   const app = express();
   const processMock = {
     env: environment,
@@ -73,7 +74,6 @@ function createApp({ environment = {}, storedOptions = {}, installer = createIns
     fs: {
       existsSync: vi.fn(() => false),
       promises: {
-        realpath: vi.fn(async (filePath) => canonicalManagedInstallRoot || filePath),
         readFile: vi.fn(async (filePath) => {
           if (String(filePath).endsWith('restart-transaction.json')) {
             if (survivingTransaction) return JSON.stringify(survivingTransaction);
@@ -121,6 +121,31 @@ afterEach(() => {
 });
 
 describe('OpenChamber validated update routes', () => {
+  it('uses the canonical managed root for installation and restart recovery', async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'openchamber-route-root-'));
+    const actualInstallRoot = path.join(root, 'managed-install');
+    const configuredInstallRoot = path.join(root, 'install');
+    const transactionId = '12345678-1234-4123-8123-123456789abc';
+    try {
+      await fsp.mkdir(actualInstallRoot);
+      await fsp.symlink(actualInstallRoot, configuredInstallRoot);
+      const { dependencies } = createApp({
+        environment: { OPENCHAMBER_MANAGED_INSTALL_ROOT: configuredInstallRoot },
+        survivingTransaction: { schemaVersion: 3, transactionId },
+      });
+      expect(dependencies.createValidatedReleaseInstaller).toHaveBeenCalledWith(expect.objectContaining({ installRoot: actualInstallRoot }));
+      await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
+      expect(spawn).toHaveBeenCalledWith(process.execPath, expect.arrayContaining([
+        '--delayed-fallback',
+        path.join(actualInstallRoot, 'restart-transaction.json'),
+        '--transaction-id',
+        transactionId,
+      ]), expect.objectContaining({ detached: true }));
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('reports available and lifecycle state without claiming installation', async () => {
     const { app, installer } = createApp();
     const response = await request(app).get('/api/openchamber/update-check?appType=web').expect(200);
@@ -133,12 +158,10 @@ describe('OpenChamber validated update routes', () => {
 
   it('starts an ID-bound detached fallback for a journal surviving startup', async () => {
     const transactionId = '12345678-1234-4123-8123-123456789abc';
-    const canonicalManagedInstallRoot = '/Volumes/T9-OpenCode/openchamber';
-    createApp({ survivingTransaction: { schemaVersion: 3, transactionId }, canonicalManagedInstallRoot });
+    createApp({ survivingTransaction: { schemaVersion: 3, transactionId } });
     await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
     expect(spawn).toHaveBeenCalledWith(process.execPath, expect.arrayContaining([
       '--delayed-fallback',
-      path.join(canonicalManagedInstallRoot, 'restart-transaction.json'),
       '--transaction-id',
       transactionId,
     ]), expect.objectContaining({ detached: true }));

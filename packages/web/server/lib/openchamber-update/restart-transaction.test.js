@@ -4,14 +4,21 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cancelRestartTransaction, consumeSupervisorTermination, createRestartAttestation, runRestartFallback, runRestartTransaction, verifyRestartAttestation, writeRestartTransaction } from './restart-transaction.js';
+import { resolveManagedInstallRoot } from './validated-release-installer.js';
 
 const temporaryDirectories = [];
 const TARGET_REVISION = '2222222222222222222222222222222222222222';
 const PREVIOUS_REVISION = '1111111111111111111111111111111111111111';
 
-async function fixture() {
-  const installRoot = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), 'openchamber-restart-')));
-  temporaryDirectories.push(installRoot);
+async function fixture(symlinkInstallRoot = false) {
+  const root = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), 'openchamber-restart-')));
+  temporaryDirectories.push(root);
+  const installRoot = symlinkInstallRoot ? path.join(root, 'managed-install') : root;
+  const configuredInstallRoot = symlinkInstallRoot ? path.join(root, 'install') : root;
+  if (symlinkInstallRoot) {
+    await fsp.mkdir(installRoot);
+    await fsp.symlink(installRoot, configuredInstallRoot);
+  }
   const targetDirectory = path.join(installRoot, 'releases', `2.0.0-${TARGET_REVISION.slice(0, 12)}`);
   const previousDirectory = path.join(installRoot, 'archives', '1.0.0');
   const servicePath = path.join(installRoot, 'systemd', 'openchamber.service');
@@ -62,7 +69,7 @@ async function fixture() {
   };
   const options = { systemdRoot: path.dirname(servicePath) };
   await writeRestartTransaction(transactionPath, transaction, options);
-  return { installRoot, targetDirectory, previousDirectory, servicePath, launcherPath, statusPath, transactionPath, options, transaction };
+  return { configuredInstallRoot, installRoot, targetDirectory, previousDirectory, servicePath, launcherPath, statusPath, transactionPath, options, transaction };
 }
 
 async function supervisorFixture() {
@@ -96,6 +103,18 @@ afterEach(async () => {
 });
 
 describe('restart transaction helper', () => {
+  it('completes an attested restart through a symlinked managed root', async () => {
+    const value = await fixture(true);
+    expect(resolveManagedInstallRoot(value.configuredInstallRoot)).toBe(value.installRoot);
+    await runRestartTransaction(value.transactionPath, {
+      spawnSyncImpl: vi.fn(() => ({ status: 0, stdout: '', stderr: '' })),
+      fetchImpl: attestedFetch(value, { version: '2.0.0', revision: TARGET_REVISION }),
+      ...value.options,
+    });
+    expect(JSON.parse(await fsp.readFile(value.statusPath, 'utf8'))).toMatchObject({ state: 'installed', currentVersion: '2.0.0' });
+    await expect(fsp.access(value.transactionPath)).rejects.toThrow();
+  });
+
   it('commits installed state only after the selected target answers health', async () => {
     const value = await fixture();
     const spawnSyncImpl = vi.fn(() => ({ status: 0, stdout: '', stderr: '' }));
