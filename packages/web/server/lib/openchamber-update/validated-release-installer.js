@@ -723,14 +723,16 @@ async function replaceSymlink(linkPath, targetPath) {
 }
 
 async function getLinkTarget(linkPath) {
+  let stat;
   try {
-    const stat = await fsp.lstat(linkPath);
-    if (!stat.isSymbolicLink()) fail(`${linkPath} exists but is not a symbolic link`);
-    return path.resolve(path.dirname(linkPath), await fsp.readlink(linkPath));
+    stat = await fsp.lstat(linkPath);
   } catch (error) {
     if (error?.code === 'ENOENT') return null;
     throw error;
   }
+  if (!stat.isSymbolicLink()) fail(`${linkPath} exists but is not a symbolic link`);
+  const target = path.resolve(path.dirname(linkPath), await fsp.readlink(linkPath));
+  return fsp.realpath(target).catch(() => null);
 }
 
 function isPathInside(parent, candidate) {

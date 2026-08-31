@@ -146,13 +146,15 @@ function makeFetch({ archive, channel, checksum, releaseStatus = 200, overrides 
   });
 }
 
-async function makeHarness(fetchImpl = makeFetch(), onStateChange, installerOptions = {}, symlinkInstallRoot = false) {
+async function makeHarness(fetchImpl = makeFetch(), onStateChange, installerOptions = {}, symlinkInstallRoot = false, managedCurrent = false) {
   let root = await fsp.mkdtemp(path.join(os.tmpdir(), 'openchamber-update-'));
   root = await fsp.realpath(root);
   temporaryDirectories.push(root);
   const installRoot = path.join(root, 'install');
   const actualInstallRoot = symlinkInstallRoot ? path.join(root, 'managed-install') : installRoot;
-  let oldInstall = path.join(root, 'old');
+  let oldInstall = managedCurrent
+    ? path.join(actualInstallRoot, 'releases', `1.0.0-${OLD_COMMIT.slice(0, 12)}`)
+    : path.join(root, 'old');
   await fsp.mkdir(oldInstall, { recursive: true });
   oldInstall = await fsp.realpath(oldInstall);
   await fsp.writeFile(path.join(oldInstall, 'package.json'), JSON.stringify({ name: '@openchamber/web', version: '1.0.0', dependencies: DEPENDENCIES }));
@@ -164,7 +166,10 @@ async function makeHarness(fetchImpl = makeFetch(), onStateChange, installerOpti
   await fsp.writeFile(path.join(oldInstall, 'node_modules', 'fixture-peer', 'package.json'), JSON.stringify({ name: 'fixture-peer', version: '1.0.0' }));
   await fsp.mkdir(actualInstallRoot, { recursive: true });
   if (symlinkInstallRoot) await fsp.symlink(actualInstallRoot, installRoot);
-  await fsp.symlink(oldInstall, path.join(actualInstallRoot, 'current'));
+  const currentTarget = managedCurrent && symlinkInstallRoot
+    ? path.join(installRoot, 'releases', path.basename(oldInstall))
+    : oldInstall;
+  await fsp.symlink(currentTarget, path.join(actualInstallRoot, 'current'));
   const installer = createValidatedReleaseInstaller({
     fetchImpl,
     installRoot,
@@ -216,6 +221,22 @@ describe('validated release installation', () => {
     await harness.installer.install({ targetVersion: VERSION, handoffRestart: vi.fn() });
     const selected = await fsp.realpath(path.join(harness.installRoot, 'current'));
     expect(selected).toContain(path.join(harness.root, 'managed-install', 'releases'));
+    expect(harness.installer.getStatus().state).toBe('restarting');
+  });
+
+  it('keeps an existing managed release as the direct rollback target through a symlinked root', async () => {
+    const harness = await makeHarness(makeFetch(), undefined, {}, true, true);
+    await harness.installer.install({ targetVersion: VERSION, handoffRestart: vi.fn() });
+    expect(await fsp.realpath(path.join(harness.installRoot, 'previous'))).toBe(harness.oldInstall);
+    await expect(fsp.access(path.join(harness.installRoot, 'archives'))).rejects.toThrow();
+  });
+
+  it('archives the running package when the current link target cannot be resolved', async () => {
+    const harness = await makeHarness();
+    await fsp.rm(path.join(harness.installRoot, 'current'));
+    await fsp.symlink('current', path.join(harness.installRoot, 'current'));
+    await harness.installer.install({ targetVersion: VERSION, handoffRestart: vi.fn() });
+    expect(await fsp.realpath(path.join(harness.installRoot, 'previous'))).toContain(path.join(harness.installRoot, 'archives'));
     expect(harness.installer.getStatus().state).toBe('restarting');
   });
 
