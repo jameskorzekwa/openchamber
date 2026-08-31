@@ -71,6 +71,7 @@ describe('OpmStatusOverlay behavior', () => {
       const pill = document.querySelector('[aria-label="Open OPM status"]');
       expect(pill).not.toBeNull();
       expect(pill?.textContent).toContain('working (1)');
+      expect(pill?.querySelector('[data-testid="opm-pill-total"]')?.textContent).toContain('1');
       const result = availableResult();
       if (result.status !== 'supported' || !result.snapshot.available) throw new Error('expected available snapshot');
       expect(openOpmRowSession(result.snapshot.tree[0], (id, path) => opened.push([id, path]))).toBe(true);
