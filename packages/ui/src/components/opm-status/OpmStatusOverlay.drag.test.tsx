@@ -66,6 +66,7 @@ describe('OpmStatusOverlay pill drag', () => {
     pill.getBoundingClientRect = () => {
       const left = Number.parseFloat(pill.style.left);
       const top = Number.parseFloat(pill.style.top);
+      // SAFETY: This complete DOMRect test double supplies every required field.
       return {
         left: Number.isFinite(left) ? left : 900,
         top: Number.isFinite(top) ? top : 700,
@@ -193,7 +194,7 @@ describe('OpmStatusOverlay pill drag', () => {
     }
   });
 
-  test('the mobile capsule renders the salient count next to the dot while text stays desktop-only', async () => {
+  test('the mobile capsule renders the total task count next to the dot while text stays desktop-only', async () => {
     const pill = await mountPill();
     try {
       const text = pill.querySelector('span.hidden');
@@ -201,7 +202,7 @@ describe('OpmStatusOverlay pill drag', () => {
       expect(text?.className).toContain('sm:inline');
       const capsule = pill.querySelector('span.font-bold');
       expect(capsule?.textContent).toBe('1');
-      expect(capsule?.className).toContain('sm:hidden');
+      expect(capsule?.className).not.toContain('sm:hidden');
     } finally {
       await unmount();
     }
