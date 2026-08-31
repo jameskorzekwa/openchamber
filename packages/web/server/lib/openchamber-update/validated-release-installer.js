@@ -899,7 +899,8 @@ export function createValidatedReleaseInstaller(options = {}) {
     );
     const upstreamTagUrl = `https://api.github.com/repos/openchamber/openchamber/commits/${encodeURIComponent(channel.upstreamTag || `v${channel.baseVersion}`)}`;
     const upstreamCommit = parseTagCommit(await fetchJson(fetchImpl, upstreamTagUrl, 'GitHub upstream tag metadata', { githubToken }));
-    const compareUrl = `https://api.github.com/repos/${repository}/compare/${upstreamCommit}...${channel.sourceCommit}`;
+    // GitHub includes changed-file patches only on page 1; later pages retain the ancestry fields.
+    const compareUrl = `https://api.github.com/repos/${repository}/compare/${upstreamCommit}...${channel.sourceCommit}?per_page=1&page=2`;
     parseCompare(await fetchJson(fetchImpl, compareUrl, 'GitHub upstream ancestry metadata', { githubToken }), upstreamCommit, channel.sourceCommit);
     const releaseAssetNames = release.assets.map((asset) => asset.name).sort();
     if (JSON.stringify(releaseAssetNames) !== JSON.stringify([...channel.assets].sort())) {
