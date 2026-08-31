@@ -17,7 +17,7 @@ import { useSessionUIStore } from '@/sync/session-ui-store';
 import {
   fetchOpmStatus,
   getOpmCounts,
-  getSalientOpmCount,
+  getTotalOpmCount,
   openOpmRowSession,
   ownerGuidanceKind,
   postOpmCommand,
@@ -288,6 +288,8 @@ const OpmWorkRow = ({
   onRun,
   expanded,
   onToggleExpand,
+  childrenExpanded,
+  onToggleChildren,
 }: {
   row: OpmRow;
   isParent: boolean;
@@ -299,6 +301,8 @@ const OpmWorkRow = ({
   onRun: (row: OpmRow) => void;
   expanded: boolean;
   onToggleExpand: (row: OpmRow) => void;
+  childrenExpanded?: boolean;
+  onToggleChildren?: () => void;
 }) => {
   const { locale, t } = useI18n();
   const projectLabel = `${row.projectName || row.project || 'OPM'} #${row.ref}`;
@@ -307,39 +311,42 @@ const OpmWorkRow = ({
   );
   return (
     <article className={cn(
-      'min-w-0 overflow-hidden rounded-lg border px-2.5 py-2',
+      'min-w-0 overflow-hidden rounded-md border px-1.5 py-0.5',
       rowTone(row),
-      isChild && 'ml-3 rounded-l-none border-l-2',
+      isChild && 'ml-2 rounded-l-none border-l-2',
     )}>
-      <button
-        type="button"
-        className="flex w-full min-w-0 items-start gap-2 text-left"
-        aria-expanded={expanded}
-        onClick={() => onToggleExpand(row)}
-      >
-        <Icon name="arrow-right-s" className={cn('mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')} />
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="min-w-0 truncate font-medium text-foreground">{projectLabel}</span>
-            {isParent ? (
-              <span className="max-w-24 shrink-0 truncate rounded bg-[var(--surface-muted)] px-1.5 py-0.5 uppercase tracking-wide typography-micro text-muted-foreground">
-                {t('opm.row.parent')}
-              </span>
-            ) : null}
-            {isChild ? (
-              <span className="max-w-24 shrink-0 truncate rounded bg-[var(--surface-muted)] px-1.5 py-0.5 uppercase tracking-wide typography-micro text-muted-foreground">
-                {t('opm.row.child')}
-              </span>
-            ) : null}
+      <div className="flex min-w-0 items-center gap-1">
+        {isParent ? (
+          <button
+            type="button"
+            className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-interactive-hover hover:text-foreground"
+            aria-label={childrenExpanded ? t('opm.actions.collapseSubtasks') : t('opm.actions.expandSubtasks')}
+            aria-expanded={childrenExpanded}
+            onClick={onToggleChildren}
+          >
+            <Icon name="arrow-right-s" className={cn('size-4 transition-transform', childrenExpanded && 'rotate-90')} />
+          </button>
+        ) : <span className="w-1 shrink-0" />}
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+          aria-expanded={expanded}
+          onClick={() => onToggleExpand(row)}
+        >
+          <span className="min-w-0 flex-1">
+            <span data-testid="opm-row-title" className="block min-w-0 truncate font-medium leading-4 text-foreground">{row.title}</span>
+            <span className="flex min-w-0 items-center gap-1 leading-4 typography-micro text-muted-foreground">
+              <span data-testid="opm-row-reference" className="min-w-0 truncate">{projectLabel}</span>
+              {isParent ? <span className="shrink-0">· {t('opm.row.parent')}</span> : null}
+              {isChild ? <span className="shrink-0">· {t('opm.row.child')}</span> : null}
+              <span className="shrink-0">· {relativeAge(row.updatedAt, locale)}</span>
+            </span>
           </span>
-          <span className="mt-0.5 block min-w-0 truncate typography-ui-label text-foreground">{row.title}</span>
-        </span>
-        <span className="flex shrink-0 flex-col items-end gap-1">
           {phasePill}
-          <span className="typography-micro text-muted-foreground">{relativeAge(row.updatedAt, locale)}</span>
-        </span>
-      </button>
-      <div data-testid="opm-row-detail" className={cn('min-w-0', expanded ? 'mt-2 block' : 'hidden')}>
+          <Icon name="arrow-right-s" className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')} />
+        </button>
+      </div>
+      <div data-testid="opm-row-detail" className={cn('min-w-0 pl-7', expanded ? 'mt-1.5 block' : 'hidden')}>
         {row.url ? (
           <a className="inline-flex min-w-0 max-w-full items-center gap-1 typography-micro text-muted-foreground hover:underline" href={row.url} target="_blank" rel="noreferrer">
             <span className="min-w-0 truncate">{projectLabel}</span><Icon name="external-link" className="size-3 shrink-0" />
@@ -349,12 +356,12 @@ const OpmWorkRow = ({
         {row.reason ? <p className="mt-1 min-w-0 break-words [overflow-wrap:anywhere] typography-ui-label text-muted-foreground">{row.reason}</p> : null}
         {row.nextAction && row.nextAction !== row.reason ? <p className="mt-1 min-w-0 break-words [overflow-wrap:anywhere] typography-ui-label text-muted-foreground">{t('opm.row.nextAction', { action: row.nextAction })}</p> : null}
         <div className={cn(
-          'mt-2 min-w-0 break-words rounded-md px-2.5 py-2 typography-ui-label',
+          'mt-1.5 min-w-0 break-words rounded-md px-2 py-1.5 typography-ui-label',
           row.owner.required ? 'bg-status-error/10 text-status-error' : 'bg-status-success/10 text-status-success',
         )}>
           {ownerText(row, t)}
         </div>
-        <div className="mt-2 min-w-0 space-y-2">
+        <div className="mt-1.5 min-w-0 space-y-1.5">
           {row.command ? (
             <code className="block w-full min-w-0 whitespace-pre-wrap break-all rounded-md bg-background px-2 py-1.5 typography-micro text-foreground">{row.command}</code>
           ) : null}
@@ -402,15 +409,10 @@ const OpmWorkRow = ({
   );
 };
 
-const countHierarchyRows = (rows: OpmTreeRow[]): number => rows.reduce(
-  (total, row) => total + 1 + countHierarchyRows(row.childRows),
-  0,
-);
-
 const TaskOverview = ({ snapshot }: { snapshot: OpmAvailableSnapshot }) => {
   const { t } = useI18n();
   const counts = getOpmCounts(snapshot);
-  const total = countHierarchyRows(snapshot.tree);
+  const total = getTotalOpmCount(snapshot) ?? 0;
   const states = [
     { label: phaseLabel('waiting_owner', t), count: counts.needsYou, tone: 'text-status-error bg-status-error/10' },
     { label: phaseLabel('blocked', t), count: counts.blocked, tone: 'text-status-warning bg-status-warning/10' },
@@ -419,17 +421,15 @@ const TaskOverview = ({ snapshot }: { snapshot: OpmAvailableSnapshot }) => {
     { label: t('opm.overview.queued'), count: counts.queued, tone: 'text-muted-foreground bg-[var(--surface-muted)]' },
   ];
   return (
-    <section aria-labelledby="opm-task-overview" data-testid="opm-task-overview" className="min-w-0 rounded-lg border border-border/60 bg-[var(--surface-elevated)] p-2.5">
-      <div className="mb-2 flex items-center justify-between gap-2">
+    <section aria-labelledby="opm-task-overview" data-testid="opm-task-overview" className="min-w-0 rounded-md border border-border/60 bg-[var(--surface-elevated)] px-2 py-1.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
         <h3 id="opm-task-overview" className="font-medium text-foreground">{t('opm.section.workItems')}</h3>
         <span data-testid="opm-task-total" className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 font-medium typography-micro text-foreground">{total}</span>
-      </div>
-      <div className="grid min-w-0 grid-cols-2 gap-1.5 sm:grid-cols-5">
         {states.map((state) => (
-          <div key={state.label} className={cn('min-w-0 rounded-md px-2 py-1.5', state.tone)}>
-            <span className="block text-lg font-semibold leading-none">{state.count}</span>
-            <span className="mt-1 block min-w-0 truncate typography-micro">{state.label}</span>
-          </div>
+          <span key={state.label} className={cn('inline-flex min-w-0 items-center gap-1 rounded-full px-2 py-0.5 typography-micro', state.tone)}>
+            <span className="font-semibold">{state.count}</span>
+            <span className="truncate">{state.label}</span>
+          </span>
         ))}
       </div>
     </section>
@@ -490,6 +490,23 @@ const SupervisorSummary = ({ snapshot }: { snapshot: OpmAvailableSnapshot }) => 
 
 const rowKey = (row: OpmRow) => `${row.project}#${row.ref}`;
 
+const hierarchyPriority = (row: OpmTreeRow): number => {
+  const ownPriority = row.owner.required || row.kind
+    ? 0
+    : row.activityState === 'working'
+      ? 1
+      : row.phase === 'blocked' || row.phase === 'failed' || row.phase === 'paused'
+        ? 2
+        : row.activityState === 'queued'
+          ? 4
+          : 3;
+  return Math.min(ownPriority, ...row.childRows.map(hierarchyPriority));
+};
+
+const prioritizeHierarchy = (rows: OpmTreeRow[]): OpmTreeRow[] => [...rows]
+  .sort((left, right) => hierarchyPriority(left) - hierarchyPriority(right))
+  .map((row) => ({ ...row, childRows: prioritizeHierarchy(row.childRows) }));
+
 export const OpmStatusOverlay = ({
   loadStatus = fetchOpmStatus,
   openSession = (sessionId, workspacePath) => useSessionUIStore.getState().setCurrentSession(sessionId, workspacePath),
@@ -508,6 +525,7 @@ export const OpmStatusOverlay = ({
   // Details stay collapsed until the owner opens them. Every summary remains
   // visible, including children, so the dashboard is useful at a glance.
   const [expandedOverrides, setExpandedOverrides] = React.useState<Record<string, boolean>>({});
+  const [childrenExpandedOverrides, setChildrenExpandedOverrides] = React.useState<Record<string, boolean>>({});
   const [notificationPermission, setNotificationPermission] = React.useState<NotificationPermission | 'unsupported'>(
     globalThis.Notification ? Notification.permission : 'unsupported',
   );
@@ -563,7 +581,7 @@ export const OpmStatusOverlay = ({
             : counts.queued > 0
               ? t('opm.pill.queued', { count: counts.queued })
               : t('opm.pill.idle');
-  const pillCount = getSalientOpmCount(snapshot);
+  const pillCount = getTotalOpmCount(snapshot);
 
   const copyCommand = (command: string) => {
     void navigator.clipboard?.writeText(command).then(() => {
@@ -574,10 +592,14 @@ export const OpmStatusOverlay = ({
   const openRowSession = (row: OpmRow) => {
     if (openOpmRowSession(row, openSession)) setOpen(false);
   };
-  const isRowExpanded = (row: OpmRow) => expandedOverrides[rowKey(row)] ?? false;
-  const toggleRow = (row: OpmRow) => {
-    const next = !isRowExpanded(row);
+  const isRowExpanded = (row: OpmRow, defaultExpanded = false) => expandedOverrides[rowKey(row)] ?? defaultExpanded;
+  const toggleRow = (row: OpmRow, defaultExpanded = false) => {
+    const next = !isRowExpanded(row, defaultExpanded);
     setExpandedOverrides((previous) => ({ ...previous, [rowKey(row)]: next }));
+  };
+  const areChildrenExpanded = (row: OpmRow) => childrenExpandedOverrides[rowKey(row)] ?? true;
+  const toggleChildren = (row: OpmRow) => {
+    setChildrenExpandedOverrides((previous) => ({ ...previous, [rowKey(row)]: !areChildrenExpanded(row) }));
   };
   const runCommand = async (row: OpmRow) => {
     const key = rowKey(row);
@@ -596,7 +618,7 @@ export const OpmStatusOverlay = ({
       setRunStates((previous) => ({ ...previous, [key]: { status: 'error', message: result.error } }));
     }
   };
-  const rowProps = (row: OpmRow, isParent: boolean, isChild: boolean) => ({
+  const rowProps = (row: OpmRow, isParent: boolean, isChild: boolean, defaultExpanded = false) => ({
     row,
     isParent,
     isChild,
@@ -605,20 +627,24 @@ export const OpmStatusOverlay = ({
     onOpenSession: openRowSession,
     runState: runStates[rowKey(row)],
     onRun: (target: OpmRow) => void runCommand(target),
-    expanded: isRowExpanded(row),
-    onToggleExpand: toggleRow,
+    expanded: isRowExpanded(row, defaultExpanded),
+    onToggleExpand: (target: OpmRow) => toggleRow(target, defaultExpanded),
+    childrenExpanded: isParent ? areChildrenExpanded(row) : undefined,
+    onToggleChildren: isParent ? () => toggleChildren(row) : undefined,
   });
   const renderHierarchy = (rows: OpmTreeRow[], depth = 0): React.ReactNode => rows.map((row) => {
     const children = row.childRows;
+    const childrenExpanded = areChildrenExpanded(row);
     return (
-      <div key={rowKey(row)} className="min-w-0 space-y-1.5">
+      <div key={rowKey(row)} className="min-w-0 space-y-1">
         <OpmWorkRow {...rowProps(row, children.length > 0, depth > 0)} />
-        {children.length > 0 ? (
-          <div className="min-w-0 space-y-1.5">{renderHierarchy(children, depth + 1)}</div>
+        {children.length > 0 && childrenExpanded ? (
+          <div className="min-w-0 space-y-1">{renderHierarchy(children, depth + 1)}</div>
         ) : null}
       </div>
     );
   });
+  const prioritizedTree = snapshot.available ? prioritizeHierarchy(snapshot.tree) : [];
   const requestNotifications = async () => {
     if (!globalThis.Notification) return;
     try {
@@ -655,7 +681,11 @@ export const OpmStatusOverlay = ({
       >
         <StatusDot snapshot={snapshot} />
         <span className="hidden sm:inline">{pillText}</span>
-        {pillCount !== null ? <span className="font-bold sm:hidden">{pillCount}</span> : null}
+        {pillCount !== null ? (
+          <span data-testid="opm-pill-total" className="rounded-full bg-[var(--surface-muted)] px-1.5 font-bold">
+            {pillCount}
+          </span>
+        ) : null}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
@@ -669,7 +699,18 @@ export const OpmStatusOverlay = ({
           <DialogHeader className="sticky top-0 z-30 min-w-0 shrink-0 gap-1 border-b border-border/60 bg-background pb-2 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-[max(0.75rem,env(safe-area-inset-top))] text-left sm:pb-3 sm:pl-[max(1.25rem,env(safe-area-inset-left))] sm:pr-[max(1.25rem,env(safe-area-inset-right))] sm:pt-[max(1.25rem,env(safe-area-inset-top))]">
             <div className="flex min-w-0 items-center justify-between gap-2">
               <DialogTitle className="flex min-w-0 items-center gap-2"><StatusDot snapshot={snapshot} />OPM</DialogTitle>
-              <Button size="icon" variant="ghost" aria-label={t('dialog.common.actions.close')} className="-mr-1 shrink-0" onClick={() => setOpen(false)}>
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label={t('dialog.common.actions.close')}
+                className="app-region-no-drag pointer-events-auto relative z-50 -mr-1 shrink-0 touch-manipulation"
+                onPointerDown={(event) => event.stopPropagation()}
+                onPointerUp={(event) => {
+                  event.stopPropagation();
+                  setOpen(false);
+                }}
+                onClick={() => setOpen(false)}
+              >
                 <Icon name="close" className="size-4" />
               </Button>
             </div>
@@ -685,15 +726,27 @@ export const OpmStatusOverlay = ({
                 {t('opm.dialog.controlUnreachable')}
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-2">
+                {snapshot.groups.needsYou.length > 0 ? (
+                  <section aria-labelledby="opm-needs-you" data-testid="opm-needs-you" className="min-w-0 rounded-md border border-status-error/40 bg-status-error/5 p-1.5">
+                    <h3 id="opm-needs-you" className="mb-1 px-1 font-semibold text-status-error typography-ui-label">
+                      {t('opm.section.needsYou', { count: snapshot.groups.needsYou.length })}
+                    </h3>
+                    <div className="min-w-0 space-y-1">
+                      {snapshot.groups.needsYou.map((row) => (
+                        <OpmWorkRow key={`attention:${rowKey(row)}`} {...rowProps(row, false, Boolean(row.parentRef), true)} />
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
                 <TaskOverview snapshot={snapshot} />
-                <SupervisorSummary snapshot={snapshot} />
                 <section aria-labelledby="opm-work-items">
                   <h3 id="opm-work-items" className="sr-only">{t('opm.section.workItems')}</h3>
                   {snapshot.tree.length === 0 ? <p className="text-muted-foreground typography-ui-label">{t('opm.section.empty')}</p> : (
-                    <div className="min-w-0 space-y-2">{renderHierarchy(snapshot.tree)}</div>
+                    <div data-testid="opm-work-tree" className="min-w-0 space-y-1.5">{renderHierarchy(prioritizedTree)}</div>
                   )}
                 </section>
+                <SupervisorSummary snapshot={snapshot} />
                 {notificationPermission === 'default' ? (
                   <footer className="flex justify-end border-t border-border/60 pt-3">
                     <Button size="xs" variant="outline" onClick={() => void requestNotifications()}>{t('opm.actions.enableNotifications')}</Button>

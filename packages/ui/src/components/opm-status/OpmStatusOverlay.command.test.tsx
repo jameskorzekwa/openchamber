@@ -150,7 +150,7 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       expect(sendCommand).toHaveBeenCalledTimes(1);
       expect(sent[0]).toMatchObject({ project: 'openchamber', ref: '10', command: AUTHORIZE });
       const sentButtons = buttonsByText('Sent ✓');
-      expect(sentButtons).toHaveLength(1);
+      expect(sentButtons).toHaveLength(2);
       expect(sentButtons.every((button) => button.disabled)).toBe(true);
       expect(buttonsByText('Run')).toHaveLength(0);
     } finally {
@@ -181,7 +181,8 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
   test('all rows stay condensed until their summary is expanded', async () => {
     await mountAndOpen(async () => ({ ok: true }));
     try {
-      const summaries = [...document.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
+      const workTree = document.querySelector('[data-testid="opm-work-tree"]');
+      const summaries = [...(workTree?.querySelectorAll<HTMLButtonElement>('button[aria-expanded]') ?? [])]
         .filter((button) => button.textContent?.includes('OpenChamber'));
       const needsOwnerSummary = summaries.find((button) => button.textContent?.includes('Protected change'));
       const activeSummary = summaries.find((button) => button.textContent?.includes('Ordinary background'));
@@ -220,21 +221,28 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       expect(header?.className).toContain('safe-area-inset-left');
       expect(header?.className).toContain('safe-area-inset-right');
       expect(document.querySelector('[aria-label="Close"]')).not.toBeNull();
+      expect(document.querySelector('[aria-label="Close"]')?.className).toContain('pointer-events-auto');
       expect(document.documentElement.classList.contains('oc-opm-dialog-open')).toBe(true);
+
+      const needsYou = document.querySelector('[data-testid="opm-needs-you"]');
+      expect(needsYou?.textContent).toContain('Protected change awaiting authorization');
+      expect(needsYou?.textContent).toContain(AUTHORIZE);
 
       const overview = document.querySelector('[data-testid="opm-task-overview"]');
       expect(overview?.textContent).toContain('Waiting on you');
       expect(overview?.textContent).toContain('Working');
       expect(overview?.textContent).toContain('Queued');
       expect(document.querySelector('[data-testid="opm-task-total"]')?.textContent).toBe('4');
+      expect(document.querySelector('[data-testid="opm-pill-total"]')?.textContent).toContain('4');
 
-      const parentSummary = [...document.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
+      const workTree = document.querySelector('[data-testid="opm-work-tree"]');
+      const parentSummary = [...(workTree?.querySelectorAll<HTMLButtonElement>('button[aria-expanded]') ?? [])]
         .find((button) => button.textContent?.includes('Protected change'));
-      const childSummary = [...document.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
+      const childSummary = [...(workTree?.querySelectorAll<HTMLButtonElement>('button[aria-expanded]') ?? [])]
         .find((button) => button.textContent?.includes('Ordinary background'));
-      const grandchildSummary = [...document.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
+      const grandchildSummary = [...(workTree?.querySelectorAll<HTMLButtonElement>('button[aria-expanded]') ?? [])]
         .find((button) => button.textContent?.includes('Nested follow-up'));
-      const level4Summary = [...document.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
+      const level4Summary = [...(workTree?.querySelectorAll<HTMLButtonElement>('button[aria-expanded]') ?? [])]
         .find((button) => button.textContent?.includes('Deeply nested'));
       expect(parentSummary?.textContent).toContain('Parent');
       expect(parentSummary?.textContent).toContain('Blocked');
@@ -248,10 +256,27 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       expect(level4Summary?.textContent).toContain('Child');
       expect(level4Summary?.textContent).toContain('Planned');
 
+      expect(parentSummary?.querySelector('[data-testid="opm-row-title"]')?.textContent).toBe('Protected change awaiting authorization');
+      expect(parentSummary?.querySelector('[data-testid="opm-row-reference"]')?.textContent).toBe('OpenChamber #10');
+      const collapse = workTree?.querySelector<HTMLButtonElement>('[aria-label="Collapse subtasks"]');
+      expect(collapse).not.toBeNull();
       await act(async () => {
-        document.querySelector<HTMLButtonElement>('[aria-label="Close"]')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 }));
+        collapse?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 }));
+      });
+      expect(workTree?.textContent).not.toContain('Ordinary background work item');
+      const expand = workTree?.querySelector<HTMLButtonElement>('[aria-label="Expand subtasks"]');
+      await act(async () => {
+        expand?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 }));
+      });
+      expect(workTree?.textContent).toContain('Ordinary background work item');
+
+      await act(async () => {
+        const close = document.querySelector<HTMLButtonElement>('[aria-label="Close"]');
+        close?.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+        close?.dispatchEvent(new window.MouseEvent('pointerup', { bubbles: true, button: 0 }));
       });
       expect(document.documentElement.classList.contains('oc-opm-dialog-open')).toBe(false);
+      expect(document.querySelector('[data-testid="opm-dialog"]')).toBeNull();
     } finally {
       await unmount();
     }
