@@ -1,6 +1,11 @@
 name: J2K Desktop Release
 
 on:
+  workflow_run:
+    workflows:
+      - J2K Validate
+    types:
+      - completed
   workflow_dispatch:
     inputs:
       source_sha:
@@ -27,8 +32,11 @@ env:
 jobs:
   metadata:
     if: >-
-      github.ref == 'refs/heads/j2k/current' &&
-      github.workflow_ref == format('{0}/.github/workflows/desktop-release.yml@refs/heads/j2k/current', github.repository)
+      github.workflow_ref == format('{0}/.github/workflows/desktop-release.yml@refs/heads/j2k/current', github.repository) &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/j2k/current') ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') &&
+        github.event.workflow_run.head_branch == 'j2k/current'))
     runs-on: ubuntu-latest
     outputs:
       base_version: ${{ steps.identity.outputs.base_version }}
@@ -57,18 +65,24 @@ jobs:
         id: source
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
-          if [[ ! "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+          requested_commit="$INPUT_SOURCE_SHA"
+          if [[ "$EVENT_NAME" == 'workflow_run' ]]; then
+            requested_commit="$WORKFLOW_HEAD_SHA"
+          fi
+          if [[ ! "$requested_commit" =~ ^[0-9a-f]{40}$ ]]; then
             echo 'source_sha must be an exact lowercase 40-character commit.' >&2
             exit 1
           fi
           trusted_commit="$(git rev-parse HEAD)"
           git fetch origin '+refs/heads/j2k/current:refs/remotes/origin/desktop-source' '+refs/tags/desktop-v*:refs/tags/desktop-v*'
           source_commit="$(git rev-parse refs/remotes/origin/desktop-source^{commit})"
-          if [[ "$source_commit" != "$INPUT_SOURCE_SHA" ]]; then
-            echo "j2k/current moved or does not resolve to requested SHA $INPUT_SOURCE_SHA; current SHA is $source_commit." >&2
+          if [[ "$source_commit" != "$requested_commit" ]]; then
+            echo "j2k/current moved or does not resolve to requested SHA $requested_commit; current SHA is $source_commit." >&2
             exit 1
           fi
           if [[ "$source_commit" != "$trusted_commit" ]]; then
@@ -314,6 +328,10 @@ jobs:
           security delete-keychain "$RUNNER_TEMP/openchamber-desktop.keychain-db" >/dev/null 2>&1
 
   publish:
+    if: >-
+      needs.metadata.result == 'success' &&
+      github.workflow_ref == format('{0}/.github/workflows/desktop-release.yml@refs/heads/j2k/current', github.repository) &&
+      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/j2k/current')
     needs:
       - metadata
       - build
