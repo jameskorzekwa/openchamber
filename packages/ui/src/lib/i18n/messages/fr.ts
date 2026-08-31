@@ -1,7 +1,11 @@
 import { settingsDict } from './fr.settings';
+import { opmStatusI18n } from './opm-status.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
   ...settingsDict,
+  ...opmStatusI18n.fr,
+  ...updateStatusI18n.fr,
   'terminalView.actions.attachSelection': 'Joindre la sortie sélectionnée',
   'terminalView.actions.restart': 'Redémarrer le terminal',
   'chat.message.terminalContext': '{terminal}, lignes {start}-{end}',
@@ -391,6 +395,11 @@ export const dict = {
   'sessions.sidebar.session.export.dialog.includeSubtasks': 'Inclure les tâches des sous-agents',
   'sessions.sidebar.session.export.dialog.confirm': 'Exporter',
   'sessions.sidebar.session.status.active': 'Session active',
+  'sessions.sidebar.session.status.waitingSingleDescription': 'En attente : {description}',
+  'sessions.sidebar.session.status.waitingSingleDefault': 'En attente d’un processus en arrière-plan',
+  'sessions.sidebar.session.status.waitingMany': 'En attente de {count} processus en arrière-plan',
+  'sessions.sidebar.session.status.waitingBadgeSingle': 'En attente',
+  'sessions.sidebar.session.status.waitingBadgeMany': 'En attente · {count}',
   'sessions.sidebar.session.status.unread': 'Mises à jour non lues',
   'sessions.sidebar.session.status.pinned': 'Session épinglée',
   'sessions.sidebar.session.status.movingToWorktree': 'Déplacement de la session vers un nouveau worktree',
@@ -399,6 +408,12 @@ export const dict = {
   'sessions.sidebar.session.status.questionPendingMany': '{count} questions en attente',
   'sessions.sidebar.session.status.activeFor': 'Active depuis {duration}',
   'sessions.sidebar.session.status.lastTurnDuration': 'Le dernier tour a duré {duration}',
+  'chat.ptyWaiting.backgroundProcess': 'Processus en arrière-plan',
+  'chat.ptyWaiting.backgroundProcesses': '{count} processus en arrière-plan',
+  'chat.ptyWaiting.ariaSingleDescription': 'En attente : {description}',
+  'chat.ptyWaiting.ariaSingleDefault': 'En attente d’un processus en arrière-plan',
+  'chat.ptyWaiting.ariaMany': 'En attente de {count} processus en arrière-plan',
+  'chat.ptyWaiting.label': 'En attente…',
   'sessions.sidebar.session.subsessions.collapse': 'Réduire les sous-sessions',
   'sessions.sidebar.session.subsessions.expand': 'Développer les sous-sessions',
   'sessions.sidebar.dialogs.deleteSession.title': 'Supprimer la session ?',

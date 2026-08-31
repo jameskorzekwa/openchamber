@@ -5,6 +5,7 @@ import { registerWalkthroughRoutes } from '../walkthrough/routes.js';
 import { registerSessionGoalRoutes } from '../session-goal/routes.js';
 import { registerGitHubRoutes } from '../github/routes.js';
 import { registerGitRoutes } from '../git/routes.js';
+import { registerOpmStatusRoutes } from '../opm-status/routes.js';
 import { registerDevServerRoutes } from '../dev-servers/routes.js';
 import { registerMagicPromptRoutes } from '../magic-prompts/routes.js';
 import { registerSessionFoldersRoutes } from '../session-folders/routes.js';
@@ -55,6 +56,8 @@ export const createFeatureRoutesRuntime = (dependencies) => {
   const {
     clientReloadDelayMs,
   } = dependencies;
+  let gitRoutesRuntime = null;
+  let opmStatusRoutesRuntime = null;
 
   let quotaProviders = null;
   const getQuotaProviders = async () => {
@@ -131,6 +134,8 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       writeSseEvent,
       emitSessionCreatedEvent,
       permissionAutoAcceptRuntime,
+      globalEventHub,
+      openchamberBuildRevision,
     } = routeDependencies;
 
     registerSettingsUtilityRoutes(app, {
@@ -182,6 +187,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       scheduledTaskService,
       getOpenChamberEventClients,
       writeSseEvent,
+      openchamberBuildRevision,
     });
 
     registerOpenChamberSessionRoutes(app, {
@@ -300,7 +306,10 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     registerWalkthroughRoutes(app, { getWalkthroughService });
     registerSessionGoalRoutes(app);
     registerGitHubRoutes(app);
-    registerGitRoutes(app);
+    gitRoutesRuntime?.close?.();
+    gitRoutesRuntime = registerGitRoutes(app, { emitSessionCreatedEvent, globalEventHub });
+    opmStatusRoutesRuntime?.close?.();
+    opmStatusRoutesRuntime = registerOpmStatusRoutes(app);
     registerDevServerRoutes(app, { scanner: devServerScanner, getOwnPorts });
     registerMagicPromptRoutes(app, {
       fsPromises,
@@ -332,5 +341,11 @@ export const createFeatureRoutesRuntime = (dependencies) => {
 
   return {
     registerRoutes,
+    close: () => {
+      gitRoutesRuntime?.close?.();
+      gitRoutesRuntime = null;
+      opmStatusRoutesRuntime?.close?.();
+      opmStatusRoutesRuntime = null;
+    },
   };
 };

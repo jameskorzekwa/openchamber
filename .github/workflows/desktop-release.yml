@@ -1,0 +1,477 @@
+name: J2K Desktop Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact validated j2k/current commit to release
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: j2k-desktop-channel-release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  BUN_VERSION: 1.3.14
+  NODE_VERSION: 22.22.0
+
+jobs:
+  metadata:
+    if: >-
+      github.ref == 'refs/heads/j2k/current' &&
+      github.workflow_ref == format('{0}/.github/workflows/desktop-release.yml@refs/heads/j2k/current', github.repository)
+    runs-on: ubuntu-latest
+    outputs:
+      base_version: ${{ steps.identity.outputs.base_version }}
+      revision: ${{ steps.identity.outputs.revision }}
+      version: ${{ steps.identity.outputs.version }}
+      release_tag: ${{ steps.identity.outputs.release_tag }}
+      resume: ${{ steps.identity.outputs.resume }}
+      source_commit: ${{ steps.source.outputs.source_commit }}
+      source_ref: ${{ steps.source.outputs.source_ref }}
+      release_date: ${{ steps.source.outputs.release_date }}
+      channel_commit: ${{ steps.channel.outputs.channel_commit }}
+    steps:
+      - name: Check out trusted release workflow
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up exact Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Resolve and validate immutable source
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'source_sha must be an exact lowercase 40-character commit.' >&2
+            exit 1
+          fi
+          trusted_commit="$(git rev-parse HEAD)"
+          git fetch origin '+refs/heads/j2k/current:refs/remotes/origin/desktop-source' '+refs/tags/desktop-v*:refs/tags/desktop-v*'
+          source_commit="$(git rev-parse refs/remotes/origin/desktop-source^{commit})"
+          if [[ "$source_commit" != "$INPUT_SOURCE_SHA" ]]; then
+            echo "j2k/current moved or does not resolve to requested SHA $INPUT_SOURCE_SHA; current SHA is $source_commit." >&2
+            exit 1
+          fi
+          if [[ "$source_commit" != "$trusted_commit" ]]; then
+            echo "Desktop releases may execute and sign only the trusted workflow commit $trusted_commit; requested $source_commit." >&2
+            exit 1
+          fi
+          validation_runs="$(gh api --method GET "repos/${{ github.repository }}/actions/workflows/validate.yml/runs" \
+            -f head_sha="$source_commit" -f status=completed -f per_page=100)"
+          VALIDATION_RUNS="$validation_runs" SOURCE_COMMIT="$source_commit" node <<'NODE'
+          const runs = JSON.parse(process.env.VALIDATION_RUNS).workflow_runs;
+          const valid = runs.some((run) => run.head_sha === process.env.SOURCE_COMMIT
+            && run.head_branch === 'j2k/current' && run.conclusion === 'success');
+          if (!valid) throw new Error(`No successful J2K Validate run exists for exact source j2k/current@${process.env.SOURCE_COMMIT}`);
+          NODE
+          base_version="$(git show "$source_commit:packages/electron/package.json" | node -p 'JSON.parse(require(`fs`).readFileSync(0, `utf8`)).version')"
+          root_version="$(git show "$source_commit:package.json" | node -p 'JSON.parse(require(`fs`).readFileSync(0, `utf8`)).version')"
+          web_version="$(git show "$source_commit:packages/web/package.json" | node -p 'JSON.parse(require(`fs`).readFileSync(0, `utf8`)).version')"
+          ui_version="$(git show "$source_commit:packages/ui/package.json" | node -p 'JSON.parse(require(`fs`).readFileSync(0, `utf8`)).version')"
+          if [[ "$base_version" != "$root_version" || "$base_version" != "$web_version" || "$base_version" != "$ui_version" ]]; then
+            echo 'Electron-owned package identities do not share one base version.' >&2
+            exit 1
+          fi
+          if [[ ! "$base_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Electron base version is not canonical SemVer: $base_version" >&2
+            exit 1
+          fi
+          release_date="$(git show -s --format=%cI "$source_commit")"
+          {
+            printf 'source_commit=%s\n' "$source_commit"
+            printf 'source_ref=%s\n' 'j2k/current'
+            printf 'base_version=%s\n' "$base_version"
+            printf 'release_date=%s\n' "$release_date"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Allocate canonical desktop channel identity
+        id: identity
+        env:
+          BASE_VERSION: ${{ steps.source.outputs.base_version }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { appendFileSync } from 'node:fs';
+          import { resolveNextIdentity } from './tools/desktop-release/desktop-release.mjs';
+          const lines = execFileSync('git', ['for-each-ref', '--format=%(refname:short)\t%(objectname)\t%(*objectname)', 'refs/tags/desktop-v*'], { encoding: 'utf8' }).trim();
+          const tags = lines ? lines.split('\n').map((line) => {
+            const [tag, object, peeled] = line.split('\t');
+            return { tag, commit: peeled || object };
+          }) : [];
+          const identity = resolveNextIdentity({ baseVersion: process.env.BASE_VERSION, sourceCommit: process.env.SOURCE_COMMIT, tags });
+          appendFileSync(process.env.GITHUB_OUTPUT, [
+            `base_version=${identity.baseVersion}`,
+            `revision=${identity.revision}`,
+            `version=${identity.version}`,
+            `release_tag=${identity.tag}`,
+            `resume=${identity.resume}`,
+            '',
+          ].join('\n'));
+          NODE
+
+      - name: Capture desktop-channel branch lease
+        id: channel
+        run: |
+          set -euo pipefail
+          channel_commit="$(git ls-remote origin refs/heads/desktop-channel | cut -f1)"
+          printf 'channel_commit=%s\n' "$channel_commit" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: metadata
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Fail closed when private signing secrets are unavailable
+        env:
+          MACOS_PRIVATE_CERTIFICATE: ${{ secrets.MACOS_PRIVATE_CERTIFICATE }}
+          MACOS_PRIVATE_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_PRIVATE_CERTIFICATE_PASSWORD }}
+          MACOS_PRIVATE_CERTIFICATE_SHA256: ${{ secrets.MACOS_PRIVATE_CERTIFICATE_SHA256 }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "$MACOS_PRIVATE_CERTIFICATE" ]] || missing+=(MACOS_PRIVATE_CERTIFICATE)
+          [[ -n "$MACOS_PRIVATE_CERTIFICATE_PASSWORD" ]] || missing+=(MACOS_PRIVATE_CERTIFICATE_PASSWORD)
+          [[ -n "$MACOS_PRIVATE_CERTIFICATE_SHA256" ]] || missing+=(MACOS_PRIVATE_CERTIFICATE_SHA256)
+          if (( ${#missing[@]} )); then
+            printf 'Desktop release cannot start. Missing repository secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Check out exact validated fork source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ needs.metadata.outputs.source_commit }}
+          persist-credentials: false
+
+      - name: Set up Bun 1.3.14
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Set up Node.js 22.22.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install frozen dependencies and validate source
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test "$(node -p 'process.arch')" = arm64
+          test "$(node --version)" = "v$NODE_VERSION"
+          test "$(bun --version)" = "$BUN_VERSION"
+          test "$(git rev-parse HEAD)" = '${{ needs.metadata.outputs.source_commit }}'
+          bun install --frozen-lockfile
+          bun run type-check
+          bun run lint
+          bun run test
+
+      - name: Install pinned private signing certificate
+        env:
+          MACOS_PRIVATE_CERTIFICATE: ${{ secrets.MACOS_PRIVATE_CERTIFICATE }}
+          MACOS_PRIVATE_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_PRIVATE_CERTIFICATE_PASSWORD }}
+          MACOS_PRIVATE_CERTIFICATE_SHA256: ${{ secrets.MACOS_PRIVATE_CERTIFICATE_SHA256 }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/openchamber-desktop.keychain-db"
+          certificate="$RUNNER_TEMP/openchamber-desktop.p12"
+          leaf="$RUNNER_TEMP/openchamber-desktop.pem"
+          keychain_password="$(openssl rand -base64 32)"
+          printf '%s' "$MACOS_PRIVATE_CERTIFICATE" | base64 -D > "$certificate"
+          export P12_PASSWORD="$MACOS_PRIVATE_CERTIFICATE_PASSWORD"
+          openssl pkcs12 -in "$certificate" -clcerts -nokeys -passin env:P12_PASSWORD -out "$leaf"
+          certificate_subject="$(openssl x509 -in "$leaf" -noout -subject -nameopt RFC2253)"
+          if [[ "$certificate_subject" != *'CN=Developer ID Application: OpenChamber Private Updates'* ]]; then
+            echo 'Private certificate common name must be Developer ID Application: OpenChamber Private Updates.' >&2
+            exit 1
+          fi
+          actual_sha256="$(openssl x509 -in "$leaf" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+          expected_sha256="$(printf '%s' "$MACOS_PRIVATE_CERTIFICATE_SHA256" | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+          if [[ ! "$expected_sha256" =~ ^[0-9A-F]{64}$ || "$actual_sha256" != "$expected_sha256" ]]; then
+            echo 'Private signing certificate SHA-256 fingerprint differs from the pinned secret.' >&2
+            exit 1
+          fi
+          identity_sha1="$(openssl x509 -in "$leaf" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -P "$MACOS_PRIVATE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -t cert -f pkcs12 -k "$keychain" >/dev/null
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$leaf"
+          security list-keychains -d user -s "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
+          signing_identities="$(security find-identity -v -p codesigning "$keychain")"
+          if [[ "$signing_identities" != *"$identity_sha1"* ]]; then
+            echo 'Pinned certificate is not a valid code-signing identity.' >&2
+            exit 1
+          fi
+          {
+            printf 'CSC_KEYCHAIN=%s\n' "$keychain"
+            printf 'CSC_NAME=%s\n' "$identity_sha1"
+            printf 'OPENCHAMBER_PRIVATE_CERTIFICATE_SHA256=%s\n' "$expected_sha256"
+          } >> "$GITHUB_ENV"
+          rm -f "$certificate" "$leaf"
+
+      - name: Stage version, build custom app, and sign privately
+        env:
+          OPENCHAMBER_BUILD_REVISION: ${{ needs.metadata.outputs.source_commit }}
+          OPENCHAMBER_J2K_DESKTOP_BUILD: '1'
+          OPENCHAMBER_PRIVATE_MAC_SIGNING: '1'
+          OPENCHAMBER_TARGET_ARCH: arm64
+        run: |
+          set -euo pipefail
+          node tools/desktop-release/desktop-release.mjs stage-version \
+            --base-version '${{ needs.metadata.outputs.base_version }}' \
+            --revision '${{ needs.metadata.outputs.revision }}' \
+            --source-commit '${{ needs.metadata.outputs.source_commit }}'
+          bun run --cwd packages/electron build:web-assets
+          bun run --cwd packages/electron prepare:opencode-cli
+          bun run --cwd packages/electron verify:opencode-cli
+          bun run --cwd packages/electron bundle:main
+          bun run --cwd packages/electron rebuild:native
+          node packages/electron/scripts/package.mjs --mac --arm64 --publish=never
+
+      - name: Verify native app and prepare immutable candidates
+        run: |
+          set -euo pipefail
+          version='${{ needs.metadata.outputs.version }}'
+          app='packages/electron/dist/mac-arm64/OpenChamber.app'
+          [[ -d "$app" ]] || app='packages/electron/dist/mac/OpenChamber.app'
+          dmg="packages/electron/dist/OpenChamber-$version-mac-arm64.dmg"
+          opencode_version="$(node -p 'require(`./package.json`).dependencies[`@opencode-ai/sdk`]')"
+          electron_version="$(node -p 'require(require.resolve(`electron/package.json`, { paths: [`./packages/electron`] })).version')"
+          node tools/desktop-release/verify-macos-app.mjs \
+            --app "$app" --dmg "$dmg" --version "$version" \
+            --source-commit '${{ needs.metadata.outputs.source_commit }}' \
+            --opencode-version "$opencode_version" \
+            --certificate-sha256 "$OPENCHAMBER_PRIVATE_CERTIFICATE_SHA256"
+          zip="packages/electron/dist/OpenChamber-$version-mac-arm64.zip"
+          extracted="$RUNNER_TEMP/openchamber-desktop-zip"
+          mkdir "$extracted"
+          ditto -x -k "$zip" "$extracted"
+          node tools/desktop-release/verify-macos-app.mjs \
+            --app "$extracted/OpenChamber.app" --dmg "$dmg" --version "$version" \
+            --source-commit '${{ needs.metadata.outputs.source_commit }}' \
+            --opencode-version "$opencode_version" \
+            --certificate-sha256 "$OPENCHAMBER_PRIVATE_CERTIFICATE_SHA256"
+          mounted="$RUNNER_TEMP/openchamber-desktop-dmg"
+          mkdir "$mounted"
+          trap 'hdiutil detach "$mounted" >/dev/null 2>&1 || true' EXIT
+          hdiutil attach -readonly -nobrowse -mountpoint "$mounted" "$dmg" >/dev/null
+          node tools/desktop-release/verify-macos-app.mjs \
+            --app "$mounted/OpenChamber.app" --dmg "$dmg" --version "$version" \
+            --source-commit '${{ needs.metadata.outputs.source_commit }}' \
+            --opencode-version "$opencode_version" \
+            --certificate-sha256 "$OPENCHAMBER_PRIVATE_CERTIFICATE_SHA256"
+          hdiutil detach "$mounted" >/dev/null
+          trap - EXIT
+          mkdir artifacts
+          node tools/desktop-release/desktop-release.mjs prepare-release \
+            --base-version '${{ needs.metadata.outputs.base_version }}' \
+            --revision '${{ needs.metadata.outputs.revision }}' \
+            --source-commit '${{ needs.metadata.outputs.source_commit }}' \
+            --electron-version "$electron_version" --opencode-version "$opencode_version" \
+            --certificate-sha256 "$OPENCHAMBER_PRIVATE_CERTIFICATE_SHA256" \
+            --release-date '${{ needs.metadata.outputs.release_date }}' \
+            --dist-dir packages/electron/dist --output-dir artifacts
+
+      - name: Upload immutable desktop release candidates
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-release-${{ needs.metadata.outputs.release_tag }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove temporary signing material
+        if: always()
+        run: |
+          set +e
+          rm -f "$RUNNER_TEMP/openchamber-desktop.p12"
+          rm -f "$RUNNER_TEMP/openchamber-desktop.pem"
+          security delete-keychain "$RUNNER_TEMP/openchamber-desktop.keychain-db" >/dev/null 2>&1
+
+  publish:
+    needs:
+      - metadata
+      - build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out trusted publisher and verifier
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+
+      - name: Download validated candidate bytes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: desktop-release-${{ needs.metadata.outputs.release_tag }}
+          path: artifacts
+
+      - name: Set up exact trusted Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Verify candidate contract with trusted code
+        run: |
+          set -euo pipefail
+          opencode_version="$(node -p 'require(`./trusted/package.json`).dependencies[`@opencode-ai/sdk`]')"
+          electron_version="$(node -p 'require(`./trusted/node_modules/electron/package.json`).version' 2>/dev/null || node -p 'require(`./trusted/packages/electron/package.json`).devDependencies.electron.replace(/^\D+/, ``)')"
+          node trusted/tools/desktop-release/desktop-release.mjs verify-release \
+            --base-version '${{ needs.metadata.outputs.base_version }}' \
+            --revision '${{ needs.metadata.outputs.revision }}' \
+            --source-commit '${{ needs.metadata.outputs.source_commit }}' \
+            --electron-version "$electron_version" --opencode-version "$opencode_version" \
+            --certificate-sha256 '${{ secrets.MACOS_PRIVATE_CERTIFICATE_SHA256 }}' \
+            --output-dir artifacts
+
+      - name: Publish resumable prerelease and update leased feed branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REF: ${{ needs.metadata.outputs.source_ref }}
+          SOURCE_COMMIT: ${{ needs.metadata.outputs.source_commit }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          EXPECTED_CHANNEL_COMMIT: ${{ needs.metadata.outputs.channel_commit }}
+        run: |
+          set -euo pipefail
+          repo="$RUNNER_TEMP/desktop-publisher"
+          git init "$repo"
+          git -C "$repo" remote add origin "https://github.com/${{ github.repository }}.git"
+          gh auth setup-git
+          git -C "$repo" fetch --no-tags origin "+refs/heads/$SOURCE_REF:refs/remotes/origin/source"
+          test "$(git -C "$repo" rev-parse refs/remotes/origin/source)" = "$SOURCE_COMMIT"
+          current_channel="$(git -C "$repo" ls-remote origin refs/heads/desktop-channel | cut -f1)"
+          test "$current_channel" = "$EXPECTED_CHANNEL_COMMIT"
+          if [[ -n "$current_channel" ]]; then
+            git -C "$repo" fetch --no-tags origin '+refs/heads/desktop-channel:refs/remotes/origin/desktop-channel'
+            test "$(git -C "$repo" rev-parse refs/remotes/origin/desktop-channel)" = "$current_channel"
+          fi
+
+          tag_commit="$(git -C "$repo" ls-remote origin "refs/tags/$RELEASE_TAG^{}" | cut -f1)"
+          [[ -n "$tag_commit" ]] || tag_commit="$(git -C "$repo" ls-remote origin "refs/tags/$RELEASE_TAG" | cut -f1)"
+          if [[ -n "$tag_commit" && "$tag_commit" != "$SOURCE_COMMIT" ]]; then
+            echo "Desktop tag $RELEASE_TAG points to different source $tag_commit." >&2
+            exit 1
+          fi
+          if [[ -z "$tag_commit" ]]; then
+            git -C "$repo" config user.name github-actions[bot]
+            git -C "$repo" config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git -C "$repo" tag -a "$RELEASE_TAG" "$SOURCE_COMMIT" -m "OpenChamber desktop $RELEASE_TAG"
+            git -C "$repo" push origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          fi
+
+          releases="$(gh api --paginate "repos/${{ github.repository }}/releases?per_page=100" --slurp)"
+          release_json="$(RELEASES="$releases" RELEASE_TAG="$RELEASE_TAG" node <<'NODE'
+          const matches = JSON.parse(process.env.RELEASES).flat().filter((release) => release.tag_name === process.env.RELEASE_TAG);
+          if (matches.length > 1) throw new Error(`Multiple releases use ${process.env.RELEASE_TAG}`);
+          if (matches[0]) process.stdout.write(JSON.stringify(matches[0]));
+          NODE
+          )"
+          if [[ -z "$release_json" ]]; then
+            release_json="$(gh api --method POST "repos/${{ github.repository }}/releases" \
+              -f tag_name="$RELEASE_TAG" -f target_commitish="$SOURCE_COMMIT" \
+              -f name="OpenChamber Desktop $VERSION" \
+              -f body="Privately signed OpenChamber Desktop arm64 build from $SOURCE_COMMIT. This build is not Apple-notarized." \
+              -F draft=true -F prerelease=true -f make_latest=false)"
+          fi
+
+          RELEASE_JSON="$release_json" RELEASE_TAG="$RELEASE_TAG" SOURCE_COMMIT="$SOURCE_COMMIT" VERSION="$VERSION" node <<'NODE'
+          const release = JSON.parse(process.env.RELEASE_JSON);
+          if (release.tag_name !== process.env.RELEASE_TAG || release.target_commitish !== process.env.SOURCE_COMMIT) throw new Error('Desktop release source identity differs');
+          if (!release.prerelease) throw new Error('Desktop release must remain a prerelease');
+          const expected = new Set([
+            `OpenChamber-${process.env.VERSION}-mac-arm64.dmg`,
+            `OpenChamber-${process.env.VERSION}-mac-arm64.zip`,
+            `OpenChamber-${process.env.VERSION}-mac-arm64.zip.blockmap`,
+            'latest-mac.yml', 'SHA256SUMS', 'desktop-release.json',
+          ]);
+          for (const asset of release.assets) if (!expected.has(asset.name)) throw new Error(`Unexpected desktop release asset ${asset.name}`);
+          NODE
+          release_id="$(RELEASE_JSON="$release_json" node -p 'JSON.parse(process.env.RELEASE_JSON).id')"
+          release_draft="$(RELEASE_JSON="$release_json" node -p 'JSON.parse(process.env.RELEASE_JSON).draft')"
+          for asset in "OpenChamber-$VERSION-mac-arm64.dmg" "OpenChamber-$VERSION-mac-arm64.zip" \
+            "OpenChamber-$VERSION-mac-arm64.zip.blockmap" latest-mac.yml SHA256SUMS desktop-release.json; do
+            asset_id="$(RELEASE_JSON="$release_json" ASSET="$asset" node -p 'JSON.parse(process.env.RELEASE_JSON).assets.find((item) => item.name === process.env.ASSET)?.id || ``')"
+            if [[ -n "$asset_id" ]]; then
+              existing="$RUNNER_TEMP/existing-$asset"
+              gh api "repos/${{ github.repository }}/releases/assets/$asset_id" -H 'Accept: application/octet-stream' > "$existing"
+              cmp -s "$existing" "artifacts/$asset" || { echo "Existing asset $asset differs; refusing overwrite." >&2; exit 1; }
+            else
+              [[ "$release_draft" == true ]] || { echo "Published release is missing $asset; refusing mutation." >&2; exit 1; }
+              gh release upload "$RELEASE_TAG" "artifacts/$asset" --repo "${{ github.repository }}"
+            fi
+          done
+
+          release_json="$(gh api "repos/${{ github.repository }}/releases/$release_id")"
+          RELEASE_JSON="$release_json" VERSION="$VERSION" node <<'NODE'
+          const { statSync } = require('node:fs');
+          const release = JSON.parse(process.env.RELEASE_JSON);
+          const expected = [
+            `OpenChamber-${process.env.VERSION}-mac-arm64.dmg`,
+            `OpenChamber-${process.env.VERSION}-mac-arm64.zip`,
+            `OpenChamber-${process.env.VERSION}-mac-arm64.zip.blockmap`,
+            'latest-mac.yml', 'SHA256SUMS', 'desktop-release.json',
+          ].sort();
+          const actual = release.assets.map((asset) => asset.name).sort();
+          if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Desktop release inventory differs: ${actual.join(', ')}`);
+          for (const asset of release.assets) if (asset.size !== statSync(`artifacts/${asset.name}`).size) throw new Error(`${asset.name} size differs after upload`);
+          NODE
+          for asset in "OpenChamber-$VERSION-mac-arm64.dmg" "OpenChamber-$VERSION-mac-arm64.zip" \
+            "OpenChamber-$VERSION-mac-arm64.zip.blockmap" latest-mac.yml SHA256SUMS desktop-release.json; do
+            asset_id="$(RELEASE_JSON="$release_json" ASSET="$asset" node -p 'JSON.parse(process.env.RELEASE_JSON).assets.find((item) => item.name === process.env.ASSET).id')"
+            remote="$RUNNER_TEMP/remote-$asset"
+            gh api "repos/${{ github.repository }}/releases/assets/$asset_id" -H 'Accept: application/octet-stream' > "$remote"
+            cmp -s "$remote" "artifacts/$asset" || { echo "Uploaded asset $asset differs from candidate bytes." >&2; exit 1; }
+          done
+          if [[ "$release_draft" == true ]]; then
+            gh api --method PATCH "repos/${{ github.repository }}/releases/$release_id" \
+              -F draft=false -F prerelease=true -f make_latest=false >/dev/null
+          fi
+
+          if [[ -n "$current_channel" ]] \
+            && [[ "$(git -C "$repo" ls-tree --name-only "$current_channel")" == 'latest-mac.yml' ]]; then
+            git -C "$repo" show "$current_channel:latest-mac.yml" > "$RUNNER_TEMP/current-latest-mac.yml"
+            if cmp -s "$RUNNER_TEMP/current-latest-mac.yml" "${GITHUB_WORKSPACE}/artifacts/latest-mac.yml"; then
+              exit 0
+            fi
+          fi
+          manifest_blob="$(git -C "$repo" hash-object -w "${GITHUB_WORKSPACE}/artifacts/latest-mac.yml")"
+          tree="$(printf '100644 blob %s\tlatest-mac.yml\n' "$manifest_blob" | git -C "$repo" mktree)"
+          git -C "$repo" config user.name github-actions[bot]
+          git -C "$repo" config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          if [[ -n "$current_channel" ]]; then
+            channel_commit="$(printf 'Desktop channel %s\n' "$RELEASE_TAG" | git -C "$repo" commit-tree "$tree" -p "$current_channel")"
+          else
+            channel_commit="$(printf 'Desktop channel %s\n' "$RELEASE_TAG" | git -C "$repo" commit-tree "$tree")"
+          fi
+          git -C "$repo" update-ref refs/heads/desktop-channel "$channel_commit"
+          git -C "$repo" push "--force-with-lease=refs/heads/desktop-channel:$EXPECTED_CHANNEL_COMMIT" \
+            origin refs/heads/desktop-channel:refs/heads/desktop-channel

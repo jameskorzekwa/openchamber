@@ -16,6 +16,7 @@ import {
   resolvePromptFilePath,
   writePromptFile,
 } from './shared.js';
+import { assertProjectMutationAllowed } from './primary-worktree-write-guard.js';
 
 // ============== AGENT SCOPE HELPERS ==============
 
@@ -343,6 +344,7 @@ function createAgent(agentName, config, workingDirectory, scope) {
   let targetScope;
 
   if (scope === AGENT_SCOPE.PROJECT && workingDirectory) {
+    assertProjectMutationAllowed(projectPath);
     ensureProjectAgentDir(workingDirectory);
     targetPath = projectPath;
     targetScope = AGENT_SCOPE.PROJECT;
@@ -365,16 +367,23 @@ function updateAgent(agentName, updates, workingDirectory) {
   const lookupCache = createAgentLookupCache();
 
   const { scope, path: mdPath } = getAgentWritePath(agentName, workingDirectory, undefined, lookupCache);
+  if (scope === AGENT_SCOPE.PROJECT) assertProjectMutationAllowed(mdPath);
   const mdExists = mdPath && fs.existsSync(mdPath);
 
   const layers = readConfigLayers(workingDirectory);
   const jsonSource = getJsonEntrySource(layers, 'agent', agentName);
+  if (jsonSource.path === layers.paths.projectPath) assertProjectMutationAllowed(jsonSource.path);
   const jsonSection = jsonSource.section;
   const hasJsonFields = jsonSource.exists && jsonSection && Object.keys(jsonSection).length > 0;
   const jsonTarget = jsonSource.exists
     ? { config: jsonSource.config, path: jsonSource.path }
     : getJsonWriteTarget(layers, AGENT_SCOPE.USER);
   let config = jsonTarget.config || {};
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'permission')) {
+    const permissionSource = getAgentPermissionSource(agentName, workingDirectory, lookupCache);
+    if (permissionSource.scope === AGENT_SCOPE.PROJECT) assertProjectMutationAllowed(permissionSource.path);
+  }
 
   const isBuiltinOverride = !mdExists && !hasJsonFields;
 
@@ -411,6 +420,7 @@ function updateAgent(agentName, updates, workingDirectory) {
           if (!promptFilePath) {
             throw new Error(`Invalid prompt file reference for agent ${agentName}`);
           }
+          assertProjectMutationAllowed(promptFilePath);
           writePromptFile(promptFilePath, '');
           continue;
         }
@@ -443,6 +453,7 @@ function updateAgent(agentName, updates, workingDirectory) {
         if (!promptFilePath) {
           throw new Error(`Invalid prompt file reference for agent ${agentName}`);
         }
+        assertProjectMutationAllowed(promptFilePath);
         writePromptFile(promptFilePath, normalizedValue);
         continue;
       } else if (isPromptFileReference(normalizedValue)) {
@@ -587,6 +598,7 @@ function deleteAgent(agentName, workingDirectory, scope) {
   if ((!requestedScope || requestedScope === AGENT_SCOPE.PROJECT) && workingDirectory) {
     const projectPath = getProjectAgentPath(workingDirectory, agentName);
     if (fs.existsSync(projectPath)) {
+      assertProjectMutationAllowed(projectPath);
       fs.unlinkSync(projectPath);
       console.log(`Deleted project-level agent .md file: ${projectPath}`);
       return;
@@ -605,7 +617,9 @@ function deleteAgent(agentName, workingDirectory, scope) {
   const layers = readConfigLayers(workingDirectory);
 
   if (requestedScope === AGENT_SCOPE.PROJECT) {
-    if (layers.paths.projectPath && deleteJsonAgentEntry(layers.projectConfig, agentName)) {
+    if (layers.paths.projectPath && layers.projectConfig.agent?.[agentName]) {
+      assertProjectMutationAllowed(layers.paths.projectPath);
+      deleteJsonAgentEntry(layers.projectConfig, agentName);
       writeConfig(layers.projectConfig, layers.paths.projectPath);
       console.log(`Removed project-level agent from opencode.json: ${agentName}`);
       return;
@@ -625,7 +639,11 @@ function deleteAgent(agentName, workingDirectory, scope) {
   }
 
   const jsonSource = getJsonEntrySource(layers, 'agent', agentName);
-  if (jsonSource.exists && jsonSource.config && jsonSource.path && deleteJsonAgentEntry(jsonSource.config, agentName)) {
+  if (jsonSource.exists && jsonSource.config && jsonSource.path) {
+    if (jsonSource.path === layers.paths.projectPath) assertProjectMutationAllowed(jsonSource.path);
+    if (!deleteJsonAgentEntry(jsonSource.config, agentName)) {
+      throw new Error(`Agent ${agentName} is built-in or not deletable`);
+    }
     writeConfig(jsonSource.config, jsonSource.path);
     console.log(`Removed agent from opencode.json: ${agentName}`);
     return;

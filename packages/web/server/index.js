@@ -83,6 +83,7 @@ import { createServerStartupRuntime } from './lib/opencode/server-startup-runtim
 import { createTunnelWiringRuntime } from './lib/opencode/tunnel-wiring-runtime.js';
 import { createStartupPipelineRuntime } from './lib/opencode/startup-pipeline-runtime.js';
 import { runCliEntryIfMain } from './lib/opencode/cli-entry-runtime.js';
+import { resolveManagedInstallRoot } from './lib/openchamber-update/validated-release-installer.js';
 import { registerNotificationRoutes } from './lib/notifications/routes.js';
 import { createNotificationEmitterRuntime } from './lib/notifications/emitter-runtime.js';
 import { createNotificationTriggerRuntime } from './lib/notifications/runtime.js';
@@ -91,6 +92,7 @@ import { createApnsRuntime } from './lib/notifications/apns-runtime.js';
 import { createNotificationTemplateRuntime } from './lib/notifications/template-runtime.js';
 import { createPermissionAutoAcceptRuntime } from './lib/permission-auto-accept/runtime.js';
 import { createGracefulShutdownRuntime } from './lib/opencode/shutdown-runtime.js';
+import { resolveRuntimeBuildRevision } from './lib/opencode/build-revision.js';
 import { createProjectConfigRuntime } from './lib/projects/project-config.js';
 import { createProjectContextRuntime } from './lib/project-context/runtime.js';
 import { createAgentMemoryRuntime } from './lib/agent-memory/runtime.js';
@@ -201,6 +203,7 @@ const OPENCHAMBER_VERSION = (() => {
   }
   return 'unknown';
 })();
+const OPENCHAMBER_BUILD_REVISION = resolveRuntimeBuildRevision({ packageVersion: OPENCHAMBER_VERSION });
 
 const isEnvFlagEnabled = (value) => {
   if (value === true || value === 1) return true;
@@ -1453,6 +1456,7 @@ const gracefulShutdownRuntime = createGracefulShutdownRuntime({
   },
   tunnelAuthController,
   scheduledTasksRuntime,
+  featureRoutesRuntime,
 });
 
 const gracefulShutdown = (...args) => gracefulShutdownRuntime.gracefulShutdown(...args);
@@ -1674,6 +1678,7 @@ async function main(options = {}) {
   const bootstrapResult = bootstrapRuntime.setupBaseRoutes(app, {
     process,
     openchamberVersion: OPENCHAMBER_VERSION,
+    openchamberBuildRevision: OPENCHAMBER_BUILD_REVISION,
     runtimeName: process.env.OPENCHAMBER_RUNTIME || 'web',
     serverStartedAt,
     gracefulShutdown,
@@ -1719,6 +1724,8 @@ async function main(options = {}) {
       return Number.isFinite(port) && port > 0 ? port : null;
     },
     getTunnelUrl: () => tunnelRuntimeContextHolder?.tunnelService?.getPublicUrl?.() ?? null,
+    updateTransactionPath: path.join(resolveManagedInstallRoot(process.env.OPENCHAMBER_MANAGED_INSTALL_ROOT), 'restart-transaction.json'),
+    runtimePackageRoot: path.resolve(__dirname, '..'),
     verboseRequestLogs: OPENCHAMBER_VERBOSE_REQUEST_LOGS,
     uiPassword,
     tunnelAuthController,
@@ -1907,6 +1914,8 @@ async function main(options = {}) {
     openChamberControlService,
     waitForOpenCodeReady,
     emitSessionCreatedEvent,
+    globalEventHub: globalMessageStreamHub,
+    openchamberBuildRevision: OPENCHAMBER_BUILD_REVISION,
     getOpenChamberEventClients: () => uiOpenChamberEventClients,
     writeSseEvent,
     permissionAutoAcceptRuntime,

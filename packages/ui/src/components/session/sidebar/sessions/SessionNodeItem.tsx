@@ -52,6 +52,7 @@ import { streamPerfCount } from '@/stores/utils/streamDebug';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSessionFoldersStore } from '@/stores/useSessionFoldersStore';
 import { useUIStore } from '@/stores/useUIStore';
+import { getPtyWaitingState } from '@/lib/ptyWaitingState';
 
 type SecondaryMeta = {
   projectLabel?: string | null;
@@ -426,6 +427,8 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
   const sessionStatus = useGlobalSessionStatus(session.id);
   const statusType = sessionStatus?.type ?? 'idle';
   const isStreaming = statusType === 'busy' || statusType === 'retry';
+  const ptyWaiting = getPtyWaitingState(resolvedSession);
+  const isPtyWaiting = !isStreaming && ptyWaiting.count > 0;
   // Read as a boolean, not as the value: the row must not re-render on every
   // tick of the counter it only decides to mount.
   const hasActivityDuration = useHasSessionActivityDuration(session.id, isStreaming);
@@ -664,18 +667,28 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
     ? t('sessions.sidebar.session.status.questionPendingSingle')
     : t('sessions.sidebar.session.status.questionPendingMany', { count: pendingQuestionCount });
   const showUnreadStatus = !isMovingToWorktree && !isStreaming && needsAttention && !isActive;
-  const showStatusMarker = isStreaming || showUnreadStatus;
-  // Both states are the same static dot; only the color separates "running"
-  // from "unread". The elapsed-turn readout on the right carries the motion
-  // that a spinner used to, at one repaint per second instead of per frame.
+  const showStatusMarker = isStreaming || isPtyWaiting || showUnreadStatus;
+  // Activity, waiting, and unread use the same static dot; color carries the
+  // distinction. The elapsed-turn readout on the right carries the motion that
+  // a spinner used to, at one repaint per second instead of per frame.
   const statusMarkerLabel = isStreaming
     ? t('sessions.sidebar.session.status.active')
-    : t('sessions.sidebar.session.status.unread');
+    : isPtyWaiting
+      ? ptyWaiting.count === 1
+        ? ptyWaiting.description
+          ? t('sessions.sidebar.session.status.waitingSingleDescription', { description: ptyWaiting.description })
+          : t('sessions.sidebar.session.status.waitingSingleDefault')
+        : t('sessions.sidebar.session.status.waitingMany', { count: ptyWaiting.count })
+      : t('sessions.sidebar.session.status.unread');
   const statusMarkerContent = (
     <span
       className={cn(
         'h-1.5 w-1.5 rounded-full',
-        isStreaming ? 'bg-primary' : 'bg-[var(--status-info)]',
+        isStreaming
+          ? 'bg-primary'
+          : isPtyWaiting
+            ? 'bg-[var(--status-warning)]'
+            : 'bg-[var(--status-info)]',
       )}
       aria-label={statusMarkerLabel}
       title={statusMarkerLabel}
@@ -1285,6 +1298,20 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                           </span>
                         </div>
                       ) : null}
+                      {isPtyWaiting ? (
+                        <span
+                          className="inline-flex flex-shrink-0 items-center gap-1 rounded bg-[var(--status-warning)]/10 px-1 py-0.5 text-[0.7rem] text-[var(--status-warning)]"
+                          title={statusMarkerLabel}
+                          aria-label={statusMarkerLabel}
+                        >
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--status-warning)]" aria-hidden="true" />
+                          <span className="leading-none">
+                            {ptyWaiting.count === 1
+                              ? t('sessions.sidebar.session.status.waitingBadgeSingle')
+                              : t('sessions.sidebar.session.status.waitingBadgeMany', { count: ptyWaiting.count })}
+                          </span>
+                        </span>
+                      ) : null}
                       {pendingPermissionCount > 0 ? (
                         <span className="inline-flex items-center gap-1 rounded bg-destructive/10 px-1 py-0.5 text-[0.7rem] text-destructive flex-shrink-0" title={t('sessions.sidebar.session.status.permissionRequired')} aria-label={t('sessions.sidebar.session.status.permissionRequired')}>
                           <Icon name="shield" className="h-3 w-3" />
@@ -1545,7 +1572,16 @@ const areSessionRenderSemanticsEqual = (prev: Session, next: Session): boolean =
   && prev.time?.created === next.time?.created
   && prev.time?.updated === next.time?.updated
   && prev.time?.archived === next.time?.archived
+  && arePtyWaitingStatesEqual(prev, next)
 );
+
+const arePtyWaitingStatesEqual = (prev: Session, next: Session): boolean => {
+  const previousWaiting = getPtyWaitingState(prev);
+  const nextWaiting = getPtyWaitingState(next);
+  return previousWaiting.count === nextWaiting.count
+    && previousWaiting.oldestCreatedAt === nextWaiting.oldestCreatedAt
+    && previousWaiting.description === nextWaiting.description;
+};
 
 const areSessionNodeItemPropsEqual = (prev: SessionNodeItemProps, next: SessionNodeItemProps): boolean => {
   if (prev.node.session.id !== next.node.session.id) return false;

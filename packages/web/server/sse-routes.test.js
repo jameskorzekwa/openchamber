@@ -163,6 +163,7 @@ describe('local SSE routes', () => {
 
     registerScheduledTaskRoutes(app, {
       getOpenChamberEventClients: () => clients,
+      openchamberBuildRevision: '1.21.0-j2k.1',
       writeSseEvent(res, payload) {
         res.write(`data: ${JSON.stringify(payload)}\n\n`);
       },
@@ -181,6 +182,7 @@ describe('local SSE routes', () => {
     expect(res.getHeader('x-accel-buffering')).toBe('no');
     expect(res.flushed).toBe(true);
     expect(res.body).toContain('openchamber:event-stream-ready');
+    expect(res.body).toContain('"buildRevision":"1.21.0-j2k.1"');
     expect(clients.has(res)).toBe(true);
 
     req.emit('close');

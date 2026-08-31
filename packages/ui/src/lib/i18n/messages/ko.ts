@@ -1,8 +1,12 @@
 import type { I18nKey } from './en';
 import { settingsDict } from './ko.settings';
+import { opmStatusI18n } from './opm-status.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   ...settingsDict,
+  ...opmStatusI18n.ko,
+  ...updateStatusI18n.ko,
   'terminalView.actions.attachSelection': '선택한 출력 첨부',
   'terminalView.actions.restart': '터미널 다시 시작',
   'chat.message.terminalContext': '{terminal}, {start}-{end}행',
@@ -561,6 +565,11 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.export.dialog.includeSubtasks': '서브 에이전트 작업 포함',
   'sessions.sidebar.session.export.dialog.confirm': '내보내기',
   'sessions.sidebar.session.status.active': '활성 세션',
+  'sessions.sidebar.session.status.waitingSingleDescription': '{description} 대기 중',
+  'sessions.sidebar.session.status.waitingSingleDefault': '백그라운드 프로세스를 기다리는 중',
+  'sessions.sidebar.session.status.waitingMany': '백그라운드 프로세스 {count}개를 기다리는 중',
+  'sessions.sidebar.session.status.waitingBadgeSingle': '대기 중',
+  'sessions.sidebar.session.status.waitingBadgeMany': '대기 중 · {count}',
   'sessions.sidebar.session.status.unread': '읽지 않은 업데이트',
   'sessions.sidebar.session.status.pinned': '고정된 세션',
   'sessions.sidebar.session.status.movingToWorktree': '세션을 새 worktree로 이동하는 중',
@@ -569,6 +578,12 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.status.questionPendingMany': '대기 중인 질문 {count}개',
   'sessions.sidebar.session.status.activeFor': '{duration} 동안 활성 상태',
   'sessions.sidebar.session.status.lastTurnDuration': '마지막 턴 소요 시간 {duration}',
+  'chat.ptyWaiting.backgroundProcess': '백그라운드 프로세스',
+  'chat.ptyWaiting.backgroundProcesses': '백그라운드 프로세스 {count}개',
+  'chat.ptyWaiting.ariaSingleDescription': '{description} 대기 중',
+  'chat.ptyWaiting.ariaSingleDefault': '백그라운드 프로세스를 기다리는 중',
+  'chat.ptyWaiting.ariaMany': '백그라운드 프로세스 {count}개를 기다리는 중',
+  'chat.ptyWaiting.label': '대기 중…',
   'sessions.sidebar.session.subsessions.collapse': '하위 세션 접기',
   'sessions.sidebar.session.subsessions.expand': '하위 세션 펼치기',
   'sessions.sidebar.dialogs.deleteSession.title': '세션 삭제?',

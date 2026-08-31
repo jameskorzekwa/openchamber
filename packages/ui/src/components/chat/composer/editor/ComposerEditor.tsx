@@ -351,6 +351,7 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
             // A stale value echo can differ from CodeMirror's newer document,
             // and replacing it would interrupt the IME session and move the caret.
             if (view.compositionStarted) return;
+            const normalizedValueLength = value.replace(/\r\n?/g, '\n').length;
             view.dispatch({
                 changes: { from: 0, to: current.length, insert: value },
                 // An external rewrite (draft restore, history navigation,
@@ -360,7 +361,7 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
                 // replaces wholesale; keeping the old caret instead left it
                 // stranded before the inserted text, and the next insertion
                 // or keystroke landed inside the previous one.
-                selection: { anchor: value.length },
+                selection: { anchor: normalizedValueLength },
             });
             // A large insert can push the caret below the fold, and a
             // transaction-time `scrollIntoView` cannot reach it: wrapped-line

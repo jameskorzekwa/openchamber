@@ -1,7 +1,11 @@
 import { settingsDict } from './en.settings';
+import { opmStatusI18n } from './opm-status.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
   ...settingsDict,
+  ...opmStatusI18n.en,
+  ...updateStatusI18n.en,
   'terminalView.actions.attachSelection': 'Attach selected output',
   'terminalView.actions.restart': 'Restart terminal',
   'chat.message.terminalContext': '{terminal}, lines {start}-{end}',
@@ -560,6 +564,11 @@ export const dict = {
   'sessions.sidebar.session.export.dialog.includeSubtasks': 'Include sub-agent tasks',
   'sessions.sidebar.session.export.dialog.confirm': 'Export',
   'sessions.sidebar.session.status.active': 'Session active',
+  'sessions.sidebar.session.status.waitingSingleDescription': 'Waiting: {description}',
+  'sessions.sidebar.session.status.waitingSingleDefault': 'Waiting for a background process',
+  'sessions.sidebar.session.status.waitingMany': 'Waiting on {count} background processes',
+  'sessions.sidebar.session.status.waitingBadgeSingle': 'Waiting',
+  'sessions.sidebar.session.status.waitingBadgeMany': 'Waiting · {count}',
   'sessions.sidebar.session.status.unread': 'Unread updates',
   'sessions.sidebar.session.status.pinned': 'Pinned session',
   'sessions.sidebar.session.status.movingToWorktree': 'Moving session to a new worktree',
@@ -568,6 +577,12 @@ export const dict = {
   'sessions.sidebar.session.status.questionPendingMany': '{count} pending questions',
   'sessions.sidebar.session.status.activeFor': 'Active for {duration}',
   'sessions.sidebar.session.status.lastTurnDuration': 'Last turn took {duration}',
+  'chat.ptyWaiting.backgroundProcess': 'Background process',
+  'chat.ptyWaiting.backgroundProcesses': '{count} background processes',
+  'chat.ptyWaiting.ariaSingleDescription': 'Waiting: {description}',
+  'chat.ptyWaiting.ariaSingleDefault': 'Waiting for a background process',
+  'chat.ptyWaiting.ariaMany': 'Waiting on {count} background processes',
+  'chat.ptyWaiting.label': 'Waiting…',
   'sessions.sidebar.session.subsessions.collapse': 'Collapse subsessions',
   'sessions.sidebar.session.subsessions.expand': 'Expand subsessions',
   'sessions.sidebar.dialogs.deleteSession.title': 'Delete session?',

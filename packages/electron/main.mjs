@@ -19,7 +19,8 @@ import { sanitizeRuntimeRequestHeaders } from './runtime-request-headers.mjs';
 import { assertUpdaterCapability } from './updater-capability.mjs';
 import { checkForDesktopUpdate } from './updater-check.mjs';
 import { resolveUpdaterChannel } from './updater-channel.mjs';
-import { resolveUpdaterFeed } from './updater-feed.mjs';
+import { resolveUpdaterFeed, resolveUpdaterPrereleasePolicy } from './updater-feed.mjs';
+import { compareSemver } from './semver.mjs';
 import {
   buildLinuxInstalledApps,
   buildLinuxOpenSpecs,
@@ -3083,31 +3084,21 @@ const resolveInitialUrl = async () => {
   return { initialUrl, localOrigin, localUiUrl, bootOutcome, apiBaseUrl, clientToken, requestHeaders };
 };
 
-const compareSemver = (left, right) => {
-  const a = String(left || '').replace(/^v/, '').split('.').map((value) => Number.parseInt(value || '0', 10));
-  const b = String(right || '').replace(/^v/, '').split('.').map((value) => Number.parseInt(value || '0', 10));
-  const length = Math.max(a.length, b.length);
-  for (let index = 0; index < length; index += 1) {
-    const diff = (a[index] || 0) - (b[index] || 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-};
-
 const setupAutoUpdater = () => {
   if (!app.isPackaged) {
     return;
   }
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
-  autoUpdater.allowPrerelease = false;
+  const j2kBuild = process.env.OPENCHAMBER_J2K_DESKTOP_BUILD === '1';
+  autoUpdater.allowPrerelease = resolveUpdaterPrereleasePolicy({ platform: process.platform, j2kBuild });
   autoUpdater.fullChangelog = true;
   autoUpdater.disableWebInstaller = false;
   autoUpdater.logger = log;
 
   const testBuild = typeof __OPENCHAMBER_UPDATER_E2E_BUILD__ !== 'undefined'
     && __OPENCHAMBER_UPDATER_E2E_BUILD__ === true;
-  const feed = resolveUpdaterFeed({ testBuild });
+  const feed = resolveUpdaterFeed({ testBuild, j2kBuild });
   const updaterChannel = feed.provider === 'github'
     ? resolveUpdaterChannel({ platform: process.platform, architecture: process.arch })
     : null;

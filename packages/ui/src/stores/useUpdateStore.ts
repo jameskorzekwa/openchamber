@@ -13,6 +13,7 @@ import {
 } from '@/lib/desktop';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getClientPlatform, isCapacitorApp } from '@/lib/platform';
+import { parseWebUpdateInstallationStatus, type WebUpdateInstallationStatus } from '@/components/update/web-update-status';
 
 declare const __APP_VERSION__: string | undefined;
 
@@ -27,12 +28,16 @@ type UpdateState = {
   runtimeType: 'desktop' | 'web' | 'vscode' | 'mobile' | null;
   lastChecked: number | null;
   nextCheckInSec: number | null;
+  installation: WebUpdateInstallationStatus | null;
 };
 
 interface UpdateStore extends UpdateState {
   checkForUpdates: () => Promise<number | null>;
   downloadUpdate: () => Promise<void>;
   restartToUpdate: () => Promise<void>;
+  refreshInstallation: () => Promise<WebUpdateInstallationStatus | null>;
+  startWebUpdate: () => Promise<boolean>;
+  reconcileInstallation: (status: WebUpdateInstallationStatus | null) => void;
   dismiss: () => void;
   reset: () => void;
 }
@@ -136,7 +141,20 @@ function mapRuntimeParams(runtime: ClientRuntime): URLSearchParams {
   return params;
 }
 
-async function checkForWebUpdates(runtime: ClientRuntime, currentVersion?: string): Promise<UpdateInfo | null> {
+type WebUpdateCheck = { info: UpdateInfo; installation: WebUpdateInstallationStatus | null };
+
+const isInstallationActive = (status: WebUpdateInstallationStatus | null) => (
+  status?.state === 'downloading' || status?.state === 'installing' || status?.state === 'restarting'
+);
+
+let installationPollTimer: ReturnType<typeof setTimeout> | null = null;
+let updateStoreRuntimeFetch = runtimeFetch;
+
+export function setUpdateStoreRuntimeFetchForTests(fetcher: typeof runtimeFetch | null): void {
+  updateStoreRuntimeFetch = fetcher ?? runtimeFetch;
+}
+
+async function checkForWebUpdates(runtime: ClientRuntime, currentVersion?: string): Promise<WebUpdateCheck | null> {
   try {
     const params = mapRuntimeParams(runtime);
     const vscodeVersion = typeof window !== 'undefined'
@@ -144,7 +162,7 @@ async function checkForWebUpdates(runtime: ClientRuntime, currentVersion?: strin
       : undefined;
     if (currentVersion) params.set('currentVersion', currentVersion);
     else if (runtime === 'vscode' && vscodeVersion) params.set('currentVersion', vscodeVersion);
-    const response = await runtimeFetch(`/api/openchamber/update-check?${params.toString()}`, {
+    const response = await updateStoreRuntimeFetch(`/api/openchamber/update-check?${params.toString()}`, {
       method: 'GET',
       headers: { Accept: 'application/json' },
       // Background check — keep sockets free for interactive traffic at startup.
@@ -157,18 +175,21 @@ async function checkForWebUpdates(runtime: ClientRuntime, currentVersion?: strin
 
     const data = await response.json();
     return {
-      available: data.available ?? false,
-      version: data.version,
-      currentVersion: data.currentVersion ?? 'unknown',
-      body: data.body,
-      releaseUrl: data.releaseUrl,
-      downloadUrl: data.downloadUrl,
-      nextSuggestedCheckInSec:
-        typeof data.nextSuggestedCheckInSec === 'number' && Number.isFinite(data.nextSuggestedCheckInSec)
-          ? data.nextSuggestedCheckInSec
-          : undefined,
-      packageManager: data.packageManager,
-      updateCommand: data.updateCommand,
+      info: {
+        available: data.available ?? false,
+        version: data.version,
+        currentVersion: data.currentVersion ?? 'unknown',
+        body: data.body,
+        releaseUrl: data.releaseUrl,
+        downloadUrl: data.downloadUrl,
+        nextSuggestedCheckInSec:
+          typeof data.nextSuggestedCheckInSec === 'number' && Number.isFinite(data.nextSuggestedCheckInSec)
+            ? data.nextSuggestedCheckInSec
+            : undefined,
+        packageManager: data.packageManager,
+        updateCommand: data.updateCommand,
+      },
+      installation: parseWebUpdateInstallationStatus(data.installation),
     };
   } catch (error) {
     console.warn('Failed to check for updates:', error);
@@ -199,6 +220,7 @@ const initialState: UpdateState = {
   runtimeType: null,
   lastChecked: null,
   nextCheckInSec: null,
+  installation: null,
 };
 
 export const useUpdateStore = create<UpdateStore>()((set, get) => ({
@@ -222,7 +244,7 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
         ]);
         const desktopInfo = desktopResult.status === 'fulfilled' ? desktopResult.value : null;
         suggestedSec = apiResult.status === 'fulfilled'
-          ? (apiResult.value?.nextSuggestedCheckInSec ?? null)
+          ? (apiResult.value?.info.nextSuggestedCheckInSec ?? null)
           : null;
         set({
           checking: false,
@@ -234,14 +256,16 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
 
         return suggestedSec;
       } else if (runtime === 'web') {
-        info = await checkForWebUpdates('web');
+        const result = await checkForWebUpdates('web');
+        info = result?.info ?? null;
         suggestedSec = info?.nextSuggestedCheckInSec ?? null;
+        get().reconcileInstallation(result?.installation ?? null);
       } else if (runtime === 'vscode') {
         const vscodeInfo = await checkForWebUpdates('vscode');
-        suggestedSec = vscodeInfo?.nextSuggestedCheckInSec ?? null;
+        suggestedSec = vscodeInfo?.info.nextSuggestedCheckInSec ?? null;
       } else if (runtime === 'mobile') {
         const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : undefined;
-        info = await checkForWebUpdates('mobile', appVersion);
+        info = (await checkForWebUpdates('mobile', appVersion))?.info ?? null;
         suggestedSec = info?.nextSuggestedCheckInSec ?? null;
       }
 
@@ -326,11 +350,66 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
     }
   },
 
+  reconcileInstallation: (installation) => {
+    set({
+      installation,
+      error: installation?.state === 'failed' || installation?.state === 'rollback' ? installation.error : null,
+    });
+    if (installationPollTimer) {
+      clearTimeout(installationPollTimer);
+      installationPollTimer = null;
+    }
+    if (isInstallationActive(installation)) {
+      installationPollTimer = setTimeout(() => { void get().refreshInstallation(); }, 2000);
+    }
+  },
+
+  refreshInstallation: async () => {
+    try {
+      const response = await updateStoreRuntimeFetch('/api/openchamber/update-status', { method: 'GET', headers: { Accept: 'application/json' } });
+      if (!response.ok) return get().installation;
+      const installation = parseWebUpdateInstallationStatus(await response.json());
+      if (installation) get().reconcileInstallation(installation);
+      return installation;
+    } catch {
+      if (isInstallationActive(get().installation)) {
+        if (installationPollTimer) clearTimeout(installationPollTimer);
+        installationPollTimer = setTimeout(() => { void get().refreshInstallation(); }, 2000);
+      }
+      return get().installation;
+    }
+  },
+
+  startWebUpdate: async () => {
+    const current = get();
+    if (current.runtimeType !== 'web' || isInstallationActive(current.installation)) return false;
+    try {
+      const response = await updateStoreRuntimeFetch('/api/openchamber/update-install', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || data?.accepted !== true) {
+        set({ error: data?.error || `Server error: ${response.status}` });
+        return false;
+      }
+      const installation = parseWebUpdateInstallationStatus(data.installation);
+      if (!installation) {
+        set({ error: 'Server returned an invalid installation state' });
+        return false;
+      }
+      get().reconcileInstallation(installation);
+      return true;
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : 'Failed to start update' });
+      return false;
+    }
+  },
+
   dismiss: () => {
     set({ available: false, downloaded: false, info: null });
   },
 
   reset: () => {
+    if (installationPollTimer) clearTimeout(installationPollTimer);
+    installationPollTimer = null;
     set(initialState);
   },
 }));

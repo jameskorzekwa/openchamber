@@ -1,8 +1,12 @@
 import type { I18nKey } from './en';
 import { settingsDict } from './pl.settings';
+import { opmStatusI18n } from './opm-status.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   ...settingsDict,
+  ...opmStatusI18n.pl,
+  ...updateStatusI18n.pl,
   'terminalView.actions.attachSelection': 'Dołącz zaznaczone dane wyjściowe',
   'terminalView.actions.restart': 'Uruchom terminal ponownie',
   'chat.message.terminalContext': '{terminal}, wiersze {start}-{end}',
@@ -561,6 +565,11 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.export.dialog.includeSubtasks': 'Dołącz pod-agentów',
   'sessions.sidebar.session.export.dialog.confirm': 'Eksportuj',
   'sessions.sidebar.session.status.active': 'Sesja aktywna',
+  'sessions.sidebar.session.status.waitingSingleDescription': 'Oczekiwanie: {description}',
+  'sessions.sidebar.session.status.waitingSingleDefault': 'Oczekiwanie na proces w tle',
+  'sessions.sidebar.session.status.waitingMany': 'Oczekiwanie na {count} procesów w tle',
+  'sessions.sidebar.session.status.waitingBadgeSingle': 'Oczekiwanie',
+  'sessions.sidebar.session.status.waitingBadgeMany': 'Oczekiwanie · {count}',
   'sessions.sidebar.session.status.unread': 'Nieprzeczytane aktualizacje',
   'sessions.sidebar.session.status.pinned': 'Przypięta sesja',
   'sessions.sidebar.session.status.movingToWorktree': 'Przenoszenie sesji do nowego worktree',
@@ -569,6 +578,12 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.status.questionPendingMany': 'Liczba oczekujących pytań: {count}',
   'sessions.sidebar.session.status.activeFor': 'Aktywna od {duration}',
   'sessions.sidebar.session.status.lastTurnDuration': 'Ostatnia tura trwała {duration}',
+  'chat.ptyWaiting.backgroundProcess': 'Proces w tle',
+  'chat.ptyWaiting.backgroundProcesses': '{count} procesów w tle',
+  'chat.ptyWaiting.ariaSingleDescription': 'Oczekiwanie: {description}',
+  'chat.ptyWaiting.ariaSingleDefault': 'Oczekiwanie na proces w tle',
+  'chat.ptyWaiting.ariaMany': 'Oczekiwanie na {count} procesów w tle',
+  'chat.ptyWaiting.label': 'Oczekiwanie…',
   'sessions.sidebar.session.subsessions.collapse': 'Zwiń pod-sesje',
   'sessions.sidebar.session.subsessions.expand': 'Rozwiń pod-sesje',
   'sessions.sidebar.dialogs.deleteSession.title': 'Usunąć sesję?',

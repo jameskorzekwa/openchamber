@@ -1,7 +1,11 @@
 import { settingsDict } from './de.settings';
+import { opmStatusI18n } from './opm-status.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
   ...settingsDict,
+  ...opmStatusI18n.de,
+  ...updateStatusI18n.de,
   'common.language.german': 'Deutsch',
   'common.loading': 'Wird geladen...',
   'common.unavailable': 'Nicht verfügbar',
@@ -487,6 +491,11 @@ export const dict = {
   'sessions.sidebar.session.export.dialog.includeSubtasks': 'Unteraufgaben des Sub-Agents einbeziehen',
   'sessions.sidebar.session.export.dialog.confirm': 'Exportieren',
   'sessions.sidebar.session.status.active': 'Sitzung aktiv',
+  'sessions.sidebar.session.status.waitingSingleDescription': 'Warten auf: {description}',
+  'sessions.sidebar.session.status.waitingSingleDefault': 'Warten auf einen Hintergrundprozess',
+  'sessions.sidebar.session.status.waitingMany': 'Warten auf {count} Hintergrundprozesse',
+  'sessions.sidebar.session.status.waitingBadgeSingle': 'Warten',
+  'sessions.sidebar.session.status.waitingBadgeMany': 'Warten · {count}',
   'sessions.sidebar.session.status.unread': 'Ungelesene Updates',
   'sessions.sidebar.session.status.pinned': 'Angeheftete Sitzung',
   'sessions.sidebar.session.status.permissionRequired': 'Berechtigung erforderlich',
@@ -494,6 +503,12 @@ export const dict = {
   'sessions.sidebar.session.status.questionPendingMany': '{count} ausstehende Fragen',
   'sessions.sidebar.session.status.activeFor': 'Seit {duration} aktiv',
   'sessions.sidebar.session.status.lastTurnDuration': 'Letzter Durchlauf dauerte {duration}',
+  'chat.ptyWaiting.backgroundProcess': 'Hintergrundprozess',
+  'chat.ptyWaiting.backgroundProcesses': '{count} Hintergrundprozesse',
+  'chat.ptyWaiting.ariaSingleDescription': 'Warten auf: {description}',
+  'chat.ptyWaiting.ariaSingleDefault': 'Warten auf einen Hintergrundprozess',
+  'chat.ptyWaiting.ariaMany': 'Warten auf {count} Hintergrundprozesse',
+  'chat.ptyWaiting.label': 'Warten…',
   'sessions.sidebar.session.subsessions.collapse': 'Untersitzungen einklappen',
   'sessions.sidebar.session.subsessions.expand': 'Untersitzungen ausklappen',
   'sessions.sidebar.dialogs.deleteSession.title': 'Sitzung löschen?',

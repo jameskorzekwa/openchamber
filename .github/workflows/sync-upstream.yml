@@ -1,0 +1,157 @@
+name: J2K Sync Upstream
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  issues: write
+
+concurrency:
+  group: j2k-upstream-sync
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out fork
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream and fork branches
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/openchamber/openchamber.git
+          git fetch --prune upstream main --tags
+          git fetch --prune origin '+refs/heads/main:refs/remotes/origin/main'
+          git fetch --prune origin '+refs/heads/j2k*:refs/remotes/origin/j2k*'
+
+      - name: Fast-forward mirror main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! git merge-base --is-ancestor origin/main upstream/main; then
+            title='Mirror divergence: fork main cannot fast-forward'
+            if [[ "$(gh issue list --state open --search "in:title $title" --json title --jq "map(select(.title == \"$title\")) | length")" == 0 ]]; then
+              gh issue create --title "$title" --body 'The scheduled upstream sync refused to rewrite `main`. Restore `main` to an exact upstream commit, then rerun **J2K Sync Upstream**.'
+            fi
+            echo 'origin/main is not an ancestor of upstream/main; refusing to force-push the mirror.' >&2
+            exit 1
+          fi
+          git push origin upstream/main:refs/heads/main
+          test "$(git rev-parse upstream/main)" = "$(git ls-remote origin refs/heads/main | cut -f1)"
+
+      - name: Rebase patch series onto newest upstream release
+        id: rebase
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest_tag=''
+          while IFS= read -r candidate; do
+            if [[ "$candidate" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && git merge-base --is-ancestor "$candidate" upstream/main; then
+              latest_tag="$candidate"
+              break
+            fi
+          done < <(git tag --list 'v*' --sort=-v:refname)
+          test -n "$latest_tag"
+
+          if git show-ref --verify --quiet refs/remotes/origin/j2k/current; then
+            series_ref=origin/j2k/current
+          else
+            series_ref=''
+            while IFS= read -r candidate; do
+              series_ref="$candidate"
+              break
+            done < <(git for-each-ref --format='%(refname:short)' --sort=-version:refname 'refs/remotes/origin/j2k/v*')
+            test -n "$series_ref"
+          fi
+
+          current_tag="$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-j2k.*' --abbrev=0 "$series_ref")"
+          if [[ "$current_tag" == "$latest_tag" ]]; then
+            echo "Patch series already targets $latest_tag."
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          newest="$(printf '%s\n%s\n' "${current_tag#v}" "${latest_tag#v}" | sort -V | tail -n 1)"
+          if [[ "$newest" != "${latest_tag#v}" ]]; then
+            echo "Latest upstream tag $latest_tag is older than patch-series base $current_tag." >&2
+            exit 1
+          fi
+
+          branch="j2k/$latest_tag"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch"
+            branch_sha="$(git rev-parse "refs/remotes/origin/$branch")"
+            if ! git merge-base --is-ancestor "$latest_tag" "$branch_sha"; then
+              echo "Remote branch $branch is not based on $latest_tag; leaving its conflict issue for manual resolution."
+              echo 'changed=false' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            runs="$(gh run list --repo "${{ github.repository }}" --workflow validate.yml \
+              --branch "$branch" --limit 30 --json headSha,status,conclusion,createdAt)"
+            run_state="$(RUNS="$runs" SOURCE_COMMIT="$branch_sha" node <<'NODE'
+            const runs = JSON.parse(process.env.RUNS).filter((run) => run.headSha === process.env.SOURCE_COMMIT);
+            if (runs.some((run) => run.status === 'queued' || run.status === 'in_progress')) process.stdout.write('active');
+            else if (runs.some((run) => run.conclusion === 'success')) process.stdout.write('success');
+            else process.stdout.write('retry');
+            NODE
+            )"
+            if [[ "$run_state" == 'active' ]]; then
+              echo "Validation for $branch at $branch_sha is already active."
+              echo 'changed=false' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [[ "$run_state" == 'success' ]]; then
+              echo "Validation for $branch at $branch_sha already succeeded."
+              echo 'changed=false' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Redispatching validation for stranded branch $branch at $branch_sha."
+            printf 'changed=true\nbranch=%s\n' "$branch" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git switch --create "$branch" "$series_ref"
+          if ! git rebase --onto "$latest_tag" "$current_tag"; then
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            status="$(git status --short)"
+            git rebase --abort
+            git push origin "$series_ref:refs/heads/$branch"
+            title="Rebase conflict: patch series vs $latest_tag"
+            body="$RUNNER_TEMP/rebase-conflict.md"
+            {
+              printf 'The scheduled rebase from `%s` onto `%s` stopped on conflicts.\n\n' "$current_tag" "$latest_tag"
+              printf 'A recovery branch was created at `%s`; resolve and rebase it without rewriting `main`.\n\n' "$branch"
+              printf '## Conflicting files\n\n```text\n%s\n```\n\n' "${conflicts:-<none reported>}"
+              printf '## Rebase status\n\n```text\n%s\n```\n' "${status:-<empty>}"
+            } > "$body"
+            if [[ "$(gh issue list --state open --search "in:title $title" --json title --jq "map(select(.title == \"$title\")) | length")" == 0 ]]; then
+              gh issue create --title "$title" --body-file "$body"
+            fi
+            exit 1
+          fi
+
+          git push origin "HEAD:refs/heads/$branch"
+          printf 'changed=true\nbranch=%s\n' "$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch validation for rebased branch
+        if: steps.rebase.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run validate.yml --ref "${{ steps.rebase.outputs.branch }}"

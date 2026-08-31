@@ -1,8 +1,12 @@
 import type { I18nKey } from './en';
 import { settingsDict } from './zh-CN.settings';
+import { opmStatusI18n } from './opm-status.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   ...settingsDict,
+  ...opmStatusI18n['zh-CN'],
+  ...updateStatusI18n['zh-CN'],
   'terminalView.actions.attachSelection': '附加所选输出',
   'terminalView.actions.restart': '重启终端',
   'chat.message.terminalContext': '{terminal}，第 {start}-{end} 行',
@@ -561,6 +565,11 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.export.dialog.includeSubtasks': '包含子智能体任务',
   'sessions.sidebar.session.export.dialog.confirm': '导出',
   'sessions.sidebar.session.status.active': '会话活跃中',
+  'sessions.sidebar.session.status.waitingSingleDescription': '等待：{description}',
+  'sessions.sidebar.session.status.waitingSingleDefault': '正在等待后台进程',
+  'sessions.sidebar.session.status.waitingMany': '正在等待 {count} 个后台进程',
+  'sessions.sidebar.session.status.waitingBadgeSingle': '等待中',
+  'sessions.sidebar.session.status.waitingBadgeMany': '等待中 · {count}',
   'sessions.sidebar.session.status.unread': '有未读更新',
   'sessions.sidebar.session.status.pinned': '已置顶会话',
   'sessions.sidebar.session.status.movingToWorktree': '正在将会话移至新工作树',
@@ -569,6 +578,12 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.status.questionPendingMany': '{count} 个待回答问题',
   'sessions.sidebar.session.status.activeFor': '已活动 {duration}',
   'sessions.sidebar.session.status.lastTurnDuration': '上一轮耗时 {duration}',
+  'chat.ptyWaiting.backgroundProcess': '后台进程',
+  'chat.ptyWaiting.backgroundProcesses': '{count} 个后台进程',
+  'chat.ptyWaiting.ariaSingleDescription': '等待：{description}',
+  'chat.ptyWaiting.ariaSingleDefault': '正在等待后台进程',
+  'chat.ptyWaiting.ariaMany': '正在等待 {count} 个后台进程',
+  'chat.ptyWaiting.label': '等待中…',
   'sessions.sidebar.session.subsessions.collapse': '折叠子会话',
   'sessions.sidebar.session.subsessions.expand': '展开子会话',
   'sessions.sidebar.dialogs.deleteSession.title': '删除会话？',

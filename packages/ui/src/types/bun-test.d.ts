@@ -16,12 +16,15 @@ declare module "bun:test" {
     rejects: {
       toThrow(expected?: string | RegExp | (new (...args: never[]) => unknown)): Promise<void>;
     };
+    toBeCloseTo(expected: number, numDigits?: number): void;
     toBeGreaterThan(expected: number): void;
     toBeGreaterThanOrEqual(expected: number): void;
     toBeLessThan(expected: number): void;
     toBeLessThanOrEqual(expected: number): void;
     toHaveLength(expected: number): void;
     toBeInstanceOf(expected: unknown): void;
+    toHaveBeenCalledTimes(expected: number): void;
+    toMatchObject(expected: unknown): void;
     not: {
       toEqual(expected: unknown): void;
       toBe(expected: unknown): void;

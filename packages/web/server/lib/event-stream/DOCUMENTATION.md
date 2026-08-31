@@ -37,6 +37,7 @@ This module contains the OpenChamber message-stream WebSocket protocol and runti
 
 ## Runtime behavior
 - Browser clients connect to the WS endpoints above.
+- The separate `/api/openchamber/events` SSE stream sends the installed server build revision in its ready event. Web and mobile clients compare it with Vite's `__BUILD_REVISION__` and reload at most once per differing revision, so a same-version source replacement cannot leave stale client assets connected to a newer server.
 - OpenChamber still fetches OpenCode upstream event streams over SSE.
 - The web server creates one shared global message-stream hub. OpenCode watcher side effects and global WS clients subscribe to that hub, so there is one upstream `/global/event` SSE reader for both server-side processing and browser fan-out.
 - The global hub keeps a bounded replay buffer keyed by SSE `eventId` so reconnecting browser clients can receive buffered events after their requested `Last-Event-ID`.

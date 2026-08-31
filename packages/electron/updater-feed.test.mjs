@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  PRODUCTION_UPDATER_FEED,
+  DEFAULT_PRODUCTION_UPDATER_FEED,
+  MACOS_PRODUCTION_UPDATER_FEED,
   parseLoopbackUpdaterUrl,
+  resolveProductionUpdaterFeed,
   resolveUpdaterFeed,
+  resolveUpdaterPrereleasePolicy,
 } from './updater-feed.mjs';
 
 const overrideEnvironment = {
@@ -12,13 +15,24 @@ const overrideEnvironment = {
   OPENCHAMBER_UPDATER_E2E_URL: 'http://127.0.0.1:49152/updates/',
 };
 
-test('production updater feed is immutable GitHub configuration', () => {
-  assert.equal(Object.isFrozen(PRODUCTION_UPDATER_FEED), true);
-  assert.deepEqual(PRODUCTION_UPDATER_FEED, {
+test('production updater feeds have explicit platform ownership', () => {
+  assert.equal(Object.isFrozen(DEFAULT_PRODUCTION_UPDATER_FEED), true);
+  assert.equal(Object.isFrozen(MACOS_PRODUCTION_UPDATER_FEED), true);
+  assert.equal(resolveProductionUpdaterFeed({ platform: 'darwin' }), DEFAULT_PRODUCTION_UPDATER_FEED);
+  assert.deepEqual(resolveProductionUpdaterFeed({ platform: 'darwin', j2kBuild: true }), {
+    provider: 'generic',
+    url: 'https://raw.githubusercontent.com/jameskorzekwa/openchamber/desktop-channel/',
+  });
+  assert.deepEqual(resolveProductionUpdaterFeed({ platform: 'win32' }), {
     provider: 'github',
     owner: 'openchamber',
     repo: 'openchamber',
   });
+  assert.equal(resolveProductionUpdaterFeed({ platform: 'linux' }), DEFAULT_PRODUCTION_UPDATER_FEED);
+  assert.equal(resolveUpdaterPrereleasePolicy({ platform: 'darwin' }), false);
+  assert.equal(resolveUpdaterPrereleasePolicy({ platform: 'darwin', j2kBuild: true }), true);
+  assert.equal(resolveUpdaterPrereleasePolicy({ platform: 'win32' }), false);
+  assert.equal(resolveUpdaterPrereleasePolicy({ platform: 'linux' }), false);
 });
 
 test('requires the complete E2E environment and embedded build-marker conjunction', () => {
@@ -32,7 +46,11 @@ test('requires the complete E2E environment and embedded build-marker conjunctio
     },
     { environment: overrideEnvironment, testBuild: false },
   ];
-  for (const input of cases) assert.equal(resolveUpdaterFeed(input), PRODUCTION_UPDATER_FEED);
+  for (const input of cases) {
+    assert.equal(resolveUpdaterFeed({ ...input, platform: 'win32' }), DEFAULT_PRODUCTION_UPDATER_FEED);
+    assert.equal(resolveUpdaterFeed({ ...input, platform: 'darwin' }), DEFAULT_PRODUCTION_UPDATER_FEED);
+    assert.equal(resolveUpdaterFeed({ ...input, platform: 'darwin', j2kBuild: true }), MACOS_PRODUCTION_UPDATER_FEED);
+  }
 });
 
 test('accepts only credential-free loopback HTTP(S) URLs', () => {
@@ -57,6 +75,7 @@ test('accepts only credential-free loopback HTTP(S) URLs', () => {
 test('uses a generic feed only when every test-only gate is valid', () => {
   assert.deepEqual(resolveUpdaterFeed({
     environment: overrideEnvironment,
+    j2kBuild: true,
     testBuild: true,
   }), {
     provider: 'generic',
@@ -69,6 +88,8 @@ test('invalid URLs fall back to the production feed even with both test gates', 
     assert.equal(resolveUpdaterFeed({
       environment: { ...overrideEnvironment, OPENCHAMBER_UPDATER_E2E_URL: url },
       testBuild: true,
-    }), PRODUCTION_UPDATER_FEED);
+      j2kBuild: true,
+      platform: 'darwin',
+    }), MACOS_PRODUCTION_UPDATER_FEED);
   }
 });

@@ -1,8 +1,12 @@
 import type { I18nKey } from './en';
 import { settingsDict } from './es.settings';
+import { opmStatusI18n } from './opm-status.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   ...settingsDict,
+  ...opmStatusI18n.es,
+  ...updateStatusI18n.es,
   'terminalView.actions.attachSelection': 'Adjuntar salida seleccionada',
   'terminalView.actions.restart': 'Reiniciar terminal',
   'chat.message.terminalContext': '{terminal}, líneas {start}-{end}',
@@ -561,6 +565,11 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.session.export.dialog.includeSubtasks": "Incluir tareas de subagente",
   "sessions.sidebar.session.export.dialog.confirm": "Exportar",
   "sessions.sidebar.session.status.active": "Sesión activa",
+  "sessions.sidebar.session.status.waitingSingleDescription": "Esperando: {description}",
+  "sessions.sidebar.session.status.waitingSingleDefault": "Esperando un proceso en segundo plano",
+  "sessions.sidebar.session.status.waitingMany": "Esperando {count} procesos en segundo plano",
+  "sessions.sidebar.session.status.waitingBadgeSingle": "Esperando",
+  "sessions.sidebar.session.status.waitingBadgeMany": "Esperando · {count}",
   "sessions.sidebar.session.status.unread": "Actualizaciones no leídas",
   "sessions.sidebar.session.status.pinned": "Sesión anclada",
   "sessions.sidebar.session.status.movingToWorktree": "Moviendo la sesión a un worktree nuevo",
@@ -569,6 +578,12 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.session.status.questionPendingMany": "{count} preguntas pendientes",
   "sessions.sidebar.session.status.activeFor": "Activa desde hace {duration}",
   "sessions.sidebar.session.status.lastTurnDuration": "El último turno duró {duration}",
+  "chat.ptyWaiting.backgroundProcess": "Proceso en segundo plano",
+  "chat.ptyWaiting.backgroundProcesses": "{count} procesos en segundo plano",
+  "chat.ptyWaiting.ariaSingleDescription": "Esperando: {description}",
+  "chat.ptyWaiting.ariaSingleDefault": "Esperando un proceso en segundo plano",
+  "chat.ptyWaiting.ariaMany": "Esperando {count} procesos en segundo plano",
+  "chat.ptyWaiting.label": "Esperando…",
   "sessions.sidebar.session.subsessions.collapse": "Colapsar subsesiones",
   "sessions.sidebar.session.subsessions.expand": "Expandir subsesiones",
   "sessions.sidebar.dialogs.deleteSession.title": "¿Eliminar sesión?",

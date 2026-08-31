@@ -124,6 +124,8 @@ These modules hold reusable, non-presentational logic for commands.
 
 - `cli-startup.js`
   - Native startup service detection, install/uninstall/status helpers, and platform-specific startup command execution.
+  - Linux and macOS startup definitions execute the stable user-owned launcher at `~/.local/share/openchamber/bin/openchamber-managed`. The launcher resolves the selected `current/bin/cli.js` each time and uses the enabling package path only while no validated selection exists.
+  - Systemd updater migration accepts only a writable service below `~/.config/systemd/user` with exactly one canonical direct OpenChamber or Node-plus-OpenChamber-CLI `ExecStart`. It rejects every supported systemd executable control prefix (`-`, `@`, `:`, `+`, `!`, `!!`, and `|`), inline environment commands, Node flags, and custom wrappers instead of stripping their semantics. Migration can return a deferred plan so the updater fsyncs the rollback journal and schedules recovery before changing the service. Applying the plan replaces the executable prefix, preserves the complete raw `serve` argument suffix and the rest of the unit byte-for-byte, and bounds every `systemctl` call to 10 seconds.
 
 - `cli-tunnel-profiles.js`
   - Tunnel profile normalization, token resolution/redaction, profile storage, migration, file-permission warnings, and managed-remote pair persistence.

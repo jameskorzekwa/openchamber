@@ -35,3 +35,9 @@ Directory demand always includes known project roots and worktrees. Visibility
 only changes priority. Row mounts must not start bootstrap work. Selection and
 activity subscriptions stay session-scoped so a structural list update does not
 make every row observe unrelated streaming updates.
+
+Session rows also derive hosted PTY waiting state from the row session's
+`metadata.openchamber.backgroundJobs.jobs`. Valid PTY jobs add a warning marker
+and compact waiting count only while live status is idle; busy and retry remain
+authoritative. The row memo compares only the derived waiting fields, not the
+whole metadata object.

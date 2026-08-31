@@ -1,8 +1,12 @@
 import type { I18nKey } from './en';
 import { settingsDict } from './ja.settings';
+import { opmStatusI18n } from './opm-status.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   ...settingsDict,
+  ...opmStatusI18n.ja,
+  ...updateStatusI18n.ja,
   'terminalView.actions.attachSelection': '選択した出力を添付',
   'terminalView.actions.restart': 'ターミナルを再起動',
   'chat.message.terminalContext': '{terminal}、{start}〜{end}行',
@@ -561,6 +565,11 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.export.dialog.includeSubtasks': 'サブエージェントタスクを含める',
   'sessions.sidebar.session.export.dialog.confirm': 'エクスポート',
   'sessions.sidebar.session.status.active': 'セッションアクティブ',
+  'sessions.sidebar.session.status.waitingSingleDescription': '待機中：{description}',
+  'sessions.sidebar.session.status.waitingSingleDefault': 'バックグラウンドプロセスを待機中',
+  'sessions.sidebar.session.status.waitingMany': '{count}件のバックグラウンドプロセスを待機中',
+  'sessions.sidebar.session.status.waitingBadgeSingle': '待機中',
+  'sessions.sidebar.session.status.waitingBadgeMany': '待機中 · {count}',
   'sessions.sidebar.session.status.unread': '未読の更新',
   'sessions.sidebar.session.status.pinned': 'ピン留めされたセッション',
   'sessions.sidebar.session.status.movingToWorktree': 'セッションを新しいworktreeへ移動中',
@@ -569,6 +578,12 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.status.questionPendingMany': '保留中の質問が{count}件あります',
   'sessions.sidebar.session.status.activeFor': 'アクティブ時間 {duration}',
   'sessions.sidebar.session.status.lastTurnDuration': '前回のターンの所要時間 {duration}',
+  'chat.ptyWaiting.backgroundProcess': 'バックグラウンドプロセス',
+  'chat.ptyWaiting.backgroundProcesses': '{count}件のバックグラウンドプロセス',
+  'chat.ptyWaiting.ariaSingleDescription': '待機中：{description}',
+  'chat.ptyWaiting.ariaSingleDefault': 'バックグラウンドプロセスを待機中',
+  'chat.ptyWaiting.ariaMany': '{count}件のバックグラウンドプロセスを待機中',
+  'chat.ptyWaiting.label': '待機中…',
   'sessions.sidebar.session.subsessions.collapse': 'サブセッションを折りたたむ',
   'sessions.sidebar.session.subsessions.expand': 'サブセッションを展開',
   'sessions.sidebar.dialogs.deleteSession.title': 'セッションを削除しますか？',
