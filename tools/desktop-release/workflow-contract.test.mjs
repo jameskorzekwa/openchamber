@@ -14,12 +14,13 @@ test('desktop release runs automatically or manually only from trusted j2k/curre
   assert.match(workflow, /github\.workflow_ref == format\('\{0\}\/\.github\/workflows\/desktop-release\.yml@refs\/heads\/j2k\/current'/);
   assert.match(workflow, /github\.event\.workflow_run\.conclusion == 'success'/);
   assert.match(workflow, /github\.event\.workflow_run\.event == 'push'/);
+  assert.match(workflow, /github\.event\.workflow_run\.event == 'workflow_dispatch'/);
   assert.match(workflow, /github\.event\.workflow_run\.head_branch == 'j2k\/current'/);
   assert.match(workflow, /WORKFLOW_HEAD_SHA: \$\{\{ github\.event\.workflow_run\.head_sha \}\}/);
   assert.match(workflow, /No successful J2K Validate run exists for exact source/);
   assert.match(workflow, /source_sha must be an exact lowercase 40-character commit/);
   assert.match(workflow, /Desktop releases may execute and sign only the trusted workflow commit/);
-  assert.doesNotMatch(workflow, /j2k\/v\[0-9\]/);
+  assert.doesNotMatch(workflow, /j2k\/v/);
 });
 
 test('private signing is fingerprint-pinned and never requests Apple notarization', () => {
