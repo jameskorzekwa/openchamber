@@ -9,6 +9,7 @@ import {
   ensureDirectoryDurable,
   validateChannelMetadata,
 } from './validated-release-installer.js';
+import { writeRestartTransaction } from './restart-transaction.js';
 
 const BASE_VERSION = '2.0.0';
 const VERSION = `${BASE_VERSION}-j2k.1`;
@@ -317,6 +318,40 @@ describe('validated release installation', () => {
     const harness = await makeHarness(makeFetch({ archive, channel: makeChannel(archive) }));
     await expect(harness.installer.install({ targetVersion: VERSION, handoffRestart: vi.fn() })).rejects.toThrow('does not bundle production node_modules');
     expect(await fsp.realpath(path.join(harness.installRoot, 'current'))).toBe(harness.oldInstall);
+  });
+
+  it('installs through a symlinked install root without weakening dependency containment', async () => {
+    const harness = await makeHarness();
+    const linkedInstallRoot = path.join(harness.root, 'linked-install');
+    await fsp.symlink(harness.installRoot, linkedInstallRoot);
+    const installer = createValidatedReleaseInstaller({
+      fetchImpl: makeFetch(),
+      installRoot: linkedInstallRoot,
+      currentInstallDir: harness.oldInstall,
+      currentVersion: '1.0.0',
+      platform: 'darwin',
+      arch: 'arm64',
+      nodeAbi: NODE_ABI,
+    });
+
+    const prepareRestart = async (context) => {
+      const transactionPath = path.join(context.installRoot, 'restart-transaction.json');
+      await writeRestartTransaction(transactionPath, {
+        schemaVersion: 3,
+        manager: 'supervisor',
+        phase: 'prepared',
+        ...context,
+        healthUrl: 'http://127.0.0.1:3002/health',
+        transactionId: '12345678-1234-4123-8123-123456789abc',
+        attestationSecret: 'a'.repeat(64),
+        origin: { pid: 1234, startedAt: '2026-08-28T00:00:00.000Z' },
+        systemd: null,
+      });
+      return { transactionPath };
+    };
+    await expect(installer.install({ targetVersion: VERSION, prepareRestart, handoffRestart: vi.fn() })).resolves.toMatchObject({ state: 'restarting' });
+    const selected = await fsp.realpath(path.join(linkedInstallRoot, 'current'));
+    expect(JSON.parse(await fsp.readFile(path.join(selected, 'package.json'), 'utf8')).version).toBe(VERSION);
   });
 
   it('rejects source commits that do not descend from the claimed upstream tag', async () => {
