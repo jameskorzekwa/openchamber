@@ -6,10 +6,16 @@ const workflow = readFileSync(new URL('../../.github/workflows/desktop-release.y
 const webWorkflow = readFileSync(new URL('../../.github/workflows/release.yml', import.meta.url), 'utf8');
 const macVerifier = readFileSync(new URL('./verify-macos-app.mjs', import.meta.url), 'utf8');
 
-test('desktop release runs manually only from trusted j2k/current workflow code', () => {
+test('desktop release runs automatically or manually only from trusted j2k/current workflow code', () => {
+  assert.match(workflow, /workflow_run:/);
+  assert.match(workflow, /- J2K Validate/);
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /github\.ref == 'refs\/heads\/j2k\/current'/);
   assert.match(workflow, /github\.workflow_ref == format\('\{0\}\/\.github\/workflows\/desktop-release\.yml@refs\/heads\/j2k\/current'/);
+  assert.match(workflow, /github\.event\.workflow_run\.conclusion == 'success'/);
+  assert.match(workflow, /github\.event\.workflow_run\.event == 'push'/);
+  assert.match(workflow, /github\.event\.workflow_run\.head_branch == 'j2k\/current'/);
+  assert.match(workflow, /WORKFLOW_HEAD_SHA: \$\{\{ github\.event\.workflow_run\.head_sha \}\}/);
   assert.match(workflow, /No successful J2K Validate run exists for exact source/);
   assert.match(workflow, /source_sha must be an exact lowercase 40-character commit/);
   assert.match(workflow, /Desktop releases may execute and sign only the trusted workflow commit/);
@@ -34,6 +40,8 @@ test('candidate build has no write token and publisher runs trusted verifier onl
   assert.match(build, /permissions:\n      contents: read/);
   assert.doesNotMatch(build, /contents: write/);
   assert.match(publish, /ref: \$\{\{ github\.workflow_sha \}\}/);
+  assert.match(publish, /needs\.metadata\.result == 'success'/);
+  assert.match(publish, /github\.workflow_ref == format\('\{0\}\/\.github\/workflows\/desktop-release\.yml@refs\/heads\/j2k\/current'/);
   assert.match(publish, /node trusted\/tools\/desktop-release\/desktop-release\.mjs verify-release/);
   assert.doesNotMatch(publish, /node artifacts\//);
   assert.match(build, /require\.resolve\(`electron\/package\.json`, \{ paths: \[`\.\/packages\/electron`\] \}\)/);

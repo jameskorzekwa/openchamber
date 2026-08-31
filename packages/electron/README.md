@@ -84,7 +84,7 @@ macOS builds produce `dmg` and `zip` artifacts. Windows builds produce an NSIS i
 
 ### J2K macOS release channel
 
-The customized macOS channel currently supports arm64 only. Run the `J2K Desktop Release` workflow manually from trusted `j2k/current` workflow code and supply its exact 40-character SHA. The workflow signs only when the requested SHA, the current `j2k/current` tip, and the trusted workflow commit are identical and a successful `J2K Validate` run exists for that commit.
+The customized macOS channel currently supports arm64 only. Every successful push or manually dispatched `J2K Validate` run for `j2k/current` starts the `J2K Desktop Release` workflow automatically. Manual desktop dispatch remains available for recovery and requires the exact 40-character source SHA. The workflow signs only when the validated or requested SHA, the current `j2k/current` tip, and the trusted workflow commit are identical and a successful `J2K Validate` run exists for that commit. Pull-request and `j2k/v*` validation cannot publish desktop releases.
 
 Desktop versions use canonical SemVer `X.Y.Z-j2k.N` and tags `desktop-vX.Y.Z-j2k.N`. These GitHub Releases are always prereleases with `make_latest=false`, so they never affect the stable web channel or `/releases/latest`. A desktop release has exactly these six assets:
 
