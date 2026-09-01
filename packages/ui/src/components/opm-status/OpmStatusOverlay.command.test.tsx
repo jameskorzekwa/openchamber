@@ -253,6 +253,8 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       expect(parentSummary?.textContent).toContain('Parent');
       expect(parentSummary?.querySelector('[data-testid="opm-row-state"]')?.textContent).toContain('StateImplemented');
       expect(parentSummary?.querySelector('[data-testid="opm-row-action"]')?.textContent).toContain('ActionWaiting on you');
+      expect(parentSummary?.querySelector('[data-testid="opm-row-action"] .font-medium')?.className).toContain('whitespace-normal');
+      expect(parentSummary?.querySelector('[data-testid="opm-row-action"] .font-medium')?.className).not.toContain('truncate');
       expect(childSummary?.textContent).toContain('Parent');
       expect(childSummary?.textContent).toContain('Child');
       expect(childSummary?.querySelector('[data-testid="opm-row-state"]')?.textContent).toContain('StateImplemented');
