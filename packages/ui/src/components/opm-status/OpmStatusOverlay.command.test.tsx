@@ -85,7 +85,11 @@ const availableResult = (): OpmStatusLoadResult => ({
     counts: { needsYou: 1, blocked: 0, active: 1, waiting: 0, queued: 2 },
     groups: { needsYou: [needsOwnerRow], blocked: [], active: [activeRow], waiting: [], queued: [queuedRow, nestedQueuedRow] },
     tree: [{ ...needsOwnerRow, childRows: [{ ...activeRow, childRows: [{ ...queuedRow, childRows: [{ ...nestedQueuedRow, childRows: [] }] }] }] }],
-    supervisor: { running: true, pausedReason: null, startedAt: null, lastPollAt: null, pollIntervalMs: null, counters: {}, attention: [], projects: [] },
+    supervisor: {
+      running: true, pausedReason: null, startedAt: null, lastPollAt: null, pollIntervalMs: null, counters: {},
+      attention: [{ kind: 'owner-decision', project: 'openchamber', projectName: 'OpenChamber', ref: '20', detail: 'Review the worker response', error: null, url: 'https://github.com/owner/openchamber/issues/20' }],
+      projects: [{ projectId: 'project-uuid', project: 'openchamber', projectName: 'OpenChamber', passes: 4, failures: 0, lastPassAt: 100, degraded: false, degradedReason: null, rateLimited: false, lastError: null }],
+    },
   }),
 });
 
@@ -105,8 +109,10 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       MouseEvent: windowInstance.MouseEvent,
       sessionStorage: windowInstance.sessionStorage,
       localStorage: windowInstance.localStorage,
+      requestAnimationFrame: (callback: FrameRequestCallback) => windowInstance.setTimeout(() => callback(Date.now()), 0),
       IS_REACT_ACT_ENVIRONMENT: true,
     });
+    windowInstance.HTMLElement.prototype.scrollIntoView = mock(() => {});
     localStorage.clear();
   });
 
@@ -212,6 +218,37 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
     }
   });
 
+  test('supervisor attention uses project names and opens its task in the tree', async () => {
+    await mountAndOpen(async () => ({ ok: true }));
+    try {
+      const supervisor = [...document.querySelectorAll('details')]
+        .find((details) => details.textContent?.includes('OPM supervisor status'));
+      expect(supervisor?.textContent).toContain('OpenChamber');
+      expect(supervisor?.textContent).not.toContain('project-uuid');
+
+      const workTree = document.querySelector('[data-testid="opm-work-tree"]');
+      const collapse = workTree?.querySelector<HTMLButtonElement>('[aria-label="Collapse subtasks"]');
+      await act(async () => collapse?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 })));
+      expect(workTree?.textContent).not.toContain('Ordinary background work item');
+
+      const attention = supervisor?.querySelector<HTMLButtonElement>('[data-testid="opm-supervisor-attention"]');
+      expect(attention?.textContent).toContain('OpenChamber #20');
+      await act(async () => {
+        attention?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 }));
+        await new Promise((resolve) => window.setTimeout(resolve, 1));
+      });
+
+      const target = [...(workTree?.querySelectorAll<HTMLButtonElement>('button[aria-expanded]') ?? [])]
+        .find((button) => button.textContent?.includes('Ordinary background'));
+      expect(target?.getAttribute('aria-expanded')).toBe('true');
+      expect(target?.closest('article')?.querySelector('[data-testid="opm-row-detail"]')?.className).toContain('block');
+      expect(document.activeElement).toBe(target);
+      expect(windowInstance.HTMLElement.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+    } finally {
+      await unmount();
+    }
+  });
+
   test('mobile dialog protects its header and keeps every parent and child visible', async () => {
     await mountAndOpen(async () => ({ ok: true }));
     try {
@@ -251,23 +288,23 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       const level4Summary = [...(workTree?.querySelectorAll<HTMLButtonElement>('button[aria-expanded]') ?? [])]
         .find((button) => button.textContent?.includes('Deeply nested'));
       expect(parentSummary?.textContent).toContain('Parent');
-      expect(parentSummary?.querySelector('[data-testid="opm-row-state"]')?.textContent).toContain('StateImplemented');
-      expect(parentSummary?.querySelector('[data-testid="opm-row-action"]')?.textContent).toContain('ActionWaiting on you');
-      expect(parentSummary?.querySelector('[data-testid="opm-row-action"] .font-medium')?.className).toContain('!whitespace-normal');
-      expect(parentSummary?.querySelector('[data-testid="opm-row-action"] .font-medium')?.className).toContain('!overflow-visible');
-      expect(parentSummary?.querySelector('[data-testid="opm-row-action"] .font-medium')?.className).not.toContain('truncate');
+      expect(parentSummary?.querySelector('[data-testid="opm-row-state"]')?.textContent).toBe('Implemented');
+      expect(parentSummary?.querySelector('[data-testid="opm-row-action"]')?.textContent).toBe('Waiting on you');
+      expect(parentSummary?.querySelector('[data-testid="opm-row-state"]')?.className).toContain('whitespace-nowrap');
+      expect(parentSummary?.querySelector('[data-testid="opm-row-action"]')?.className).toContain('whitespace-nowrap');
+      expect(parentSummary?.querySelector('[data-testid="opm-row-title"]')?.parentElement?.textContent).toContain('ImplementedWaiting on you');
       expect(childSummary?.textContent).toContain('Parent');
       expect(childSummary?.textContent).toContain('Child');
-      expect(childSummary?.querySelector('[data-testid="opm-row-state"]')?.textContent).toContain('StateImplemented');
-      expect(childSummary?.querySelector('[data-testid="opm-row-action"]')?.textContent).toContain('ActionWorking');
+      expect(childSummary?.querySelector('[data-testid="opm-row-state"]')?.textContent).toBe('Implemented');
+      expect(childSummary?.querySelector('[data-testid="opm-row-action"]')?.textContent).toBe('Working');
       expect(childSummary?.closest('article')?.className).toContain('overflow-hidden');
       expect(grandchildSummary?.textContent).toContain('Child');
       expect(grandchildSummary?.textContent).toContain('Parent');
-      expect(grandchildSummary?.querySelector('[data-testid="opm-row-state"]')?.textContent).toContain('StatePlanned');
-      expect(grandchildSummary?.querySelector('[data-testid="opm-row-action"]')?.textContent).toContain('ActionQueued');
+      expect(grandchildSummary?.querySelector('[data-testid="opm-row-state"]')?.textContent).toBe('Planned');
+      expect(grandchildSummary?.querySelector('[data-testid="opm-row-action"]')?.textContent).toBe('Queued');
       expect(level4Summary?.textContent).toContain('Child');
-      expect(level4Summary?.querySelector('[data-testid="opm-row-state"]')?.textContent).toContain('StatePlanned');
-      expect(level4Summary?.querySelector('[data-testid="opm-row-action"]')?.textContent).toContain('ActionQueued');
+      expect(level4Summary?.querySelector('[data-testid="opm-row-state"]')?.textContent).toBe('Planned');
+      expect(level4Summary?.querySelector('[data-testid="opm-row-action"]')?.textContent).toBe('Queued');
 
       expect(parentSummary?.querySelector('[data-testid="opm-row-title"]')?.textContent).toBe('Protected change awaiting authorization');
       expect(parentSummary?.querySelector('[data-testid="opm-row-reference"]')?.textContent).toBe('OpenChamber #10');

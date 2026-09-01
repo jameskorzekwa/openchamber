@@ -114,6 +114,30 @@ describe('OPM owner guidance and classification', () => {
     expect(snapshot.tree.map((row) => row.ref)).toEqual(['40', '30']);
     expect(snapshot.tree[0].childRows[0].ref).toBe('41');
   });
+
+  it('retains project labels and binds supervisor attention to its task', () => {
+    const snapshot = buildSnapshot({
+      activity: { blockers: [entry({ ref: '88', phase: 'blocked', reason: 'owner decision required' })] },
+      status: {
+        ok: false,
+        projects: [{ projectId: 'project-uuid', project: 'openchamber', projectName: 'OpenChamber' }],
+        attention: [{ kind: 'owner-decision', projectId: 'project-uuid', ref: '88', detail: 'review rejected' }],
+      },
+      issueUrls: { openchamber: 'https://github.com/owner/openchamber/issues/{ref}' },
+    });
+
+    expect(snapshot.supervisor.projects[0]).toMatchObject({
+      projectId: 'project-uuid',
+      project: 'openchamber',
+      projectName: 'OpenChamber',
+    });
+    expect(snapshot.supervisor.attention[0]).toMatchObject({
+      project: 'openchamber',
+      projectName: 'OpenChamber',
+      ref: '88',
+      url: 'https://github.com/owner/openchamber/issues/88',
+    });
+  });
 });
 
 describe('OPM polling and route lifecycle', () => {
