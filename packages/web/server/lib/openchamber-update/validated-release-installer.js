@@ -219,13 +219,14 @@ function validateFetchUrl(value, mode, initialUrl) {
 async function fetchWithRedirects(fetchImpl, value, label, options = {}) {
   const initialUrl = new URL(value);
   const mode = initialUrl.hostname === 'api.github.com' ? 'api' : 'asset';
+  const signal = AbortSignal.timeout(options.timeoutMs || REQUEST_TIMEOUT_MS);
   let url = validateFetchUrl(initialUrl, mode, initialUrl);
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
     const headers = { Accept: mode === 'api' ? 'application/vnd.github+json' : 'application/octet-stream', 'User-Agent': 'openchamber-validated-updater' };
     if (mode === 'api' && options.githubToken) headers.Authorization = `Bearer ${options.githubToken}`;
     const response = await fetchImpl(url.href, {
       headers,
-      signal: AbortSignal.timeout(options.timeoutMs || REQUEST_TIMEOUT_MS),
+      signal,
       redirect: 'manual',
     });
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
