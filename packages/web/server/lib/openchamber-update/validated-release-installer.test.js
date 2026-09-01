@@ -408,6 +408,18 @@ describe('validated release installation', () => {
     await expect(rejectedHarness.installer.install({ targetVersion: VERSION, handoffRestart: vi.fn() })).rejects.toThrow('redirect destination is not allowed');
   });
 
+  it('allows a longer bounded timeout only for the release archive', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    try {
+      const harness = await makeHarness();
+      await harness.installer.install({ targetVersion: VERSION, handoffRestart: vi.fn() });
+      expect(timeout).toHaveBeenCalledWith(30_000);
+      expect(timeout).toHaveBeenCalledWith(10 * 60 * 1000);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
   it('sends an optional token only to the GitHub API', async () => {
     const requests = [];
     const baseFetch = makeFetch();
