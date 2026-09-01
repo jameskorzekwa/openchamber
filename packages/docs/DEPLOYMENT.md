@@ -11,7 +11,8 @@ Use `.github/workflows/docs-source.yml`.
 Triggers:
 
 - push to `main` when docs source changes
-- release published
+- release published, except validated `*-j2k.*` channel releases whose asset
+  inventory must remain immutable
 - manual `workflow_dispatch`
 
 Outputs:
@@ -19,7 +20,7 @@ Outputs:
 - validates docs (`bun run docs:validate`)
 - creates `openchamber-docs-source-<sha>.tar.gz`
 - uploads archive as workflow artifact
-- on release/manual with tag, uploads archive to release assets
+- on release/manual with a non-J2K tag, uploads archive to release assets
 
 ## Cross-repo sync trigger
 
