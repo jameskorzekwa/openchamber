@@ -33,6 +33,8 @@ const needsOwnerRow = {
   ref: '10',
   title: 'Protected change awaiting authorization',
   phase: 'blocked',
+  state: 'implemented',
+  action: 'waiting_owner',
   reason: `needs owner authorisation; comment "${AUTHORIZE}"`,
   kind: 'needs-owner' as const,
   command: AUTHORIZE,
@@ -45,6 +47,8 @@ const activeRow = {
   ref: '20',
   title: 'Ordinary background work item',
   phase: 'active',
+  state: 'implemented',
+  action: 'active',
   activityState: 'working',
   reason: null,
   kind: null,
@@ -58,6 +62,8 @@ const queuedRow = {
   ref: '30',
   title: 'Nested follow-up task',
   phase: 'planned',
+  state: 'planned',
+  action: 'queued',
   activityState: 'queued',
   reason: 'worker limit reached',
   kind: null,
@@ -245,16 +251,20 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       const level4Summary = [...(workTree?.querySelectorAll<HTMLButtonElement>('button[aria-expanded]') ?? [])]
         .find((button) => button.textContent?.includes('Deeply nested'));
       expect(parentSummary?.textContent).toContain('Parent');
-      expect(parentSummary?.textContent).toContain('Blocked');
+      expect(parentSummary?.querySelector('[data-testid="opm-row-state"]')?.textContent).toContain('StateImplemented');
+      expect(parentSummary?.querySelector('[data-testid="opm-row-action"]')?.textContent).toContain('ActionWaiting on you');
       expect(childSummary?.textContent).toContain('Parent');
       expect(childSummary?.textContent).toContain('Child');
-      expect(childSummary?.textContent).toContain('Working');
+      expect(childSummary?.querySelector('[data-testid="opm-row-state"]')?.textContent).toContain('StateImplemented');
+      expect(childSummary?.querySelector('[data-testid="opm-row-action"]')?.textContent).toContain('ActionWorking');
       expect(childSummary?.closest('article')?.className).toContain('overflow-hidden');
       expect(grandchildSummary?.textContent).toContain('Child');
       expect(grandchildSummary?.textContent).toContain('Parent');
-      expect(grandchildSummary?.textContent).toContain('Planned');
+      expect(grandchildSummary?.querySelector('[data-testid="opm-row-state"]')?.textContent).toContain('StatePlanned');
+      expect(grandchildSummary?.querySelector('[data-testid="opm-row-action"]')?.textContent).toContain('ActionQueued');
       expect(level4Summary?.textContent).toContain('Child');
-      expect(level4Summary?.textContent).toContain('Planned');
+      expect(level4Summary?.querySelector('[data-testid="opm-row-state"]')?.textContent).toContain('StatePlanned');
+      expect(level4Summary?.querySelector('[data-testid="opm-row-action"]')?.textContent).toContain('ActionQueued');
 
       expect(parentSummary?.querySelector('[data-testid="opm-row-title"]')?.textContent).toBe('Protected change awaiting authorization');
       expect(parentSummary?.querySelector('[data-testid="opm-row-reference"]')?.textContent).toBe('OpenChamber #10');

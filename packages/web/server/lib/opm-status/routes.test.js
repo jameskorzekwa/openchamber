@@ -16,6 +16,8 @@ const entry = (overrides = {}) => ({
   ref: '100',
   title: 'Port OPM status',
   phase: 'active',
+  state: 'implemented',
+  action: 'active',
   updatedAt: '2026-08-26T12:00:00.000Z',
   ...overrides,
 });
@@ -54,6 +56,7 @@ describe('OPM owner guidance and classification', () => {
     expect(snapshot.groups.active.map((row) => row.ref)).toEqual(['1']);
     expect(snapshot.groups.waiting.map((row) => row.ref)).toEqual(['2']);
     expect(snapshot.groups.queued.map((row) => row.ref)).toEqual(['4']);
+    expect(snapshot.groups.active[0]).toMatchObject({ state: 'implemented', action: 'active' });
   });
 
   it('promotes authorization and dead-letter rows into needs-you with exact commands', () => {
@@ -80,8 +83,8 @@ describe('OPM owner guidance and classification', () => {
           phase: 'waiting_external',
           reason: 'waiting on 2/3 chunks',
           children: [
-            { ref: '21', title: 'Rich child', phase: 'waiting_external', activityState: 'stopped', reason: 'waiting for checks' },
-            { ref: '22', title: 'Inline child', phase: 'planned', activityState: 'queued', reason: null },
+            { ref: '21', title: 'Rich child', phase: 'waiting_external', state: 'implemented', action: 'reviewing', activityState: 'stopped', reason: 'waiting for checks' },
+            { ref: '22', title: 'Inline child', phase: 'planned', state: 'planned', action: 'queued', activityState: 'queued', reason: null },
           ],
         })],
         active: [entry({ ref: '21', parentRef: '20', sessionId: 'ses_21', workspacePath: '/repo/worktree' })],
@@ -93,7 +96,7 @@ describe('OPM owner guidance and classification', () => {
     expect(snapshot.tree[0].ref).toBe('20');
     expect(snapshot.tree[0].childRows.map((row) => row.ref)).toEqual(['21', '22']);
     expect(snapshot.tree[0].childRows[0]).toMatchObject({ sessionId: 'ses_21', workspacePath: '/repo/worktree' });
-    expect(snapshot.tree[0].childRows[1].owner).toBeDefined();
+    expect(snapshot.tree[0].childRows[1]).toMatchObject({ state: 'planned', action: 'queued', owner: expect.any(Object) });
   });
 
   it('raises a family containing an owner-required child above active roots', () => {
