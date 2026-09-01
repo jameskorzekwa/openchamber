@@ -198,6 +198,41 @@ const phaseLabel = (phase: string | null, t: Translate) => {
   }
 };
 
+const stateLabel = (state: string | null, t: Translate) => {
+  switch (state) {
+    case 'planned': return t('opm.phase.planned');
+    case 'implemented': return t('opm.state.implemented');
+    case 'reviewed': return t('opm.state.reviewed');
+    case 'merged': return t('opm.phase.merged');
+    case 'deployed': return t('opm.phase.deployed');
+    case 'verified': return t('opm.phase.verified');
+    case 'completed': return t('opm.phase.completed');
+    case 'cancelled': return t('opm.phase.cancelled');
+    case 'failed': return t('opm.phase.failed');
+    default: return state?.replaceAll('_', ' ') || t('common.unavailable');
+  }
+};
+
+const actionLabel = (action: string | null, t: Translate) => {
+  switch (action) {
+    case 'queued': return t('opm.action.queued');
+    case 'planning': return t('opm.action.planning');
+    case 'active': return t('opm.action.active');
+    case 'reviewing': return t('opm.action.reviewing');
+    case 'merging': return t('opm.action.merging');
+    case 'deploying': return t('opm.action.deploying');
+    case 'verifying': return t('opm.action.verifying');
+    case 'remediating': return t('opm.action.remediating');
+    case 'closing': return t('opm.action.closing');
+    case 'waiting_external': return t('opm.action.waitingExternal');
+    case 'waiting_owner': return t('opm.action.waitingOwner');
+    case 'paused': return t('opm.action.paused');
+    case 'blocked': return t('opm.action.blocked');
+    case 'idle': return t('opm.action.idle');
+    default: return action?.replaceAll('_', ' ') || t('common.unavailable');
+  }
+};
+
 const relativeAge = (value: string | number | null, locale: string) => {
   const at = new Date(value ?? '').getTime();
   if (!Number.isFinite(at)) return '';
@@ -219,11 +254,18 @@ const rowTone = (row: OpmRow) => {
   return 'border-border/60 bg-[var(--surface-elevated)]';
 };
 
-const phaseTone = (row: OpmRow) => {
-  if (row.kind || row.phase === 'blocked' || row.phase === 'failed') return 'text-status-error bg-status-error/10';
-  if (row.phase === 'paused' || row.phase === 'planned' || row.activityState === 'queued') return 'text-status-warning bg-status-warning/10';
-  if (row.phase === 'active' || row.phase === 'review') return 'text-status-success bg-status-success/10';
+const stateTone = (row: OpmRow) => {
+  if (row.state === 'failed' || row.state === 'cancelled') return 'text-status-error bg-status-error/10';
+  if (row.state === 'completed' || row.state === 'verified' || row.state === 'deployed') return 'text-status-success bg-status-success/10';
   return 'text-status-info bg-status-info/10';
+};
+
+const actionTone = (row: OpmRow) => {
+  if (row.action === 'waiting_owner') return 'text-status-error bg-status-error/10';
+  if (row.action === 'blocked' || row.action === 'paused') return 'text-status-warning bg-status-warning/10';
+  if (row.action === 'idle' || row.action === 'queued') return 'text-muted-foreground bg-[var(--surface-muted)]';
+  if (row.action === 'waiting_external') return 'text-status-info bg-status-info/10';
+  return 'text-status-success bg-status-success/10';
 };
 
 const ownerText = (row: OpmRow, t: Translate) => {
@@ -306,8 +348,17 @@ const OpmWorkRow = ({
 }) => {
   const { locale, t } = useI18n();
   const projectLabel = `${row.projectName || row.project || 'OPM'} #${row.ref}`;
-  const phasePill = (
-    <span className={cn('max-w-28 shrink-0 truncate rounded-full px-2 py-0.5 typography-micro', phaseTone(row))}>{phaseLabel(row.phase, t)}</span>
+  const statusPills = (
+    <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-0.5">
+      <span data-testid="opm-row-state" className={cn('flex min-w-0 items-center gap-1 rounded-full px-2 py-0.5 typography-micro', stateTone(row))}>
+        <span className="shrink-0 opacity-70">{t('opm.row.state')}</span>
+        <span className="min-w-0 break-words text-right font-medium leading-3 !overflow-visible !whitespace-normal !text-clip">{stateLabel(row.state, t)}</span>
+      </span>
+      <span data-testid="opm-row-action" className={cn('flex min-w-0 items-center gap-1 rounded-full px-2 py-0.5 typography-micro', actionTone(row))}>
+        <span className="shrink-0 opacity-70">{t('opm.row.action')}</span>
+        <span className="min-w-0 break-words text-right font-medium leading-3 !overflow-visible !whitespace-normal !text-clip">{actionLabel(row.action, t)}</span>
+      </span>
+    </span>
   );
   return (
     <article className={cn(
@@ -341,8 +392,8 @@ const OpmWorkRow = ({
               {isChild ? <span className="shrink-0">· {t('opm.row.child')}</span> : null}
               <span className="shrink-0">· {relativeAge(row.updatedAt, locale)}</span>
             </span>
+            {statusPills}
           </span>
-          {phasePill}
           <Icon name="arrow-right-s" className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')} />
         </button>
       </div>

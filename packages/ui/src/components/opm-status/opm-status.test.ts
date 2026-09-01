@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { getOpmCounts, getTotalOpmCount, ownerGuidanceKind, parseOpmSnapshot } from './opm-status';
 
 const row = (overrides = {}) => ({
-  project: 'openchamber', projectName: 'OpenChamber', ref: '1', title: 'Work', phase: 'active', activityState: 'working',
+  project: 'openchamber', projectName: 'OpenChamber', ref: '1', title: 'Work', phase: 'active', state: 'implemented', action: 'active', activityState: 'working',
   parentRef: null, branch: null, sessionId: null, workspacePath: null, reason: null, nextAction: null, updatedAt: null,
   effect: null, children: [], kind: null, command: null, owner: { required: false, instruction: 'Nothing needed.' }, url: null,
   ...overrides,
@@ -28,6 +28,7 @@ describe('OPM status parser', () => {
     expect(parsed.available).toBe(true);
     if (!parsed.available) throw new Error('expected available snapshot');
     expect(getOpmCounts(parsed)).toEqual({ needsYou: 0, blocked: 0, active: 1, waiting: 0, queued: 0 });
+    expect(parsed.tree[0]).toMatchObject({ state: 'implemented', action: 'active' });
   });
 
   test('preserves arbitrary parent and child depth at the network boundary', () => {
@@ -41,6 +42,15 @@ describe('OPM status parser', () => {
 
   test('rejects malformed rows instead of rendering partial network data', () => {
     expect(() => parseOpmSnapshot(snapshot(row({ owner: undefined })))).toThrow();
+  });
+
+  test('normalizes state and action to unavailable for an older server payload', () => {
+    const legacyRow = row();
+    Reflect.deleteProperty(legacyRow, 'state');
+    Reflect.deleteProperty(legacyRow, 'action');
+    const parsed = parseOpmSnapshot(snapshot(legacyRow));
+    if (!parsed.available) throw new Error('expected available snapshot');
+    expect(parsed.tree[0]).toMatchObject({ state: null, action: null });
   });
 
   test('keeps unavailable distinct from successful empty work', () => {
