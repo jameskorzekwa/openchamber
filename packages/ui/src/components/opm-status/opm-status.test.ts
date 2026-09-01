@@ -44,6 +44,15 @@ describe('OPM status parser', () => {
     expect(() => parseOpmSnapshot(snapshot(row({ owner: undefined })))).toThrow();
   });
 
+  test('normalizes state and action to unavailable for an older server payload', () => {
+    const legacyRow = row();
+    Reflect.deleteProperty(legacyRow, 'state');
+    Reflect.deleteProperty(legacyRow, 'action');
+    const parsed = parseOpmSnapshot(snapshot(legacyRow));
+    if (!parsed.available) throw new Error('expected available snapshot');
+    expect(parsed.tree[0]).toMatchObject({ state: null, action: null });
+  });
+
   test('keeps unavailable distinct from successful empty work', () => {
     expect(parseOpmSnapshot({ available: false, fetchedAt: 100, error: 'down' })).toEqual({ available: false, fetchedAt: 100, error: 'down' });
   });
