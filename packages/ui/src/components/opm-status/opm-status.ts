@@ -95,12 +95,17 @@ const availableSnapshotSchema = z.object({
     }).passthrough(),
     attention: z.array(z.object({
       kind: nullableString,
+      project: nullableString.default(null),
+      projectName: nullableString.default(null),
       ref: z.union([z.string(), z.number()]).nullable(),
       detail: nullableString,
       error: nullableString,
+      url: nullableString.default(null),
     })),
     projects: z.array(z.object({
       projectId: nullableString,
+      project: nullableString.default(null),
+      projectName: nullableString.default(null),
       passes: nullableNumber,
       failures: nullableNumber,
       lastPassAt: nullableNumber,
@@ -123,6 +128,7 @@ const snapshotSchema = z.discriminatedUnion('available', [availableSnapshotSchem
 export type OpmSnapshot = z.infer<typeof snapshotSchema>;
 type OpmSnapshotPayload = z.input<typeof snapshotSchema>;
 export type OpmAvailableSnapshot = z.infer<typeof availableSnapshotSchema>;
+export type OpmAttention = OpmAvailableSnapshot['supervisor']['attention'][number];
 
 export type OpmStatusLoadResult =
   | { status: 'supported'; snapshot: OpmSnapshot }
