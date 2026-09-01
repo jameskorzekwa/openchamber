@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 const release = readFileSync('.github/workflows/release.yml', 'utf8');
+const docsSource = readFileSync('.github/workflows/docs-source.yml', 'utf8');
 const sync = readFileSync('.github/workflows/sync-upstream.yml', 'utf8');
 const validate = readFileSync('.github/workflows/validate.yml', 'utf8');
 const docs = readFileSync('docs/CI_RELEASE_CHANNEL.md', 'utf8');
@@ -53,6 +54,12 @@ test('release smoke uses the strict channel and stage-version has no misplaced c
   assert.doesNotMatch(stage, /channel-repository/);
   assert.match(smoke, /--channel-repository "jameskorzekwa\/openchamber"/);
   assert.match(smokeStep, /OPENCHAMBER_UPDATE_GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
+});
+
+test('docs source cannot append assets to validated j2k channel releases', () => {
+  const job = docsSource.slice(docsSource.indexOf('  validate-and-package:'));
+  assert.match(job, /github\.event_name != 'release' \|\| !contains\(github\.event\.release\.tag_name, '-j2k\.'\)/);
+  assert.match(job, /github\.event_name != 'workflow_dispatch' \|\| !contains\(inputs\.release_tag, '-j2k\.'\)/);
 });
 
 test('manual dispatch and the privileged job require the trusted j2k/current workflow definition', () => {
