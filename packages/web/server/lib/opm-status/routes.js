@@ -231,6 +231,20 @@ export const buildSnapshot = ({ activity, status, issueUrls = {}, now = Date.now
   const treeRank = (row) => Math.min(rowRank(row), ...row.childRows.map(rowRank));
   tree.sort((a, b) => treeRank(a) - treeRank(b));
 
+  const statusProjects = Array.isArray(status?.projects) ? status.projects : [];
+  const projectById = new Map(statusProjects.map((project) => [project.projectId, project]));
+  const projectForAttention = (item) => {
+    const configured = projectById.get(item.projectId);
+    const project = item.project ?? item.slug ?? configured?.project ?? configured?.slug ?? null;
+    const matchingRows = rows.filter((row) => String(row.ref) === String(item.ref));
+    const row = matchingRows.find((candidate) => candidate.project === project)
+      ?? (matchingRows.length === 1 ? matchingRows[0] : null);
+    return {
+      project: project ?? row?.project ?? null,
+      projectName: item.projectName ?? configured?.projectName ?? row?.projectName ?? null,
+    };
+  };
+
   return {
     available: true,
     fetchedAt: now,
@@ -255,16 +269,23 @@ export const buildSnapshot = ({ activity, status, issueUrls = {}, now = Date.now
       pollIntervalMs: status?.pollIntervalMs ?? null,
       counters: status?.counters && typeof status.counters === 'object' ? status.counters : {},
       attention: Array.isArray(status?.attention)
-        ? status.attention.map((item) => ({
-            kind: item.kind ?? null,
-            ref: item.ref ?? null,
-            detail: item.detail ?? null,
-            error: item.error ?? null,
-          }))
+        ? status.attention.map((item) => {
+            const identity = projectForAttention(item);
+            return {
+              kind: item.kind ?? null,
+              project: identity.project,
+              projectName: identity.projectName,
+              ref: item.ref ?? null,
+              detail: item.detail ?? null,
+              error: item.error ?? null,
+              url: identity.project && item.ref ? issueUrlFor(issueUrls, identity.project, item.ref) : null,
+            };
+          })
         : [],
-      projects: Array.isArray(status?.projects)
-        ? status.projects.map((project) => ({
+      projects: statusProjects.map((project) => ({
             projectId: project.projectId ?? null,
+            project: project.project ?? project.slug ?? null,
+            projectName: project.projectName ?? project.name ?? null,
             passes: project.passes ?? null,
             failures: project.failures ?? null,
             lastPassAt: project.lastPassAt ?? null,
@@ -272,8 +293,7 @@ export const buildSnapshot = ({ activity, status, issueUrls = {}, now = Date.now
             degradedReason: project.degradedReason ?? null,
             rateLimited: project.rateLimited === true,
             lastError: project.lastError ?? null,
-          }))
-        : [],
+          })),
     },
   };
 };
