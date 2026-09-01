@@ -349,14 +349,14 @@ const OpmWorkRow = ({
   const { locale, t } = useI18n();
   const projectLabel = `${row.projectName || row.project || 'OPM'} #${row.ref}`;
   const statusPills = (
-    <span className="flex max-w-40 shrink-0 flex-col items-stretch gap-0.5">
+    <span className="flex max-w-[min(14rem,48vw)] shrink-0 flex-col items-stretch gap-0.5">
       <span data-testid="opm-row-state" className={cn('flex min-w-0 items-center gap-1 rounded-full px-2 py-0.5 typography-micro', stateTone(row))}>
         <span className="shrink-0 opacity-70">{t('opm.row.state')}</span>
-        <span className="min-w-0 truncate font-medium">{stateLabel(row.state, t)}</span>
+        <span className="min-w-0 whitespace-normal break-words text-right font-medium leading-3">{stateLabel(row.state, t)}</span>
       </span>
       <span data-testid="opm-row-action" className={cn('flex min-w-0 items-center gap-1 rounded-full px-2 py-0.5 typography-micro', actionTone(row))}>
         <span className="shrink-0 opacity-70">{t('opm.row.action')}</span>
-        <span className="min-w-0 truncate font-medium">{actionLabel(row.action, t)}</span>
+        <span className="min-w-0 whitespace-normal break-words text-right font-medium leading-3">{actionLabel(row.action, t)}</span>
       </span>
     </span>
   );
