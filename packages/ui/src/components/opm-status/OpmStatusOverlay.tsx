@@ -21,6 +21,7 @@ import {
   openOpmRowSession,
   ownerGuidanceKind,
   postOpmCommand,
+  type OpmAttention,
   type OpmAvailableSnapshot,
   type OpmCommandResult,
   type OpmRow,
@@ -332,6 +333,7 @@ const OpmWorkRow = ({
   onToggleExpand,
   childrenExpanded,
   onToggleChildren,
+  summaryRef,
 }: {
   row: OpmRow;
   isParent: boolean;
@@ -345,18 +347,17 @@ const OpmWorkRow = ({
   onToggleExpand: (row: OpmRow) => void;
   childrenExpanded?: boolean;
   onToggleChildren?: () => void;
+  summaryRef?: (element: HTMLButtonElement | null) => void;
 }) => {
   const { locale, t } = useI18n();
   const projectLabel = `${row.projectName || row.project || 'OPM'} #${row.ref}`;
   const statusPills = (
-    <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-0.5">
-      <span data-testid="opm-row-state" className={cn('flex min-w-0 items-center gap-1 rounded-full px-2 py-0.5 typography-micro', stateTone(row))}>
-        <span className="shrink-0 opacity-70">{t('opm.row.state')}</span>
-        <span className="min-w-0 break-words text-right font-medium leading-3 !overflow-visible !whitespace-normal !text-clip">{stateLabel(row.state, t)}</span>
+    <span className="flex shrink-0 items-center gap-0.5">
+      <span data-testid="opm-row-state" className={cn('inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 typography-micro', stateTone(row))}>
+        <span className="font-medium leading-3">{stateLabel(row.state, t)}</span>
       </span>
-      <span data-testid="opm-row-action" className={cn('flex min-w-0 items-center gap-1 rounded-full px-2 py-0.5 typography-micro', actionTone(row))}>
-        <span className="shrink-0 opacity-70">{t('opm.row.action')}</span>
-        <span className="min-w-0 break-words text-right font-medium leading-3 !overflow-visible !whitespace-normal !text-clip">{actionLabel(row.action, t)}</span>
+      <span data-testid="opm-row-action" className={cn('inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 typography-micro', actionTone(row))}>
+        <span className="font-medium leading-3">{actionLabel(row.action, t)}</span>
       </span>
     </span>
   );
@@ -379,20 +380,23 @@ const OpmWorkRow = ({
           </button>
         ) : <span className="w-1 shrink-0" />}
         <button
+          ref={summaryRef}
           type="button"
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
           aria-expanded={expanded}
           onClick={() => onToggleExpand(row)}
         >
           <span className="min-w-0 flex-1">
-            <span data-testid="opm-row-title" className="block min-w-0 truncate font-medium leading-4 text-foreground">{row.title}</span>
+            <span className="flex min-w-0 items-center gap-1">
+              <span data-testid="opm-row-title" className="block min-w-0 flex-1 truncate font-medium leading-4 text-foreground">{row.title}</span>
+              {statusPills}
+            </span>
             <span className="flex min-w-0 items-center gap-1 leading-4 typography-micro text-muted-foreground">
               <span data-testid="opm-row-reference" className="min-w-0 truncate">{projectLabel}</span>
               {isParent ? <span className="shrink-0">· {t('opm.row.parent')}</span> : null}
               {isChild ? <span className="shrink-0">· {t('opm.row.child')}</span> : null}
               <span className="shrink-0">· {relativeAge(row.updatedAt, locale)}</span>
             </span>
-            {statusPills}
           </span>
           <Icon name="arrow-right-s" className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')} />
         </button>
@@ -501,36 +505,65 @@ const StatusDot = ({ snapshot }: { snapshot: OpmSnapshot }) => {
   return <span aria-hidden="true" className={cn('size-2.5 shrink-0 rounded-full', tone)} />;
 };
 
-const SupervisorSummary = ({ snapshot }: { snapshot: OpmAvailableSnapshot }) => {
+const projectStatusLabel = (project: { projectId?: string | null; project?: string | null; projectName?: string | null }) => (
+  project.projectName || project.project || project.projectId || 'OPM'
+);
+
+const SupervisorSummary = ({
+  snapshot,
+  onOpenAttention,
+}: {
+  snapshot: OpmAvailableSnapshot;
+  onOpenAttention: (item: OpmAttention) => void;
+}) => {
   const { locale, t } = useI18n();
   const supervisor = snapshot.supervisor;
   return (
-    <details className="min-w-0 rounded-lg border border-border/60 bg-[var(--surface-elevated)] px-2.5 py-2">
-      <summary className="cursor-pointer select-none font-medium text-foreground typography-ui-label">
-        {t('opm.supervisor.title')} · {supervisor.running ? t('opm.supervisor.running') : t('opm.supervisor.stopped')}
+    <details className="min-w-0 overflow-hidden rounded-lg border border-border/60 bg-[var(--surface-elevated)]">
+      <summary className="cursor-pointer select-none px-3 py-2 font-medium text-foreground typography-ui-label hover:bg-interactive-hover">
+        <span>{t('opm.supervisor.title')}</span>
+        <span className={cn('ml-2 rounded-full px-2 py-0.5 typography-micro', supervisor.running ? 'bg-status-success/10 text-status-success' : 'bg-status-error/10 text-status-error')}>
+          {supervisor.running ? t('opm.supervisor.running') : t('opm.supervisor.stopped')}
+        </span>
       </summary>
-      <section aria-label={t('opm.supervisor.title')} className="mt-2 min-w-0">
-      <div className="flex min-w-0 flex-wrap gap-x-4 gap-y-1 typography-ui-label text-muted-foreground">
-        <span className="font-medium text-foreground">{supervisor.running ? t('opm.supervisor.running') : t('opm.supervisor.stopped')}</span>
+      <section aria-label={t('opm.supervisor.title')} className="min-w-0 space-y-2 border-t border-border/60 p-2.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5 typography-micro text-muted-foreground">
         {snapshot.paused ? <span className="text-status-warning">{t('opm.supervisor.paused')}</span> : null}
         {supervisor.lastPollAt ? <span>{t('opm.supervisor.lastPoll', { age: relativeAge(supervisor.lastPollAt, locale) })}</span> : null}
         {supervisor.counters.deadLetters !== undefined ? <span>{t('opm.supervisor.deadLetters', { count: supervisor.counters.deadLetters })}</span> : null}
         {supervisor.counters.blocked !== undefined ? <span>{t('opm.supervisor.blocked', { count: supervisor.counters.blocked })}</span> : null}
       </div>
       {supervisor.projects.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-2">
+        <div className="grid min-w-0 gap-1.5 sm:grid-cols-2">
           {supervisor.projects.map((project) => (
-            <span key={project.projectId ?? 'unknown'} className={cn('rounded-full px-2 py-1 typography-micro', project.degraded || project.rateLimited ? 'bg-status-warning/10 text-status-warning' : 'bg-status-success/10 text-status-success')}>
-              {project.projectId}: {project.degraded ? t('opm.supervisor.degraded') : project.rateLimited ? t('opm.supervisor.rateLimited') : t('opm.supervisor.healthy')}
-              {project.degradedReason ? ` · ${project.degradedReason}` : ''}
-            </span>
+            <div key={project.projectId ?? project.project ?? 'unknown'} className="flex min-w-0 flex-wrap items-center justify-between gap-1.5 rounded-md border border-border/60 bg-background px-2 py-1.5">
+              <span className="min-w-0 break-words font-medium typography-ui-label text-foreground">{projectStatusLabel(project)}</span>
+              <span className={cn('shrink-0 rounded-full px-2 py-0.5 typography-micro', project.degraded || project.rateLimited ? 'bg-status-warning/10 text-status-warning' : 'bg-status-success/10 text-status-success')}>
+                {project.degraded ? t('opm.supervisor.degraded') : project.rateLimited ? t('opm.supervisor.rateLimited') : t('opm.supervisor.healthy')}
+              </span>
+              {project.degradedReason ? <span className="w-full min-w-0 break-words typography-micro text-status-warning">{project.degradedReason}</span> : null}
+            </div>
           ))}
         </div>
       ) : null}
       {supervisor.attention.length > 0 ? (
-        <div className="mt-2 space-y-1 text-status-error typography-ui-label">
+        <div className="min-w-0 space-y-1.5 rounded-md border border-status-error/30 bg-status-error/5 p-1.5">
           {supervisor.attention.map((item, index) => (
-            <p key={`${item.kind}:${item.ref}:${index}`}>{[item.kind, item.ref && `#${item.ref}`, item.detail, item.error].filter(Boolean).join(' · ')}</p>
+            <Button
+              key={`${item.project}:${item.kind}:${item.ref}:${index}`}
+              data-testid="opm-supervisor-attention"
+              type="button"
+              variant="ghost"
+              className="h-auto min-h-10 w-full min-w-0 justify-start gap-2 whitespace-normal rounded-md px-2 py-1.5 text-left hover:bg-interactive-hover"
+              onClick={() => onOpenAttention(item)}
+            >
+              <span className="shrink-0 rounded-full bg-status-error/10 px-2 py-0.5 typography-micro text-status-error">{item.kind}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block font-medium typography-ui-label text-foreground">{projectStatusLabel(item)}{item.ref ? ` #${item.ref}` : ''}</span>
+                <span className="block min-w-0 break-words [overflow-wrap:anywhere] typography-micro text-muted-foreground">{item.detail || item.error}</span>
+              </span>
+              <Icon name="arrow-right-s" className="size-3.5 shrink-0 text-muted-foreground" />
+            </Button>
           ))}
         </div>
       ) : null}
@@ -540,6 +573,16 @@ const SupervisorSummary = ({ snapshot }: { snapshot: OpmAvailableSnapshot }) => 
 };
 
 const rowKey = (row: OpmRow) => `${row.project}#${row.ref}`;
+
+const attentionPath = (rows: OpmTreeRow[], item: OpmAttention): OpmTreeRow[] | null => {
+  for (const row of rows) {
+    const projectMatches = !item.project || item.project === row.project;
+    if (projectMatches && String(item.ref) === String(row.ref)) return [row];
+    const childPath = attentionPath(row.childRows, item);
+    if (childPath) return [row, ...childPath];
+  }
+  return null;
+};
 
 const hierarchyPriority = (row: OpmTreeRow): number => {
   const ownPriority = row.owner.required || row.kind
@@ -577,6 +620,7 @@ export const OpmStatusOverlay = ({
   // visible, including children, so the dashboard is useful at a glance.
   const [expandedOverrides, setExpandedOverrides] = React.useState<Record<string, boolean>>({});
   const [childrenExpandedOverrides, setChildrenExpandedOverrides] = React.useState<Record<string, boolean>>({});
+  const rowSummaries = React.useRef(new Map<string, HTMLButtonElement>());
   const [notificationPermission, setNotificationPermission] = React.useState<NotificationPermission | 'unsupported'>(
     globalThis.Notification ? Notification.permission : 'unsupported',
   );
@@ -669,7 +713,7 @@ export const OpmStatusOverlay = ({
       setRunStates((previous) => ({ ...previous, [key]: { status: 'error', message: result.error } }));
     }
   };
-  const rowProps = (row: OpmRow, isParent: boolean, isChild: boolean, defaultExpanded = false) => ({
+  const rowProps = (row: OpmRow, isParent: boolean, isChild: boolean, defaultExpanded = false, registerSummary = false) => ({
     row,
     isParent,
     isChild,
@@ -682,13 +726,17 @@ export const OpmStatusOverlay = ({
     onToggleExpand: (target: OpmRow) => toggleRow(target, defaultExpanded),
     childrenExpanded: isParent ? areChildrenExpanded(row) : undefined,
     onToggleChildren: isParent ? () => toggleChildren(row) : undefined,
+    summaryRef: registerSummary ? (element: HTMLButtonElement | null) => {
+      if (element) rowSummaries.current.set(rowKey(row), element);
+      else rowSummaries.current.delete(rowKey(row));
+    } : undefined,
   });
   const renderHierarchy = (rows: OpmTreeRow[], depth = 0): React.ReactNode => rows.map((row) => {
     const children = row.childRows;
     const childrenExpanded = areChildrenExpanded(row);
     return (
       <div key={rowKey(row)} className="min-w-0 space-y-1">
-        <OpmWorkRow {...rowProps(row, children.length > 0, depth > 0)} />
+        <OpmWorkRow {...rowProps(row, children.length > 0, depth > 0, false, true)} />
         {children.length > 0 && childrenExpanded ? (
           <div className="min-w-0 space-y-1">{renderHierarchy(children, depth + 1)}</div>
         ) : null}
@@ -696,6 +744,25 @@ export const OpmStatusOverlay = ({
     );
   });
   const prioritizedTree = snapshot.available ? prioritizeHierarchy(snapshot.tree) : [];
+  const openAttention = (item: OpmAttention) => {
+    const path = attentionPath(prioritizedTree, item);
+    if (!path) {
+      if (item.url) window.open(item.url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    const target = path.at(-1);
+    if (!target) return;
+    setExpandedOverrides((previous) => ({ ...previous, [rowKey(target)]: true }));
+    setChildrenExpandedOverrides((previous) => ({
+      ...previous,
+      ...Object.fromEntries(path.slice(0, -1).map((row) => [rowKey(row), true])),
+    }));
+    window.requestAnimationFrame(() => {
+      const summary = rowSummaries.current.get(rowKey(target));
+      summary?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      summary?.focus({ preventScroll: true });
+    });
+  };
   const requestNotifications = async () => {
     if (!globalThis.Notification) return;
     try {
@@ -797,7 +864,7 @@ export const OpmStatusOverlay = ({
                     <div data-testid="opm-work-tree" className="min-w-0 space-y-1.5">{renderHierarchy(prioritizedTree)}</div>
                   )}
                 </section>
-                <SupervisorSummary snapshot={snapshot} />
+                <SupervisorSummary snapshot={snapshot} onOpenAttention={openAttention} />
                 {notificationPermission === 'default' ? (
                   <footer className="flex justify-end border-t border-border/60 pt-3">
                     <Button size="xs" variant="outline" onClick={() => void requestNotifications()}>{t('opm.actions.enableNotifications')}</Button>
