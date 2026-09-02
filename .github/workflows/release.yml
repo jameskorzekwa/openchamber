@@ -125,8 +125,21 @@ jobs:
           test "$package_version" = "$base_version"
 
           expected_j2k=''
+          patch_series_source=''
+          previous_base_tag=''
           if git show-ref --verify --quiet refs/remotes/origin/j2k/current; then
             expected_j2k="$(git rev-parse refs/remotes/origin/j2k/current)"
+            patch_series_source="$expected_j2k"
+            if [[ "$patch_series_source" == "$source_commit" ]]; then
+              while IFS= read -r previous_release_tag; do
+                previous_release_commit="$(git rev-list -n 1 "$previous_release_tag")"
+                if [[ "$previous_release_commit" != "$source_commit" ]]; then
+                  patch_series_source="$previous_release_commit"
+                  break
+                fi
+              done < <(git tag --list 'v*-j2k.*' --sort=-v:refname)
+            fi
+            previous_base_tag="$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-j2k.*' --abbrev=0 "$patch_series_source")"
           fi
           highest_revision=0
           matching_tag=''
@@ -213,6 +226,15 @@ jobs:
             }
             NODE
           fi
+          BRANCH="$source_ref" COMMIT="$source_commit" SERIES_COMMIT="$patch_series_source" PREVIOUS_BASE="$previous_base_tag" node <<'NODE'
+          const { writeFileSync } = require('node:fs');
+          writeFileSync('release-trigger.json', JSON.stringify({
+            branch: process.env.BRANCH,
+            commit: process.env.COMMIT,
+            patchSeriesSourceCommit: process.env.SERIES_COMMIT || null,
+            previousBaseTag: process.env.PREVIOUS_BASE || null,
+          }));
+          NODE
           {
             printf 'source_ref=%s\n' "$source_ref"
             printf 'source_commit=%s\n' "$source_commit"
