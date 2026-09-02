@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- OpenCode plugins: the `session_workspace` lifecycle and PTY waiting-status plugins now ship from this fork. Pin the built plugin from the same release tag; plugin package `1.21.0` pairs with every `v1.21.0-j2k.*` release.
 - Mobile/OPM: the status dashboard now keeps its title and close button clear of notices, contains long text, shows task-state totals first, and presents parent and child tasks as compact expandable rows.
 - Work status: the session cost now counts what its subagents spent, with a line under the context meter splitting the session's own cost from the subagents' share, and each subagent's cost shown next to it in the Subagents list. Previously a session that delegated most of its work looked far cheaper than it was.
 - Files: opening a file over 5,000 lines is no longer blocked — the line-count guard now allows up to 20,000 lines, letting large files reach the virtualized full-file preview instead of being rejected at the open step (thanks @gaojunran).
