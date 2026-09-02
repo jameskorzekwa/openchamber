@@ -1631,15 +1631,9 @@ export const finishWorkspace = async ({
   // handoff also resumes here because the ready-check tells the owner to finish.
   const submitOptions = { sessionID, directory, serverUrl, fetchImpl, deleteLocalBranch, opmControlUrl, ghImpl, admissionTimeoutMs, admissionPollMs }
   if (state.submitting === true) return submitWorkspace(submitOptions)
-  let finishWarning = null
-  if (state.phase === "attached" && state.returnPrepared !== true && state.waitingExternal !== true && state.managedGoalID) {
-    let detection = null
-    try {
-      detection = await resolveOpmProject({ primary: state.primary, fetchImpl, opmControlUrl })
-    } catch (error) {
-      finishWarning = `Warning: ${error instanceof Error ? error.message : String(error)}; finishing with the local merge contract instead of OPM submit.`
-    }
-    if (detection?.project) return submitWorkspace(submitOptions)
+  if (state.phase === "attached" && state.returnPrepared !== true && state.managedGoalID) {
+    const detection = await resolveOpmProject({ primary: state.primary, fetchImpl, opmControlUrl })
+    if (detection.project) return submitWorkspace(submitOptions)
   }
 
   const actual = await canonicalPath(directory)
@@ -1724,7 +1718,6 @@ export const finishWorkspace = async ({
     }
     state.phase = "complete"
     state.completedAt = Date.now()
-    if (finishWarning) state.finishWarning = finishWarning
     await writeState(state)
     return state
   } finally {

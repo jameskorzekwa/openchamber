@@ -265,7 +265,7 @@ test("starts and finishes after merge", async () => {
     sessionID: currentSession,
     directory: state.worktree,
     serverUrl: new URL("http://opencode.test/"),
-    fetchImpl: api.fetchImpl,
+    ...knownUnmanaged(api.fetchImpl),
     devDeployment: { target: "http://opencode.test/dev-smoke", commit: deployedCommit },
     inspectNonproduction: successfulWorkflow,
   })
@@ -311,7 +311,7 @@ test("moves every session out of a worktree before removing it", async () => {
     sessionID: currentSession,
     directory: state.worktree,
     serverUrl: new URL("http://opencode.test/"),
-    fetchImpl: api.fetchImpl,
+    ...knownUnmanaged(api.fetchImpl),
     devDeployment: { target: "http://opencode.test/dev-smoke", commit: deployedCommit },
     inspectNonproduction: successfulWorkflow,
   })
@@ -354,7 +354,7 @@ test("preserves a worktree while another attached session is active", async () =
     sessionID: currentSession,
     directory: state.worktree,
     serverUrl: new URL("http://opencode.test/"),
-    fetchImpl: api.fetchImpl,
+    ...knownUnmanaged(api.fetchImpl),
     devDeployment: { target: "http://opencode.test/dev-smoke", commit: deployedCommit },
     inspectNonproduction: successfulWorkflow,
   }), new RegExp(`other sessions are active: ${peerSession}`))
@@ -380,7 +380,7 @@ test("preserves a worktree while another attached session is active", async () =
     sessionID: currentSession,
     directory: state.worktree,
     serverUrl: new URL("http://opencode.test/"),
-    fetchImpl: api.fetchImpl,
+    ...knownUnmanaged(api.fetchImpl),
     inspectNonproduction: successfulWorkflow,
   })
   assert.equal(await canonical(api.sessionDirectory(peerSession)), await canonical(primary))
@@ -687,7 +687,7 @@ test("refuses dirty primary and unsafe cleanup", async () => {
     sessionID: currentSession,
     directory: state.worktree,
     serverUrl: new URL("http://opencode.test/"),
-    fetchImpl: api.fetchImpl,
+    ...knownUnmanaged(api.fetchImpl),
     devDeployment: { target: "http://opencode.test/dev-smoke", commit: await git(primary, "rev-parse", "origin/main") },
     inspectNonproduction: successfulWorkflow,
   }), /not present on origin/)
@@ -720,7 +720,7 @@ test("requires dev deployment evidence before finishing a managed goal", async (
     sessionID: currentSession,
     directory: state.worktree,
     serverUrl: new URL("http://opencode.test/"),
-    fetchImpl: api.fetchImpl,
+    ...knownUnmanaged(api.fetchImpl),
   }), /dev verification URL/)
   // 69K: the deployed commit must be a trusted origin/main descendant that
   // contains the integration commit; an unrelated SHA is refused by ancestry
@@ -729,7 +729,7 @@ test("requires dev deployment evidence before finishing a managed goal", async (
     sessionID: currentSession,
     directory: state.worktree,
     serverUrl: new URL("http://opencode.test/"),
-    fetchImpl: api.fetchImpl,
+    ...knownUnmanaged(api.fetchImpl),
     devDeployment: { target: "http://opencode.test/dev-smoke", commit: "0".repeat(40) },
   }), /trusted origin\/main descendant containing integration commit/)
   // 69K: a defined deployment workflow without a successful exact-commit run
@@ -738,7 +738,7 @@ test("requires dev deployment evidence before finishing a managed goal", async (
     sessionID: currentSession,
     directory: state.worktree,
     serverUrl: new URL("http://opencode.test/"),
-    fetchImpl: api.fetchImpl,
+    ...knownUnmanaged(api.fetchImpl),
     devDeployment: { target: "http://opencode.test/dev-smoke", commit: await git(primary, "rev-parse", "origin/main") },
     inspectNonproduction: async () => ({ required: true, run: false }),
   }), /Deploy Platform Nonproduction did not complete successfully/)
@@ -749,7 +749,7 @@ test("requires dev deployment evidence before finishing a managed goal", async (
     sessionID: currentSession,
     directory: state.worktree,
     serverUrl: new URL("http://opencode.test/"),
-    fetchImpl: api.fetchImpl,
+    ...knownUnmanaged(api.fetchImpl),
     devDeployment: { target: "http://opencode.test/dev-smoke", commit: await git(primary, "rev-parse", "origin/main") },
     inspectNonproduction: successfulWorkflow,
   }), /status ok/)
@@ -782,7 +782,7 @@ test("rejects oversized dev verification responses", async () => {
     sessionID: currentSession,
     directory: state.worktree,
     serverUrl: new URL("http://opencode.test/"),
-    fetchImpl: api.fetchImpl,
+    ...knownUnmanaged(api.fetchImpl),
     devDeployment: { target: "http://opencode.test/dev-smoke", commit: deployedCommit },
     inspectNonproduction: successfulWorkflow,
   }), /exceeded the 1 MiB/)
@@ -820,7 +820,7 @@ test("removes a local branch after its exact head was squash-merged", async () =
     sessionID: currentSession,
     directory: state.worktree,
     serverUrl: new URL("http://opencode.test/"),
-    fetchImpl: api.fetchImpl,
+    ...knownUnmanaged(api.fetchImpl),
     devDeployment: { target: "http://opencode.test/dev-smoke", commit: squashCommit },
     inspectNonproduction: successfulWorkflow,
     isPullRequestMerged: async (_primary, branch, head) => {
@@ -1023,7 +1023,7 @@ test("retries managed goal completion after cleanup already succeeded", async ()
     sessionID: currentSession,
     directory: state.worktree,
     serverUrl: new URL("http://opencode.test/"),
-    fetchImpl,
+    ...knownUnmanaged(fetchImpl),
     devDeployment: { target: "http://opencode.test/dev-smoke", commit: await git(primary, "rev-parse", "origin/main") },
     inspectNonproduction: successfulWorkflow,
   }), /managed session goal/)
@@ -1079,7 +1079,7 @@ test("accepts a retry after goal completion committed but its response was lost"
     sessionID: currentSession,
     directory: state.worktree,
     serverUrl: new URL("http://opencode.test/"),
-    fetchImpl,
+    ...knownUnmanaged(fetchImpl),
     devDeployment: { target: "http://opencode.test/dev-smoke", commit: deployedCommit },
     inspectNonproduction: successfulWorkflow,
   }), /managed session goal/)
@@ -1250,6 +1250,11 @@ const withOpm = (fetchImpl, options = {}) => {
   opm.calls = (pathname) => opm.requests.filter((request) => request.pathname === pathname)
   return opm
 }
+
+const knownUnmanaged = (fetchImpl) => ({
+  fetchImpl: withOpm(fetchImpl).fetchImpl,
+  opmControlUrl: OPM_URL,
+})
 
 const flagValue = (args, flag) => {
   const index = args.indexOf(flag)
@@ -1652,7 +1657,7 @@ test("finish delegates to submit on OPM-managed repositories", async () => {
   assert.equal(await canonical(context.api.directory()), await canonical(context.primary))
 })
 
-test("finish keeps the local merge contract on unmanaged repositories and warns when detection fails", async () => {
+test("finish keeps the local merge contract on unmanaged repositories", async () => {
   const unmanaged = await startManaged({ branch: "feat/unmanaged-finish", unmanaged: true })
   assert.match(unmanaged.api.metadata().openchamber.goal.objective, /action=finish/)
   await writeFile(path.join(unmanaged.state.worktree, "u.txt"), "u\n")
@@ -1668,6 +1673,9 @@ test("finish keeps the local merge contract on unmanaged repositories and warns 
   }), /dev verification URL/)
   assert.equal(unmanaged.gh.calls.length, 0)
 
+})
+
+test("finish fails closed when OPM ownership cannot be determined", async () => {
   const { primary } = await createRepository()
   const currentSession = sessionID("detect_fail")
   sessionIDs.push(currentSession)
@@ -1681,28 +1689,30 @@ test("finish keeps the local merge contract on unmanaged repositories and warns 
     fetchImpl: opm.fetchImpl,
     opmControlUrl: OPM_URL,
   })
-  await writeFile(path.join(state.worktree, "d.txt"), "d\n")
-  await git(state.worktree, "add", "d.txt")
-  await git(state.worktree, "commit", "-m", "Detect fail")
-  await git(state.worktree, "push", "-u", "origin", "feat/detect-fail")
-  await git(primary, "fetch", "origin")
-  await git(primary, "merge", "--ff-only", "origin/feat/detect-fail")
-  await git(primary, "push", "origin", "main")
-  const deployedCommit = await git(primary, "rev-parse", "origin/main")
-  api.setDevBody(HEALTHY_DEV_BODY)
-  const finished = await finishWorkspace({
+  const persistedBeforeFinish = await readFile(__testing.statePath(currentSession), "utf8")
+  await assert.rejects(finishWorkspace({
     sessionID: currentSession,
     directory: state.worktree,
     serverUrl: OPM_SERVER,
     fetchImpl: opm.fetchImpl,
     opmControlUrl: OPM_URL,
-    devDeployment: { target: "http://opencode.test/dev-smoke", commit: deployedCommit },
-    inspectNonproduction: successfulWorkflow,
-  })
-  assert.equal(finished.phase, "complete")
-  assert.equal(finished.outcome, undefined)
-  assert.match(finished.finishWarning, /^Warning: cannot determine whether this repository is OPM-managed/)
-  assert.equal(api.metadata().openchamber.goal.statusReason, "worktree lifecycle complete")
+  }), /cannot determine whether this repository is OPM-managed/)
+  assert.equal(await readFile(__testing.statePath(currentSession), "utf8"), persistedBeforeFinish)
+  assert.equal((await __testing.readState(currentSession)).phase, "attached")
+  assert.equal(await canonical(api.directory()), await canonical(state.worktree))
+  assert.equal(api.metadata().openchamber.goal.status, "active")
+  assert.equal(
+    (await git(primary, "worktree", "list", "--porcelain")).includes(`worktree ${state.worktree}`),
+    true,
+  )
+  const recoveredDetection = withOpm(api.fetchImpl, { managed: false })
+  await assert.rejects(finishWorkspace({
+    sessionID: currentSession,
+    directory: state.worktree,
+    serverUrl: OPM_SERVER,
+    fetchImpl: recoveredDetection.fetchImpl,
+    opmControlUrl: OPM_URL,
+  }), /dev verification URL/)
 })
 
 test("start --issue claims the OPM issue before creating the worktree and seeds the goal from it", async () => {
@@ -1869,6 +1879,7 @@ test("wait and abandon keep working beside submit, which refuses to run during e
   assert.equal((await __testing.readState(currentSession)).waitingExternal, true)
   await assert.rejects(assertSessionWorkspaceReady({ sessionID: currentSession }), /external bridge wakeup/)
   await assert.rejects(submitWorkspace(submitOptions(context)), /waiting for an external wake/)
+  await assert.rejects(finishWorkspace(submitOptions(context)), /waiting for an external wake/)
   assert.equal(context.gh.calls.length, 0)
 
   assert.equal(await resumeWorkspaceFromExternalWait({ sessionID: currentSession, serverUrl: OPM_SERVER, fetchImpl: opm.fetchImpl }), true)
