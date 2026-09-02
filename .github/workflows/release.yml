@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       source_ref:
-        description: 'Validated j2k/current or j2k/vX.Y.Z branch to release'
+        description: 'Validated j2k/vX.Y.Z candidate branch to release'
         required: true
         type: string
 
@@ -36,7 +36,7 @@ jobs:
        github.workflow_ref == format('{0}/.github/workflows/release.yml@refs/heads/j2k/current', github.repository)) ||
       (github.event.workflow_run.conclusion == 'success' &&
        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') &&
-       (github.event.workflow_run.head_branch == 'j2k/current' || startsWith(github.event.workflow_run.head_branch, 'j2k/v')))
+       startsWith(github.event.workflow_run.head_branch, 'j2k/v'))
     runs-on: ubuntu-latest
     outputs:
       source_ref: ${{ steps.identity.outputs.source_ref }}
@@ -47,6 +47,9 @@ jobs:
       revision: ${{ steps.identity.outputs.revision }}
       version: ${{ steps.identity.outputs.version }}
       release_tag: ${{ steps.identity.outputs.release_tag }}
+      desktop_release_tag: ${{ steps.identity.outputs.desktop_release_tag }}
+      desktop_channel_commit: ${{ steps.identity.outputs.desktop_channel_commit }}
+      release_date: ${{ steps.identity.outputs.release_date }}
       resume: ${{ steps.identity.outputs.resume }}
     steps:
       - name: Check out repository metadata
@@ -59,6 +62,26 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
+
+      - name: Capture immutable recovery identity
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          WORKFLOW_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == 'workflow_run' ]]; then
+            branch="$WORKFLOW_HEAD_BRANCH"
+            commit="$WORKFLOW_HEAD_SHA"
+          else
+            branch="$INPUT_SOURCE_REF"
+            [[ "$branch" =~ ^j2k/v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            git fetch origin "+refs/heads/$branch:refs/remotes/origin/recovery-source"
+            commit="$(git rev-parse refs/remotes/origin/recovery-source)"
+          fi
+          BRANCH="$branch" COMMIT="$commit" node -e \
+            'require("node:fs").writeFileSync("release-trigger.json", JSON.stringify({ branch: process.env.BRANCH, commit: process.env.COMMIT }))'
 
       - name: Resolve immutable release identity
         id: identity
@@ -76,8 +99,8 @@ jobs:
             source_ref="$INPUT_SOURCE_REF"
             workflow_sha=''
           fi
-          if [[ "$source_ref" != 'j2k/current' && ! "$source_ref" =~ ^j2k/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Source ref must be j2k/current or j2k/vX.Y.Z; got $source_ref" >&2
+          if [[ ! "$source_ref" =~ ^j2k/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Source ref must be j2k/vX.Y.Z; got $source_ref" >&2
             exit 1
           fi
 
@@ -93,23 +116,11 @@ jobs:
             exit 1
           fi
 
-          if [[ "$source_ref" =~ ^j2k/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            base_version="${BASH_REMATCH[1]}"
-            upstream_tag="v$base_version"
-            git rev-parse "$upstream_tag^{commit}" >/dev/null
-            git merge-base --is-ancestor "$upstream_tag" "$source_commit"
-          else
-            upstream_tag=''
-            while IFS= read -r candidate; do
-              if [[ "$candidate" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-                && git merge-base --is-ancestor "$candidate" "$source_commit"; then
-                upstream_tag="$candidate"
-                break
-              fi
-            done < <(git tag --list 'v*' --sort=-v:refname)
-            test -n "$upstream_tag"
-            base_version="${upstream_tag#v}"
-          fi
+          [[ "$source_ref" =~ ^j2k/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]
+          base_version="${BASH_REMATCH[1]}"
+          upstream_tag="v$base_version"
+          git rev-parse "$upstream_tag^{commit}" >/dev/null
+          git merge-base --is-ancestor "$upstream_tag" "$source_commit"
           package_version="$(git show "$source_commit:packages/web/package.json" | node -p 'JSON.parse(require(`fs`).readFileSync(0, `utf8`)).version')"
           test "$package_version" = "$base_version"
 
@@ -117,11 +128,6 @@ jobs:
           if git show-ref --verify --quiet refs/remotes/origin/j2k/current; then
             expected_j2k="$(git rev-parse refs/remotes/origin/j2k/current)"
           fi
-          if [[ "$source_ref" == 'j2k/current' && "$expected_j2k" != "$source_commit" ]]; then
-            echo "Validated j2k/current SHA is no longer the remote head." >&2
-            exit 1
-          fi
-
           highest_revision=0
           matching_tag=''
           while IFS= read -r tag; do
@@ -139,9 +145,31 @@ jobs:
             fi
           done < <(git tag --list "v$base_version-j2k.*")
 
-          if [[ -n "$matching_tag" ]]; then
-            revision="${matching_tag##*.}"
-            release_tag="$matching_tag"
+          desktop_matching_tag=''
+          while IFS= read -r tag; do
+            if [[ "$tag" =~ ^desktop-v([0-9]+\.[0-9]+\.[0-9]+)-j2k\.([0-9]+)$ ]] \
+              && [[ "${BASH_REMATCH[1]}" == "$base_version" ]]; then
+              tag_revision="${BASH_REMATCH[2]}"
+              (( tag_revision > highest_revision )) && highest_revision="$tag_revision"
+              if [[ "$(git rev-list -n 1 "$tag")" == "$source_commit" ]]; then
+                if [[ -n "$desktop_matching_tag" ]]; then
+                  echo "Multiple desktop tags point to source commit $source_commit." >&2
+                  exit 1
+                fi
+                desktop_matching_tag="$tag"
+              fi
+            fi
+          done < <(git tag --list "desktop-v$base_version-j2k.*")
+
+          if [[ -n "$matching_tag" || -n "$desktop_matching_tag" ]]; then
+            web_revision="${matching_tag##*.}"
+            desktop_revision="${desktop_matching_tag##*.}"
+            revision="${web_revision:-$desktop_revision}"
+            if [[ -n "$web_revision" && -n "$desktop_revision" && "$web_revision" != "$desktop_revision" ]]; then
+              echo "Web and desktop tags assign different revisions to source $source_commit." >&2
+              exit 1
+            fi
+            release_tag="v$base_version-j2k.$revision"
             resume=true
           else
             revision=$((highest_revision + 1))
@@ -153,6 +181,38 @@ jobs:
             fi
           fi
           version="${release_tag#v}"
+          desktop_release_tag="desktop-$release_tag"
+          desktop_channel_commit="$(git ls-remote origin refs/heads/desktop-channel | cut -f1)"
+          release_date="$(git show -s --format=%cI "$source_commit")"
+          if [[ -n "$expected_j2k" && "$expected_j2k" != "$source_commit" ]]; then
+            current_upstream_tag=''
+            while IFS= read -r candidate; do
+              if [[ "$candidate" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+                && git merge-base --is-ancestor "$candidate" "$expected_j2k"; then
+                current_upstream_tag="$candidate"
+                break
+              fi
+            done < <(git tag --list 'v*' --sort=-v:refname)
+            test -n "$current_upstream_tag"
+            CURRENT_BASE="${current_upstream_tag#v}" TARGET_BASE="$base_version" \
+              CURRENT_COMMIT="$expected_j2k" TARGET_REVISION="$revision" TAGS="$(git tag --points-at "$expected_j2k" --list 'v*-j2k.*' 'desktop-v*-j2k.*')" node <<'NODE'
+            const parseBase = (value) => value.split('.').map(Number);
+            const compare = (left, right) => {
+              const a = parseBase(left);
+              const b = parseBase(right);
+              for (let index = 0; index < 3; index += 1) if (a[index] !== b[index]) return a[index] - b[index];
+              return 0;
+            };
+            const baseOrder = compare(process.env.CURRENT_BASE, process.env.TARGET_BASE);
+            const tags = process.env.TAGS.split('\n').filter(Boolean);
+            if (baseOrder === 0 && tags.length === 0) throw new Error('Current same-base commit has no authoritative web or desktop release tag');
+            const revisions = tags.map((tag) => Number(tag.match(/-j2k\.(\d+)$/)?.[1] || 0));
+            const currentRevision = Math.max(0, ...revisions);
+            if (baseOrder > 0 || (baseOrder === 0 && currentRevision > Number(process.env.TARGET_REVISION))) {
+              throw new Error(`Refusing to rewind j2k/current from ${process.env.CURRENT_BASE}-j2k.${currentRevision}`);
+            }
+            NODE
+          fi
           {
             printf 'source_ref=%s\n' "$source_ref"
             printf 'source_commit=%s\n' "$source_commit"
@@ -162,8 +222,20 @@ jobs:
             printf 'revision=%s\n' "$revision"
             printf 'version=%s\n' "$version"
             printf 'release_tag=%s\n' "$release_tag"
+            printf 'desktop_release_tag=%s\n' "$desktop_release_tag"
+            printf 'desktop_channel_commit=%s\n' "$desktop_channel_commit"
+            printf 'release_date=%s\n' "$release_date"
             printf 'resume=%s\n' "$resume"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Upload recovery identity
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-identity
+          path: release-trigger.json
+          if-no-files-found: error
+          retention-days: 7
 
   validate-release:
     needs: metadata
@@ -275,18 +347,32 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-desktop:
+    needs: metadata
+    uses: ./.github/workflows/desktop-release.yml
+    with:
+      source_ref: ${{ needs.metadata.outputs.source_ref }}
+      source_sha: ${{ needs.metadata.outputs.source_commit }}
+      base_version: ${{ needs.metadata.outputs.base_version }}
+      revision: ${{ needs.metadata.outputs.revision }}
+      release_date: ${{ needs.metadata.outputs.release_date }}
+
   publish:
     if: >-
       needs.metadata.result == 'success' &&
       needs.validate-release.result == 'success' &&
+      needs.build-desktop.result == 'success' &&
       github.workflow_ref == format('{0}/.github/workflows/release.yml@refs/heads/j2k/current', github.repository) &&
       (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/j2k/current')
     needs:
       - metadata
       - validate-release
+      - build-desktop
     runs-on: ubuntu-latest
+    environment: j2k-release
     permissions:
       contents: write
+      issues: write
     steps:
       - name: Check out trusted workflow verifier
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -299,7 +385,13 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: channel-release-${{ needs.metadata.outputs.release_tag }}
-          path: artifacts
+          path: web-artifacts
+
+      - name: Download validated desktop assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: desktop-release-${{ needs.metadata.outputs.desktop_release_tag }}
+          path: desktop-artifacts
 
       - name: Set up exact trusted Node.js runtime
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -317,7 +409,16 @@ jobs:
             --platform "${{ needs.validate-release.outputs.platform }}" \
             --arch "${{ needs.validate-release.outputs.arch }}" \
             --node-abi "${{ needs.validate-release.outputs.node_abi }}" \
-            --output-dir artifacts
+            --output-dir web-artifacts
+          opencode_version="$(node -p 'require(`./trusted/package.json`).dependencies[`@opencode-ai/sdk`]')"
+          electron_version="$(node -p 'require(`./trusted/packages/electron/package.json`).devDependencies.electron.replace(/^\D+/, ``)')"
+          node trusted/tools/desktop-release/desktop-release.mjs verify-release \
+            --base-version '${{ needs.metadata.outputs.base_version }}' \
+            --revision '${{ needs.metadata.outputs.revision }}' \
+            --source-commit '${{ needs.metadata.outputs.source_commit }}' \
+            --electron-version "$electron_version" --opencode-version "$opencode_version" \
+            --certificate-sha256 '${{ secrets.MACOS_PRIVATE_CERTIFICATE_SHA256 }}' \
+            --output-dir desktop-artifacts
 
       - name: Publish exact refs and immutable release assets
         env:
@@ -330,6 +431,8 @@ jobs:
           REVISION: ${{ needs.metadata.outputs.revision }}
           VERSION: ${{ needs.metadata.outputs.version }}
           RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
+          DESKTOP_RELEASE_TAG: ${{ needs.metadata.outputs.desktop_release_tag }}
+          EXPECTED_DESKTOP_CHANNEL: ${{ needs.metadata.outputs.desktop_channel_commit }}
         run: |
           set -euo pipefail
           repo="$RUNNER_TEMP/release-repository"
@@ -344,11 +447,29 @@ jobs:
           if [[ -n "$current_j2k" ]]; then
             git -C "$repo" fetch --no-tags origin "+refs/heads/j2k/current:refs/remotes/origin/j2k-current"
           fi
-          if [[ "$SOURCE_REF" == 'j2k/current' ]]; then
-            test "$current_j2k" = "$SOURCE_COMMIT"
-          elif [[ "$current_j2k" != "$EXPECTED_J2K" && "$current_j2k" != "$SOURCE_COMMIT" ]]; then
+          if [[ "$current_j2k" != "$EXPECTED_J2K" && "$current_j2k" != "$SOURCE_COMMIT" ]]; then
             echo "j2k moved from $EXPECTED_J2K to unrelated commit $current_j2k during validation." >&2
             exit 1
+          fi
+          current_channel="$(git -C "$repo" ls-remote origin refs/heads/desktop-channel | cut -f1)"
+          test "$current_channel" = "$EXPECTED_DESKTOP_CHANNEL"
+          if [[ -n "$current_channel" ]]; then
+            git -C "$repo" fetch --no-tags origin '+refs/heads/desktop-channel:refs/remotes/origin/desktop-channel'
+            git -C "$repo" show "$current_channel:latest-mac.yml" > "$RUNNER_TEMP/current-latest-mac.yml"
+            current_desktop_version="$(awk '/^version:/ { print $2; exit }' "$RUNNER_TEMP/current-latest-mac.yml")"
+            CURRENT_VERSION="$current_desktop_version" TARGET_VERSION="$VERSION" node <<'NODE'
+            const parse = (value) => {
+              const match = value.match(/^(\d+)\.(\d+)\.(\d+)-j2k\.(\d+)$/);
+              if (!match) throw new Error(`Invalid desktop channel version ${value}`);
+              return match.slice(1).map(Number);
+            };
+            const current = parse(process.env.CURRENT_VERSION);
+            const target = parse(process.env.TARGET_VERSION);
+            for (let index = 0; index < 4; index += 1) {
+              if (current[index] < target[index]) break;
+              if (current[index] > target[index]) throw new Error(`Refusing to rewind desktop-channel from ${process.env.CURRENT_VERSION}`);
+            }
+            NODE
           fi
 
           tag_commit="$(git -C "$repo" ls-remote origin "refs/tags/$RELEASE_TAG^{}" | cut -f1)"
@@ -359,18 +480,19 @@ jobs:
             echo "Release tag $RELEASE_TAG points to different commit $tag_commit." >&2
             exit 1
           fi
+          desktop_tag_commit="$(git -C "$repo" ls-remote origin "refs/tags/$DESKTOP_RELEASE_TAG^{}" | cut -f1)"
+          [[ -n "$desktop_tag_commit" ]] || desktop_tag_commit="$(git -C "$repo" ls-remote origin "refs/tags/$DESKTOP_RELEASE_TAG" | cut -f1)"
+          if [[ -n "$desktop_tag_commit" && "$desktop_tag_commit" != "$SOURCE_COMMIT" ]]; then
+            echo "Desktop tag $DESKTOP_RELEASE_TAG points to different commit $desktop_tag_commit." >&2
+            exit 1
+          fi
 
           git -C "$repo" config user.name github-actions[bot]
           git -C "$repo" config user.email 41898282+github-actions[bot]@users.noreply.github.com
           source_refspec="refs/remotes/origin/source:refs/heads/$SOURCE_REF"
           refs=("$source_refspec")
           push_options=(--atomic "--force-with-lease=refs/heads/$SOURCE_REF:$SOURCE_COMMIT")
-          preserve_current=false
-          if [[ -n "$current_j2k" && "$current_j2k" != "$SOURCE_COMMIT" ]] \
-            && git -C "$repo" merge-base --is-ancestor "$SOURCE_COMMIT" refs/remotes/origin/j2k-current; then
-            preserve_current=true
-          fi
-          if [[ "$current_j2k" != "$SOURCE_COMMIT" && "$preserve_current" != 'true' ]]; then
+          if [[ "$current_j2k" != "$SOURCE_COMMIT" ]]; then
             git -C "$repo" update-ref refs/heads/release-source "$SOURCE_COMMIT"
             refs+=('refs/heads/release-source:refs/heads/j2k/current')
             if [[ -n "$current_j2k" ]]; then
@@ -382,6 +504,10 @@ jobs:
           if [[ -z "$tag_commit" ]]; then
             git -C "$repo" tag --annotate "$RELEASE_TAG" "$SOURCE_COMMIT" --message "OpenChamber validated channel $RELEASE_TAG"
             refs+=("refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG")
+          fi
+          if [[ -z "$desktop_tag_commit" ]]; then
+            git -C "$repo" tag --annotate "$DESKTOP_RELEASE_TAG" "$SOURCE_COMMIT" --message "OpenChamber desktop $DESKTOP_RELEASE_TAG"
+            refs+=("refs/tags/$DESKTOP_RELEASE_TAG:refs/tags/$DESKTOP_RELEASE_TAG")
           fi
           git -C "$repo" push "${push_options[@]}" origin "${refs[@]}"
 
@@ -430,7 +556,7 @@ jobs:
               existing="$RUNNER_TEMP/existing-$asset"
               gh api "repos/${{ github.repository }}/releases/assets/$asset_id" \
                 -H 'Accept: application/octet-stream' > "$existing"
-              if ! cmp -s "$existing" "artifacts/$asset"; then
+              if ! cmp -s "$existing" "web-artifacts/$asset"; then
                 echo "Existing release asset $asset differs; refusing to overwrite it." >&2
                 exit 1
               fi
@@ -439,7 +565,7 @@ jobs:
                 echo "Published release is missing $asset; refusing to mutate it." >&2
                 exit 1
               fi
-              gh release upload "$RELEASE_TAG" "artifacts/$asset" --repo "${{ github.repository }}"
+              gh release upload "$RELEASE_TAG" "web-artifacts/$asset" --repo "${{ github.repository }}"
             fi
           done
 
@@ -451,16 +577,131 @@ jobs:
           const assets = release.assets.map((asset) => asset.name).sort();
           if (JSON.stringify(assets) !== JSON.stringify(expected)) throw new Error(`Unexpected release assets: ${assets.join(', ')}`);
           for (const asset of release.assets) {
-            const expectedSize = statSync(`artifacts/${asset.name}`).size;
+            const expectedSize = statSync(`web-artifacts/${asset.name}`).size;
             if (!Number.isSafeInteger(asset.size) || asset.size !== expectedSize) {
               throw new Error(`Release asset ${asset.name} size ${asset.size} differs from ${expectedSize}`);
             }
           }
           NODE
+
+          releases="$(gh api --paginate "repos/${{ github.repository }}/releases?per_page=100" --slurp)"
+          desktop_release_json="$(RELEASES="$releases" RELEASE_TAG="$DESKTOP_RELEASE_TAG" node <<'NODE'
+          const matches = JSON.parse(process.env.RELEASES).flat().filter((release) => release.tag_name === process.env.RELEASE_TAG);
+          if (matches.length > 1) throw new Error(`Multiple releases use ${process.env.RELEASE_TAG}`);
+          if (matches[0]) process.stdout.write(JSON.stringify(matches[0]));
+          NODE
+          )"
+          if [[ -z "$desktop_release_json" ]]; then
+            desktop_release_json="$(gh api --method POST "repos/${{ github.repository }}/releases" \
+              -f tag_name="$DESKTOP_RELEASE_TAG" -f target_commitish="$SOURCE_COMMIT" \
+              -f name="OpenChamber Desktop $VERSION" \
+              -f body="Privately signed OpenChamber Desktop arm64 build from $SOURCE_COMMIT. This build is not Apple-notarized." \
+              -F draft=true -F prerelease=true -f make_latest=false)"
+          fi
+          DESKTOP_RELEASE_JSON="$desktop_release_json" SOURCE_COMMIT="$SOURCE_COMMIT" VERSION="$VERSION" DESKTOP_RELEASE_TAG="$DESKTOP_RELEASE_TAG" node <<'NODE'
+          const release = JSON.parse(process.env.DESKTOP_RELEASE_JSON);
+          if (release.tag_name !== process.env.DESKTOP_RELEASE_TAG || release.target_commitish !== process.env.SOURCE_COMMIT) throw new Error('Desktop release source identity differs');
+          if (!release.prerelease) throw new Error('Desktop release must remain a prerelease');
+          const expected = new Set([
+            `OpenChamber-${process.env.VERSION}-mac-arm64.dmg`,
+            `OpenChamber-${process.env.VERSION}-mac-arm64.zip`,
+            `OpenChamber-${process.env.VERSION}-mac-arm64.zip.blockmap`,
+            'latest-mac.yml', 'SHA256SUMS', 'desktop-release.json',
+          ]);
+          for (const asset of release.assets) if (!expected.has(asset.name)) throw new Error(`Unexpected desktop release asset ${asset.name}`);
+          NODE
+          desktop_release_id="$(DESKTOP_RELEASE_JSON="$desktop_release_json" node -p 'JSON.parse(process.env.DESKTOP_RELEASE_JSON).id')"
+          desktop_release_draft="$(DESKTOP_RELEASE_JSON="$desktop_release_json" node -p 'JSON.parse(process.env.DESKTOP_RELEASE_JSON).draft')"
+          for asset in "OpenChamber-$VERSION-mac-arm64.dmg" "OpenChamber-$VERSION-mac-arm64.zip" \
+            "OpenChamber-$VERSION-mac-arm64.zip.blockmap" latest-mac.yml SHA256SUMS desktop-release.json; do
+            asset_id="$(DESKTOP_RELEASE_JSON="$desktop_release_json" ASSET="$asset" node -p 'JSON.parse(process.env.DESKTOP_RELEASE_JSON).assets.find((item) => item.name === process.env.ASSET)?.id || ``')"
+            if [[ -n "$asset_id" ]]; then
+              existing="$RUNNER_TEMP/existing-desktop-$asset"
+              gh api "repos/${{ github.repository }}/releases/assets/$asset_id" -H 'Accept: application/octet-stream' > "$existing"
+              cmp -s "$existing" "desktop-artifacts/$asset" || { echo "Existing desktop asset $asset differs; refusing overwrite." >&2; exit 1; }
+            else
+              [[ "$desktop_release_draft" == true ]] || { echo "Published desktop release is missing $asset; refusing mutation." >&2; exit 1; }
+              gh release upload "$DESKTOP_RELEASE_TAG" "desktop-artifacts/$asset" --repo "${{ github.repository }}"
+            fi
+          done
+          desktop_release_json="$(gh api "repos/${{ github.repository }}/releases/$desktop_release_id")"
+          DESKTOP_RELEASE_JSON="$desktop_release_json" VERSION="$VERSION" node <<'NODE'
+          const { statSync } = require('node:fs');
+          const release = JSON.parse(process.env.DESKTOP_RELEASE_JSON);
+          const expected = [
+            `OpenChamber-${process.env.VERSION}-mac-arm64.dmg`,
+            `OpenChamber-${process.env.VERSION}-mac-arm64.zip`,
+            `OpenChamber-${process.env.VERSION}-mac-arm64.zip.blockmap`,
+            'latest-mac.yml', 'SHA256SUMS', 'desktop-release.json',
+          ].sort();
+          const actual = release.assets.map((asset) => asset.name).sort();
+          if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Desktop release inventory differs: ${actual.join(', ')}`);
+          for (const asset of release.assets) {
+            if (asset.size !== statSync(`desktop-artifacts/${asset.name}`).size) throw new Error(`${asset.name} size differs after upload`);
+          }
+          NODE
+
+          for asset in "openchamber-web-$VERSION.tgz" SHA256SUMS channel.json; do
+            asset_id="$(RELEASE_JSON="$release_json" ASSET="$asset" node -p 'JSON.parse(process.env.RELEASE_JSON).assets.find((item) => item.name === process.env.ASSET).id')"
+            remote="$RUNNER_TEMP/uploaded-web-$asset"
+            gh api "repos/${{ github.repository }}/releases/assets/$asset_id" -H 'Accept: application/octet-stream' > "$remote"
+            cmp -s "$remote" "web-artifacts/$asset" || { echo "Uploaded web asset $asset differs from validated bytes." >&2; exit 1; }
+          done
+          for asset in "OpenChamber-$VERSION-mac-arm64.dmg" "OpenChamber-$VERSION-mac-arm64.zip" \
+            "OpenChamber-$VERSION-mac-arm64.zip.blockmap" latest-mac.yml SHA256SUMS desktop-release.json; do
+            asset_id="$(DESKTOP_RELEASE_JSON="$desktop_release_json" ASSET="$asset" node -p 'JSON.parse(process.env.DESKTOP_RELEASE_JSON).assets.find((item) => item.name === process.env.ASSET).id')"
+            remote="$RUNNER_TEMP/uploaded-desktop-$asset"
+            gh api "repos/${{ github.repository }}/releases/assets/$asset_id" -H 'Accept: application/octet-stream' > "$remote"
+            cmp -s "$remote" "desktop-artifacts/$asset" || { echo "Uploaded desktop asset $asset differs from validated bytes." >&2; exit 1; }
+          done
+
+          test "$(git -C "$repo" ls-remote origin "refs/heads/$SOURCE_REF" | cut -f1)" = "$SOURCE_COMMIT"
+          test "$(git -C "$repo" ls-remote origin refs/heads/j2k/current | cut -f1)" = "$SOURCE_COMMIT"
+          final_web_tag="$(git -C "$repo" ls-remote origin "refs/tags/$RELEASE_TAG^{}" | cut -f1)"
+          [[ -n "$final_web_tag" ]] || final_web_tag="$(git -C "$repo" ls-remote origin "refs/tags/$RELEASE_TAG" | cut -f1)"
+          final_desktop_tag="$(git -C "$repo" ls-remote origin "refs/tags/$DESKTOP_RELEASE_TAG^{}" | cut -f1)"
+          [[ -n "$final_desktop_tag" ]] || final_desktop_tag="$(git -C "$repo" ls-remote origin "refs/tags/$DESKTOP_RELEASE_TAG" | cut -f1)"
+          test "$final_web_tag" = "$SOURCE_COMMIT"
+          test "$final_desktop_tag" = "$SOURCE_COMMIT"
+
+          if [[ "$desktop_release_draft" == true ]]; then
+            gh api --method PATCH "repos/${{ github.repository }}/releases/$desktop_release_id" \
+              -F draft=false -F prerelease=true -f make_latest=false >/dev/null
+          fi
           if [[ "$(RELEASE_JSON="$release_json" node -p 'JSON.parse(process.env.RELEASE_JSON).draft')" == 'true' ]]; then
-            git -C "$repo" push --atomic \
-              "--force-with-lease=refs/heads/$SOURCE_REF:$SOURCE_COMMIT" \
-              origin "$source_refspec"
             gh api --method PATCH "repos/${{ github.repository }}/releases/$release_id" \
               -F draft=false -F prerelease=false -f make_latest=true >/dev/null
+          fi
+
+          current_channel="$(git -C "$repo" ls-remote origin refs/heads/desktop-channel | cut -f1)"
+          test "$current_channel" = "$EXPECTED_DESKTOP_CHANNEL"
+          if [[ -n "$current_channel" ]]; then
+            git -C "$repo" fetch --no-tags origin '+refs/heads/desktop-channel:refs/remotes/origin/desktop-channel'
+            test "$(git -C "$repo" rev-parse refs/remotes/origin/desktop-channel)" = "$current_channel"
+          fi
+          manifest_blob="$(git -C "$repo" hash-object -w "${GITHUB_WORKSPACE}/desktop-artifacts/latest-mac.yml")"
+          tree="$(printf '100644 blob %s\tlatest-mac.yml\n' "$manifest_blob" | git -C "$repo" mktree)"
+          if [[ -n "$current_channel" ]]; then
+            channel_commit="$(printf 'Desktop channel %s\n' "$DESKTOP_RELEASE_TAG" | git -C "$repo" commit-tree "$tree" -p "$current_channel")"
+          else
+            channel_commit="$(printf 'Desktop channel %s\n' "$DESKTOP_RELEASE_TAG" | git -C "$repo" commit-tree "$tree")"
+          fi
+          git -C "$repo" update-ref refs/heads/desktop-channel "$channel_commit"
+          git -C "$repo" push "--force-with-lease=refs/heads/desktop-channel:$EXPECTED_DESKTOP_CHANNEL" \
+            origin refs/heads/desktop-channel:refs/heads/desktop-channel
+
+          web_state="$(gh api "repos/${{ github.repository }}/releases/$release_id")"
+          desktop_state="$(gh api "repos/${{ github.repository }}/releases/$desktop_release_id")"
+          WEB_STATE="$web_state" DESKTOP_STATE="$desktop_state" SOURCE_COMMIT="$SOURCE_COMMIT" node <<'NODE'
+          const web = JSON.parse(process.env.WEB_STATE);
+          const desktop = JSON.parse(process.env.DESKTOP_STATE);
+          if (web.draft || web.prerelease || web.target_commitish !== process.env.SOURCE_COMMIT) throw new Error('Published web release identity differs');
+          if (desktop.draft || !desktop.prerelease || desktop.target_commitish !== process.env.SOURCE_COMMIT) throw new Error('Published desktop release identity differs');
+          NODE
+          recovery_title="OPM recovery: $SOURCE_REF"
+          recovery_issue="$(gh issue list --repo "${{ github.repository }}" --state open --search "in:title $recovery_title" \
+            --json number,title --jq "map(select(.title == \"$recovery_title\")) | first | .number // empty")"
+          if [[ -n "$recovery_issue" ]]; then
+            gh issue close "$recovery_issue" --repo "${{ github.repository }}" \
+              --comment "Recovery completed at exact source \`$SOURCE_COMMIT\`; both \`$RELEASE_TAG\` and \`$DESKTOP_RELEASE_TAG\` are published."
           fi

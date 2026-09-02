@@ -82,6 +82,7 @@ const main = () => {
   const sourceCommit = required(options, 'source-commit');
   const opencodeVersion = required(options, 'opencode-version');
   const unsigned = options.unsigned === 'true';
+  const skipCliExecution = options['skip-cli-execution'] === 'true';
   const contents = join(appPath, 'Contents');
   const resources = join(contents, 'Resources');
   const infoPlist = join(contents, 'Info.plist');
@@ -98,8 +99,10 @@ const main = () => {
 
   const cli = join(resources, 'opencode-cli', 'opencode');
   architecture(cli);
-  const cliVersion = run(cli, ['--version']).stdout.trim().split(/\s+/)[0];
-  if (cliVersion !== opencodeVersion) fail(`Bundled OpenCode CLI version ${cliVersion} differs from ${opencodeVersion}`);
+  if (!skipCliExecution) {
+    const cliVersion = run(cli, ['--version']).stdout.trim().split(/\s+/)[0];
+    if (cliVersion !== opencodeVersion) fail(`Bundled OpenCode CLI version ${cliVersion} differs from ${opencodeVersion}`);
+  }
 
   const nativeModules = visit(resources, (path) => path.endsWith('.node')
     && (!path.includes('/prebuilds/') || path.includes('/prebuilds/darwin-arm64/')));
