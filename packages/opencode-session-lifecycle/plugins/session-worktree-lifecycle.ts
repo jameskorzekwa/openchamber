@@ -130,7 +130,7 @@ export const SessionWorktreeLifecycle: Plugin = async ({ serverUrl }) => {
           removedWorktree: state.worktree,
           instruction: "Stop this turn. The next turn will run from the primary checkout.",
         })
-        return state.finishWarning ? `${state.finishWarning}\n${result}` : result
+        return result
       },
       }),
     },
