@@ -20,7 +20,11 @@ defaults:
 
 jobs:
   sync:
+    if: >-
+      github.ref == 'refs/heads/j2k/current' &&
+      github.workflow_ref == format('{0}/.github/workflows/sync-upstream.yml@refs/heads/j2k/current', github.repository)
     runs-on: ubuntu-latest
+    environment: j2k-release
     timeout-minutes: 20
     steps:
       - name: Check out fork
@@ -56,6 +60,7 @@ jobs:
         id: rebase
         env:
           GH_TOKEN: ${{ github.token }}
+          OPM_RECOVERY_GITHUB_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
         run: |
           set -euo pipefail
           latest_tag=''
@@ -125,22 +130,65 @@ jobs:
 
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          series_commit="$(git rev-parse "$series_ref^{commit}")"
+          upstream_commit="$(git rev-parse "$latest_tag^{commit}")"
           git switch --create "$branch" "$series_ref"
           if ! git rebase --onto "$latest_tag" "$current_tag"; then
             conflicts="$(git diff --name-only --diff-filter=U)"
             status="$(git status --short)"
+            failed_patch="$(git rev-parse REBASE_HEAD)"
             git rebase --abort
-            git push origin "$series_ref:refs/heads/$branch"
-            title="Rebase conflict: patch series vs $latest_tag"
+            git push origin "$series_commit:refs/heads/$branch"
+            if [[ -z "$OPM_RECOVERY_GITHUB_TOKEN" ]]; then
+              echo 'OPM_RECOVERY_GITHUB_TOKEN is required to create an owner-authored recovery issue.' >&2
+              exit 1
+            fi
+            recovery="$RUNNER_TEMP/upstream-recovery.json"
             body="$RUNNER_TEMP/rebase-conflict.md"
-            {
-              printf 'The scheduled rebase from `%s` onto `%s` stopped on conflicts.\n\n' "$current_tag" "$latest_tag"
-              printf 'A recovery branch was created at `%s`; resolve and rebase it without rewriting `main`.\n\n' "$branch"
-              printf '## Conflicting files\n\n```text\n%s\n```\n\n' "${conflicts:-<none reported>}"
-              printf '## Rebase status\n\n```text\n%s\n```\n' "${status:-<empty>}"
-            } > "$body"
-            if [[ "$(gh issue list --state open --search "in:title $title" --json title --jq "map(select(.title == \"$title\")) | length")" == 0 ]]; then
-              gh issue create --title "$title" --body-file "$body"
+            title_file="$RUNNER_TEMP/rebase-conflict-title"
+            UPSTREAM_COMMIT="$upstream_commit" UPSTREAM_TAG="$latest_tag" PREVIOUS_BASE="$current_tag" \
+              SERIES_COMMIT="$series_commit" BRANCH="$branch" FAILED_PATCH="$failed_patch" \
+              CONFLICTS="$conflicts" STATUS="$status" WORKFLOW_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              RECOVERY="$recovery" node <<'NODE'
+            const { writeFileSync } = require('node:fs');
+            const conflicts = process.env.CONFLICTS.split('\n').filter(Boolean);
+            writeFileSync(process.env.RECOVERY, JSON.stringify({
+              failureKind: 'rebase-conflict',
+              upstreamRepository: 'openchamber/openchamber',
+              upstreamTag: process.env.UPSTREAM_TAG,
+              upstreamCommit: process.env.UPSTREAM_COMMIT,
+              previousBaseTag: process.env.PREVIOUS_BASE,
+              patchSeriesSourceCommit: process.env.SERIES_COMMIT,
+              candidateBranch: process.env.BRANCH,
+              failedPatchCommit: process.env.FAILED_PATCH,
+              conflictingFiles: conflicts,
+              logs: process.env.STATUS,
+              workflowUrl: process.env.WORKFLOW_URL,
+              recreateCommands: [
+                'git fetch origin j2k/current ' + process.env.BRANCH,
+                'git fetch https://github.com/openchamber/openchamber.git ' + process.env.UPSTREAM_TAG,
+                'git switch --force-create ' + process.env.BRANCH + ' ' + process.env.SERIES_COMMIT,
+                'git rebase --onto ' + process.env.UPSTREAM_TAG + ' ' + process.env.PREVIOUS_BASE,
+              ],
+            }, null, 2));
+            NODE
+            node tools/desktop-release/upstream-recovery.mjs --input "$recovery" --body "$body" --title "$title_file"
+            title="$(<"$title_file")"
+
+            export GH_TOKEN="$OPM_RECOVERY_GITHUB_TOKEN"
+            owner_login="$(gh api user --jq '.login')"
+            owner_id="$(gh api user --jq '.id')"
+            if [[ "$owner_id" != '38769771' ]]; then
+              echo "OPM recovery token belongs to $owner_login ($owner_id), not configured owner github:38769771." >&2
+              exit 1
+            fi
+            issue_number="$(gh issue list --repo "${{ github.repository }}" --state open --search "in:title $title" \
+              --json number,title,author --jq "map(select(.title == \"$title\" and .author.login == \"$owner_login\")) | first | .number // empty")"
+            if [[ -z "$issue_number" ]]; then
+              gh issue create --repo "${{ github.repository }}" --title "$title" --body-file "$body" --label opm:ready
+            else
+              gh issue edit "$issue_number" --repo "${{ github.repository }}" --body-file "$body" --add-label opm:ready
+              gh issue reopen "$issue_number" --repo "${{ github.repository }}" 2>/dev/null || true
             fi
             exit 1
           fi

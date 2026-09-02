@@ -140,12 +140,20 @@ jobs:
       startsWith(github.ref_name, 'j2k/v')
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
-      issues: write
+      issues: read
     steps:
-      - name: Create, update, or close validation issue
+      - name: Check out trusted recovery renderer
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Defer failure recovery to trusted workflow-run handler
         env:
           GH_TOKEN: ${{ github.token }}
+          OPM_RECOVERY_GITHUB_TOKEN: ''
           BRANCH: ${{ github.ref_name }}
           SOURCE_COMMIT: ${{ github.sha }}
           RESULT: ${{ needs.validate.result }}
@@ -156,30 +164,87 @@ jobs:
             echo "Ignoring non-release branch $BRANCH."
             exit 0
           fi
-          title="Validation failed: $BRANCH"
-          issue_number="$(gh issue list --repo "${{ github.repository }}" --state all \
-            --search "in:title $title" --json number,title \
-            --jq "map(select(.title == \"$title\")) | first | .number // empty")"
           if [[ "$RESULT" == 'success' ]]; then
-            if [[ -n "$issue_number" ]]; then
-              state="$(gh issue view "$issue_number" --repo "${{ github.repository }}" --json state --jq .state)"
-              if [[ "$state" == 'OPEN' ]]; then
-                gh issue close "$issue_number" --repo "${{ github.repository }}" \
-                  --comment "Validation passed for exact commit \`$SOURCE_COMMIT\`: $RUN_URL"
-              fi
-            fi
             exit 0
           fi
 
+          if [[ -z "$OPM_RECOVERY_GITHUB_TOKEN" ]]; then
+            echo 'OPM_RECOVERY_GITHUB_TOKEN is required to create an owner-authored recovery issue.' >&2
+            exit 1
+          fi
+          git init recovery-repository
+          git -C recovery-repository remote add origin "https://github.com/${{ github.repository }}.git"
+          git -C recovery-repository remote add upstream https://github.com/openchamber/openchamber.git
+          git -C recovery-repository fetch --no-tags origin \
+            "+refs/heads/$BRANCH:refs/remotes/origin/candidate" \
+            '+refs/heads/j2k/current:refs/remotes/origin/current'
+          git -C recovery-repository fetch --tags upstream main
+          test "$(git -C recovery-repository rev-parse refs/remotes/origin/candidate)" = "$SOURCE_COMMIT"
+          upstream_tag="v${BRANCH#j2k/v}"
+          upstream_commit="$(git -C recovery-repository rev-parse "$upstream_tag^{commit}")"
+          series_commit="$(git -C recovery-repository rev-parse refs/remotes/origin/current)"
+          previous_base="$(git -C recovery-repository describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-j2k.*' --abbrev=0 "$series_commit")"
+
+          jobs="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100")"
+          failed_steps="$(JOBS="$jobs" node -e '
+            const jobs = JSON.parse(process.env.JOBS).jobs;
+            const names = jobs.flatMap((job) => job.steps || []).filter((step) => step.conclusion === "failure").map((step) => step.name);
+            process.stdout.write(names.join(", "));
+          ')"
+          case "$failed_steps" in
+            *'Install locked dependencies'*) failed_command='bun install --frozen-lockfile' ;;
+            *Typecheck*) failed_command='bun run type-check' ;;
+            *Lint*) failed_command='bun run lint' ;;
+            *Test*) failed_command='bun run test' ;;
+            *Build*) failed_command='bun run build' ;;
+            *'Pack and validate relocatable web artifact'*) failed_command='node tools/channel-release/channel-release.mjs pack-package && node tools/channel-release/channel-release.mjs verify-package' ;;
+            *'Smoke installed web artifact'*) failed_command='node tools/channel-release/smoke-installed-package.mjs' ;;
+            *) failed_command="J2K Validate failed step: ${failed_steps:-unknown}" ;;
+          esac
+          logs="$(gh run view "${{ github.run_id }}" --repo "${{ github.repository }}" --log-failed 2>&1)"
+          logs="${logs:0:60000}"
+          recovery="$RUNNER_TEMP/upstream-recovery.json"
           body="$RUNNER_TEMP/validation-failure.md"
-          printf 'Validation for `%s` failed at exact commit `%s`.\n\nRun: %s\n\nFix this branch and push it, or rerun **J2K Sync Upstream** to redispatch validation of the unchanged stranded commit.\n' \
-            "$BRANCH" "$SOURCE_COMMIT" "$RUN_URL" > "$body"
+          title_file="$RUNNER_TEMP/validation-failure-title"
+          UPSTREAM_TAG="$upstream_tag" UPSTREAM_COMMIT="$upstream_commit" PREVIOUS_BASE="$previous_base" \
+            SERIES_COMMIT="$series_commit" BRANCH="$BRANCH" SOURCE_COMMIT="$SOURCE_COMMIT" \
+            FAILED_COMMAND="$failed_command" LOGS="$logs" RUN_URL="$RUN_URL" RECOVERY="$recovery" node <<'NODE'
+          const { writeFileSync } = require('node:fs');
+          writeFileSync(process.env.RECOVERY, JSON.stringify({
+            failureKind: 'semantic-failure',
+            upstreamRepository: 'openchamber/openchamber',
+            upstreamTag: process.env.UPSTREAM_TAG,
+            upstreamCommit: process.env.UPSTREAM_COMMIT,
+            previousBaseTag: process.env.PREVIOUS_BASE,
+            patchSeriesSourceCommit: process.env.SERIES_COMMIT,
+            candidateBranch: process.env.BRANCH,
+            candidateCommit: process.env.SOURCE_COMMIT,
+            failedCommand: process.env.FAILED_COMMAND,
+            logs: process.env.LOGS,
+            workflowUrl: process.env.RUN_URL,
+            recreateCommands: [
+              'git fetch origin j2k/current ' + process.env.BRANCH,
+              'git switch --force-create ' + process.env.BRANCH + ' ' + process.env.SOURCE_COMMIT,
+              process.env.FAILED_COMMAND,
+            ],
+          }, null, 2));
+          NODE
+          node tools/desktop-release/upstream-recovery.mjs --input "$recovery" --body "$body" --title "$title_file"
+          title="$(<"$title_file")"
+
+          export GH_TOKEN="$OPM_RECOVERY_GITHUB_TOKEN"
+          owner_login="$(gh api user --jq '.login')"
+          owner_id="$(gh api user --jq '.id')"
+          test "$owner_id" = '38769771'
+          issue_number="$(gh issue list --repo "${{ github.repository }}" --state all --search "in:title $title" \
+            --json number,title,author --jq "map(select(.title == \"$title\" and .author.login == \"$owner_login\")) | first | .number // empty")"
           if [[ -z "$issue_number" ]]; then
-            gh issue create --repo "${{ github.repository }}" --title "$title" --body-file "$body"
+            gh issue create --repo "${{ github.repository }}" --title "$title" --body-file "$body" --label opm:ready
           else
             gh issue edit "$issue_number" --repo "${{ github.repository }}" --body-file "$body"
             state="$(gh issue view "$issue_number" --repo "${{ github.repository }}" --json state --jq .state)"
             if [[ "$state" != 'OPEN' ]]; then
               gh issue reopen "$issue_number" --repo "${{ github.repository }}"
             fi
+            gh issue edit "$issue_number" --repo "${{ github.repository }}" --add-label opm:ready
           fi
