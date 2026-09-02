@@ -76,6 +76,19 @@
         "*.{js,cjs,mjs,ts}",
         "scripts/**/*.{js,cjs,mjs,ts}"
       ]
+    },
+    "packages/opencode-session-lifecycle": {
+      "entry": [
+        "index.ts",
+        "scripts/*.mjs",
+        "tests/*.test.mjs"
+      ],
+      "project": [
+        "lib/*.mjs",
+        "plugins/*.ts",
+        "scripts/*.mjs",
+        "tests/*.test.mjs"
+      ]
     }
   }
 }
