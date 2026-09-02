@@ -394,8 +394,14 @@ jobs:
               printf '%s\n' "$error_text" >&2
               exit 1
             fi
-            releases_json="$(gh api "repos/${{ github.repository }}/releases?per_page=100")"
-            release_json="$(RELEASES_JSON="$releases_json" RELEASE_TAG="$RELEASE_TAG" node -e 'const matches = JSON.parse(process.env.RELEASES_JSON).filter((release) => release.tag_name === process.env.RELEASE_TAG); if (matches.length > 1) throw new Error(`Multiple GitHub Releases use tag ${process.env.RELEASE_TAG}`); if (matches.length === 1) process.stdout.write(JSON.stringify(matches[0]));')"
+            # The full releases listing (100 releases with bodies) exceeds the
+            # kernel argument/environment limit when passed as an env var, which
+            # failed every publish after v1.21.0-j2k.14 with "Argument list too
+            # long". Read it from a file instead; drafts are included here,
+            # unlike the releases/tags endpoint.
+            releases_file="$RUNNER_TEMP/releases.json"
+            gh api "repos/${{ github.repository }}/releases?per_page=100" > "$releases_file"
+            release_json="$(RELEASES_FILE="$releases_file" RELEASE_TAG="$RELEASE_TAG" node -e 'const fs = require("node:fs"); const matches = JSON.parse(fs.readFileSync(process.env.RELEASES_FILE, "utf8")).filter((release) => release.tag_name === process.env.RELEASE_TAG); if (matches.length > 1) throw new Error(`Multiple GitHub Releases use tag ${process.env.RELEASE_TAG}`); if (matches.length === 1) process.stdout.write(JSON.stringify(matches[0]));')"
             if [[ -z "$release_json" ]]; then
               notes="Validated OpenChamber channel build $VERSION. Upstream base: $UPSTREAM_TAG. Source commit: $SOURCE_COMMIT. OpenCode lifecycle plugin package $BASE_VERSION must be built from this exact release tag."
               release_json="$(gh api --method POST "repos/${{ github.repository }}/releases" \
