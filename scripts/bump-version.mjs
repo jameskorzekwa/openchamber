@@ -14,6 +14,7 @@ export const RELEASE_PACKAGE_FILES = [
   'packages/ui/package.json',
   'packages/web/package.json',
   'packages/sdk/package.json',
+  'packages/opencode-session-lifecycle/package.json',
   'packages/electron/package.json',
   'packages/vscode/package.json',
 ];
