@@ -11,7 +11,7 @@ on:
 permissions:
   actions: read
   contents: read
-  issues: read
+  issues: write
 
 concurrency:
   group: j2k-release-recovery-${{ github.event.workflow_run.head_branch }}
@@ -32,10 +32,9 @@ jobs:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
 
-      - name: Create or update owner-authored recovery issue
+      - name: Create or update recovery issue
         env:
           GH_TOKEN: ${{ github.token }}
-          OPM_RECOVERY_GITHUB_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
           FAILED_WORKFLOW: ${{ github.event.workflow_run.name }}
           EVENT_BRANCH: ${{ github.event.workflow_run.head_branch }}
           EVENT_COMMIT: ${{ github.event.workflow_run.head_sha }}
@@ -43,10 +42,6 @@ jobs:
           RUN_URL: ${{ github.event.workflow_run.html_url }}
         run: |
           set -euo pipefail
-          if [[ -z "$OPM_RECOVERY_GITHUB_TOKEN" ]]; then
-            echo 'OPM_RECOVERY_GITHUB_TOKEN is required to create an owner-authored recovery issue.' >&2
-            exit 1
-          fi
           if [[ "$FAILED_WORKFLOW" == 'J2K Validate' ]]; then
             BRANCH="$EVENT_BRANCH"
             SOURCE_COMMIT="$EVENT_COMMIT"
@@ -54,6 +49,8 @@ jobs:
             gh run download "$FAILED_RUN_ID" --repo "${{ github.repository }}" --name release-identity --dir "$RUNNER_TEMP/release-identity"
             BRANCH="$(node -p 'require(process.argv[1]).branch' "$RUNNER_TEMP/release-identity/release-trigger.json")"
             SOURCE_COMMIT="$(node -p 'require(process.argv[1]).commit' "$RUNNER_TEMP/release-identity/release-trigger.json")"
+            SERIES_COMMIT="$(node -p 'require(process.argv[1]).patchSeriesSourceCommit || ``' "$RUNNER_TEMP/release-identity/release-trigger.json")"
+            PREVIOUS_BASE="$(node -p 'require(process.argv[1]).previousBaseTag || ``' "$RUNNER_TEMP/release-identity/release-trigger.json")"
           fi
           [[ "$BRANCH" =~ ^j2k/v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           git remote add upstream https://github.com/openchamber/openchamber.git
@@ -65,8 +62,10 @@ jobs:
           test "$(git rev-parse refs/remotes/origin/candidate)" = "$SOURCE_COMMIT"
           upstream_tag="v${BRANCH#j2k/v}"
           upstream_commit="$(git rev-parse "$upstream_tag^{commit}")"
-          series_commit="$(git rev-parse refs/remotes/origin/current)"
-          previous_base="$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-j2k.*' --abbrev=0 "$series_commit")"
+          series_commit="${SERIES_COMMIT:-$(git rev-parse refs/remotes/origin/current)}"
+          previous_base="${PREVIOUS_BASE:-$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-j2k.*' --abbrev=0 "$series_commit")}"
+          [[ "$series_commit" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$previous_base" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           jobs="$(gh api "repos/${{ github.repository }}/actions/runs/$FAILED_RUN_ID/jobs?per_page=100")"
           failed_steps="$(JOBS="$jobs" node -e '
             const jobs = JSON.parse(process.env.JOBS).jobs;
@@ -104,12 +103,8 @@ jobs:
           node tools/desktop-release/upstream-recovery.mjs --input "$recovery" --body "$body" --title "$title_file"
           title="$(<"$title_file")"
 
-          export GH_TOKEN="$OPM_RECOVERY_GITHUB_TOKEN"
-          owner_login="$(gh api user --jq '.login')"
-          owner_id="$(gh api user --jq '.id')"
-          test "$owner_id" = '38769771'
           issue_number="$(gh issue list --repo "${{ github.repository }}" --state all --search "in:title $title" \
-            --json number,title,author --jq "map(select(.title == \"$title\" and .author.login == \"$owner_login\")) | first | .number // empty")"
+            --json number,title --jq "map(select(.title == \"$title\")) | first | .number // empty")"
           if [[ -z "$issue_number" ]]; then
             gh issue create --repo "${{ github.repository }}" --title "$title" --body-file "$body" --label opm:ready
           else

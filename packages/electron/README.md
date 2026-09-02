@@ -108,7 +108,7 @@ Create a protected GitHub Actions environment named `j2k-release`, allow deploym
 - `MACOS_PRIVATE_CERTIFICATE`: Base64 of a password-protected PKCS#12 file containing the private signing certificate and key.
 - `MACOS_PRIVATE_CERTIFICATE_PASSWORD`: The PKCS#12 export password.
 - `MACOS_PRIVATE_CERTIFICATE_SHA256`: The 64-character SHA-256 fingerprint of the public certificate, with or without colons.
-- `UPSTREAM_SYNC_TOKEN`: A narrowly scoped token for GitHub owner `github:38769771` that can create and edit issues. OPM rejects recovery issues authored by `github-actions[bot]`, so the workflows verify this token's immutable owner ID before adding `opm:ready`.
+- `UPSTREAM_SYNC_TOKEN`: A narrowly scoped token for GitHub owner `github:38769771` with Contents and Workflows read/write access to this repository. The sync workflow uses it only for exact mirror and candidate ref writes that can contain workflow files. Recovery issues, artifacts, and releases use the job's scoped `GITHUB_TOKEN`.
 
 Create a self-signed root certificate in Keychain Access with the exact common name `Developer ID Application: OpenChamber Private Updates`, certificate type `Code Signing`, a long explicit validity period, digital-signature key usage, and code-signing extended key usage. Export the identity as a password-protected `.p12` for the workflow. Export the public certificate separately for installation on managed Macs. Never copy the private key to client Macs.
 
