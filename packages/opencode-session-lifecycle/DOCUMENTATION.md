@@ -14,6 +14,7 @@ The lifecycle writes controller state under `~/.local/state/opencode/session-wor
 - `<sessionId>.goal.json` is the latest accepted goal progress and must retain the same goal ID.
 - `<sessionId>.submit.json` is the submission intent journal used to make retries idempotent.
 - State and companion records use temporary files plus atomic rename. Malformed, unsupported, missing, and goal-mismatched state fails closed.
+- `finish` must determine OPM ownership before entering the local merge path. If both the OPM control server and its on-disk configuration are unavailable, it leaves the attached state and worktree unchanged so the user can retry.
 - Completion requires the phase and deployment evidence accepted by `packages/web/server/lib/session-goal/worktree-goal-gate.js`.
 
 The server session-goal runtime is the reader of this contract. Any state version, field, phase, path, or deployment-evidence change must be updated and tested in both packages.
