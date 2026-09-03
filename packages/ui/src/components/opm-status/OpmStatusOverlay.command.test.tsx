@@ -25,7 +25,7 @@ const AUTHORIZE = `/agent authorize ${SHA}`;
 const baseRow = {
   project: 'openchamber', projectName: 'OpenChamber', activityState: 'stopped',
   parentRef: null, branch: null, sessionId: null, workspacePath: null, nextAction: null,
-  updatedAt: 100, effect: null, children: [], url: null,
+  updatedAt: 100, effect: null, children: [], url: null, needsOwnerDecision: false, question: null,
 };
 
 const needsOwnerRow = {
@@ -338,6 +338,144 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       const code = [...document.querySelectorAll('code')].find((element) => element.textContent === AUTHORIZE);
       expect(code).toBeDefined();
       expect(code?.className).toContain('break-all');
+    } finally {
+      await unmount();
+    }
+  });
+
+  test('question rows render options with copy buttons and reply-own fallback', async () => {
+    const question = {
+      id: 'question-1',
+      askedBy: 'worker',
+      text: 'Which release channel?',
+      options: [
+        { key: 'A', label: 'Stable', detail: 'Use the stable channel', command: '/agent decide A' },
+        { key: 'B', label: 'Preview', detail: 'Use the preview channel', command: '/agent decide B' },
+      ],
+      url: 'https://github.com/owner/openchamber/issues/50#issuecomment-1',
+    };
+    const questionRow = {
+      ...baseRow,
+      ref: '50',
+      title: 'Release channel decision',
+      phase: 'waiting_external',
+      state: 'implemented',
+      action: 'waiting_owner',
+      reason: null,
+      kind: 'owner-question' as const,
+      command: null,
+      needsOwnerDecision: true,
+      question,
+      owner: { required: true, instruction: question.text },
+    };
+    const questionResult = (): OpmStatusLoadResult => ({
+      status: 'supported',
+      snapshot: parseOpmSnapshot({
+        available: true, fetchedAt: 100, state: 'active', summary: 'Waiting', healthOk: true, paused: false,
+        counts: { needsYou: 1, blocked: 0, active: 0, waiting: 0, queued: 0 },
+        groups: { needsYou: [questionRow], blocked: [], active: [], waiting: [], queued: [] },
+        tree: [{ ...questionRow, childRows: [] }],
+        supervisor: { running: true, pausedReason: null, startedAt: null, lastPollAt: null, pollIntervalMs: null, counters: {}, attention: [], projects: [] },
+      }),
+    });
+
+    const copied: string[] = [];
+    const originalWriteText = navigator.clipboard?.writeText;
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: mock(async (text: string) => { copied.push(text); }) },
+      configurable: true,
+    });
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root.render(
+      <I18nProvider>
+        <OpmStatusOverlay loadStatus={async () => questionResult()} sendCommand={async () => ({ ok: true })} />
+      </I18nProvider>,
+    ));
+    await act(async () => {});
+    const pill = document.querySelector<HTMLButtonElement>('[aria-label="Open OPM status"]');
+    await act(async () => pill?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 })));
+    await act(async () => {});
+
+    try {
+      const questionBlock = document.querySelector('[data-testid="opm-owner-question"]');
+      expect(questionBlock).not.toBeNull();
+      expect(questionBlock?.textContent).toContain('Which release channel?');
+      expect(questionBlock?.textContent).toContain('A — Stable');
+      expect(questionBlock?.textContent).toContain('B — Preview');
+      expect(questionBlock?.textContent).toContain('Reply with your own direction');
+
+      const copyButtons = [...(questionBlock?.querySelectorAll<HTMLButtonElement>('button') ?? [])].filter((button) => button.textContent?.includes('Copy'));
+      expect(copyButtons).toHaveLength(3);
+
+      await act(async () => copyButtons[0].dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 })));
+      await act(async () => {});
+      expect(copied).toContain('/agent decide A');
+
+      await act(async () => copyButtons[2].dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 })));
+      await act(async () => {});
+      expect(copied).toContain('/agent decide ');
+
+      const needsYouLink = document.querySelector('[data-testid="opm-needs-you"] a[href]');
+      expect(needsYouLink?.getAttribute('href')).toBe(question.url);
+    } finally {
+      if (originalWriteText) Object.defineProperty(navigator, 'clipboard', { value: { writeText: originalWriteText }, configurable: true });
+      await unmount();
+    }
+  });
+
+  test('legacy payloads without question render as today', async () => {
+    const legacyRow = {
+      ...baseRow,
+      ref: '99',
+      title: 'Old-style row',
+      phase: 'active',
+      state: 'implemented',
+      action: 'active',
+      activityState: 'working',
+      reason: 'working on it',
+      kind: null,
+      command: null,
+      owner: { required: false, instruction: 'Nothing needed.' },
+    };
+    const legacyResult = (): OpmStatusLoadResult => ({
+      status: 'supported',
+      snapshot: parseOpmSnapshot({
+        available: true, fetchedAt: 100, state: 'active', summary: 'Working', healthOk: true, paused: false,
+        counts: { needsYou: 0, blocked: 0, active: 1, waiting: 0, queued: 0 },
+        groups: { needsYou: [], blocked: [], active: [legacyRow], waiting: [], queued: [] },
+        tree: [{ ...legacyRow, childRows: [] }],
+        supervisor: { running: true, pausedReason: null, startedAt: null, lastPollAt: null, pollIntervalMs: null, counters: {}, attention: [], projects: [] },
+      }),
+    });
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root.render(
+      <I18nProvider>
+        <OpmStatusOverlay loadStatus={async () => legacyResult()} sendCommand={async () => ({ ok: true })} />
+      </I18nProvider>,
+    ));
+    await act(async () => {});
+    const pill = document.querySelector<HTMLButtonElement>('[aria-label="Open OPM status"]');
+    await act(async () => pill?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 })));
+    await act(async () => {});
+
+    try {
+      expect(document.querySelector('[data-testid="opm-owner-question"]')).toBeNull();
+      const workTree = document.querySelector('[data-testid="opm-work-tree"]');
+      expect(workTree?.textContent).toContain('Old-style row');
+
+      const summary = [...(workTree?.querySelectorAll<HTMLButtonElement>('button[aria-expanded]') ?? [])]
+        .find((button) => button.textContent?.includes('Old-style row'));
+      await act(async () => summary?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 })));
+      await act(async () => {});
+
+      const detail = summary?.closest('article')?.querySelector('[data-testid="opm-row-detail"]');
+      expect(detail?.textContent).toContain('Nothing needed');
     } finally {
       await unmount();
     }
