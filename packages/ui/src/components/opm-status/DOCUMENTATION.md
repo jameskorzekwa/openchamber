@@ -26,3 +26,20 @@ This component renders OPM status in connected hosted web, Electron, and mobile 
 - Every task has a compact summary: its task description and separate badges containing only the durable lifecycle state and current action share the primary line, while `<project> #<issue>` and age form the secondary line. The badges never wrap; the title truncates first on narrow screens. The legacy phase remains transport input for grouping only. Details stay collapsed until tapped. Epic disclosures independently collapse or expand their complete descendant trees and default to expanded. Needs-owner rows remain in their original hierarchy as well as the pinned section so collapsing an epic cannot hide required owner action. Overview totals and hierarchy rendering recurse through the complete accepted tree. Reasons and guidance wrap with `break-words`/`overflow-wrap:anywhere`; only monospace sha/command/tech spans use `break-all`.
 - The sticky dashboard close control is a top-layer, pointer-enabled, non-draggable touch target. Its pointer-down event cannot leak into content or shell drag handling.
 - Supervisor project health uses the configured project name, then its slug, and exposes the UUID only as a final compatibility fallback. Attention entries retain project identity and issue URLs. Selecting one expands its task and collapsed ancestors, scrolls the task into view, and focuses its summary; an attention item absent from the current task tree opens its issue URL when available.
+
+## Grouped dashboard (2026-09-03)
+
+The dialog renders one section per OPM project (`snapshot.byProject`), each
+with four lanes in owner order: **Waiting on you** (owner decisions and
+questions, with the exact reply commands), **Running** (a live session on a
+working action), **Waiting** (external waits, with the reason), **Backlog**
+(admitted, not picked up). Empty projects collapse to their header. Rows keep
+the title and the value-only state/action badges on one line; the second line
+is `{alias}#{ref}` (linked), an active-time readout, and the reason. The
+readout shows `active …` while `activeSince` is set (ticking each second from
+`activeMs` at fetch) and `worked …` once the supervisor stops counting it.
+The header carries a pause switch (`POST /api/opm/pause`, proxied to OPM's
+loopback `/pause` and `/resume`, which require `allowControlMutation`). A
+collapsed **Completed** section lists the last seven days with each item's
+banked active time and the all-time total. Servers without `byProject`,
+`completed`, or `activeMs` render the previous flat hierarchy unchanged.
