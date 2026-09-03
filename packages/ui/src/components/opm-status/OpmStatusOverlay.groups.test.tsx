@@ -51,7 +51,7 @@ const backlogRow = {
   state: 'planned', action: 'queued', activityState: 'queued', reason: 'queued: project is at its 1-worker limit', url: 'https://example.test/170',
 };
 
-const lane = (row: Record<string, unknown>, laneName: 'needsYou' | 'running' | 'waiting' | 'backlog') => ({ ...row, lane: laneName });
+const lane = <T extends object>(row: T, laneName: 'needsYou' | 'running' | 'waiting' | 'backlog') => ({ ...row, lane: laneName });
 
 const snapshotPayload = ({ paused = false, withGroups = true } = {}) => ({
   available: true as const, fetchedAt: NOW, state: 'active', summary: 'Working', healthOk: true, paused,
@@ -135,8 +135,8 @@ describe('OpmStatusOverlay project groups, lanes, active clock, pause, completed
       expect(state?.textContent).toBe('Implemented');
       expect(action?.textContent).toBe('Reviewing');
       const dialogText = document.querySelector('[data-testid="opm-dialog"]')?.textContent ?? '';
-      expect(dialogText).not.toMatch(/\bState\b/);
-      expect(dialogText).not.toMatch(/\bAction\b/);
+      expect(/\bState\b/.test(dialogText)).toBe(false);
+      expect(/\bAction\b/.test(dialogText)).toBe(false);
       expect(running?.querySelector('[data-testid="opm-row-reference"]')?.textContent).toBe('hh#798');
     } finally { await unmount(); }
   });
@@ -145,7 +145,7 @@ describe('OpmStatusOverlay project groups, lanes, active clock, pause, completed
     const unmount = await mountAndOpen();
     try {
       const running = document.querySelector('[data-testid="opm-lane-running"] [data-testid="opm-row-active"]');
-      expect(running?.textContent).toMatch(/active 1[12]m/);
+      expect(/active 1[12]m/.test(running?.textContent ?? '')).toBe(true);
       const waiting = document.querySelector('[data-testid="opm-lane-waiting"] [data-testid="opm-row-active"]');
       expect(waiting?.textContent).toBe('· worked 15m');
       expect(document.querySelector('[data-testid="opm-lane-backlog"] [data-testid="opm-row-active"]')).toBeNull();
