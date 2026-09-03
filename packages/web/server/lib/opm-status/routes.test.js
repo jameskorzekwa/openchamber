@@ -75,6 +75,39 @@ describe('OPM owner guidance and classification', () => {
     expect(snapshot.groups.needsYou[1]).toMatchObject({ kind: 'dead-letter', command: '/agent resume', owner: { required: true } });
   });
 
+  it('preserves owner questions and classifies them only as needs-you', () => {
+    const question = {
+      id: 'question-1',
+      askedBy: 'worker',
+      text: 'Which release path should I use?',
+      options: [
+        { key: 'A', label: 'Stable', detail: 'Use the stable channel', command: '/agent decide A' },
+        { key: 'B', label: 'Preview', detail: 'Use the preview channel', command: '/agent decide B' },
+      ],
+      url: 'https://github.com/owner/openchamber/issues/12#issuecomment-1',
+    };
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '12',
+          phase: 'waiting_external',
+          needsOwnerDecision: true,
+          question,
+        })],
+      },
+      status: { ok: true },
+    });
+
+    expect(snapshot.counts).toEqual({ needsYou: 1, blocked: 0, active: 0, waiting: 0, queued: 0 });
+    expect(snapshot.groups.needsYou[0]).toMatchObject({
+      kind: 'owner-question',
+      needsOwnerDecision: true,
+      question,
+      command: null,
+      owner: { required: true },
+    });
+  });
+
   it('builds one parent-child tree, synthesizes missing children, and keeps rich rows', () => {
     const snapshot = buildSnapshot({
       activity: {

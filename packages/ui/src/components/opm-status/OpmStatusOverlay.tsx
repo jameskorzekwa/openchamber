@@ -271,6 +271,7 @@ const actionTone = (row: OpmRow) => {
 
 const ownerText = (row: OpmRow, t: Translate) => {
   switch (ownerGuidanceKind(row)) {
+    case 'question': return row.question?.text ?? '';
     case 'authorize': return t('opm.owner.authorize', { ref: row.ref });
     case 'deadLetter': return t('opm.owner.deadLetter', { ref: row.ref });
     case 'paused': return t('opm.owner.paused', { ref: row.ref });
@@ -402,20 +403,44 @@ const OpmWorkRow = ({
         </button>
       </div>
       <div data-testid="opm-row-detail" className={cn('min-w-0 pl-7', expanded ? 'mt-1.5 block' : 'hidden')}>
-        {row.url ? (
-          <a className="inline-flex min-w-0 max-w-full items-center gap-1 typography-micro text-muted-foreground hover:underline" href={row.url} target="_blank" rel="noreferrer">
+        {(row.question?.url || row.url) ? (
+          <a className="inline-flex min-w-0 max-w-full items-center gap-1 typography-micro text-muted-foreground hover:underline" href={row.question?.url || row.url || undefined} target="_blank" rel="noreferrer">
             <span className="min-w-0 truncate">{projectLabel}</span><Icon name="external-link" className="size-3 shrink-0" />
           </a>
         ) : null}
         {row.parentRef ? <p className="mt-1 typography-micro text-muted-foreground">{t('opm.row.childOf', { ref: row.parentRef })}</p> : null}
         {row.reason ? <p className="mt-1 min-w-0 break-words [overflow-wrap:anywhere] typography-ui-label text-muted-foreground">{row.reason}</p> : null}
         {row.nextAction && row.nextAction !== row.reason ? <p className="mt-1 min-w-0 break-words [overflow-wrap:anywhere] typography-ui-label text-muted-foreground">{t('opm.row.nextAction', { action: row.nextAction })}</p> : null}
-        <div className={cn(
-          'mt-1.5 min-w-0 break-words rounded-md px-2 py-1.5 typography-ui-label',
-          row.owner.required ? 'bg-status-error/10 text-status-error' : 'bg-status-success/10 text-status-success',
-        )}>
-          {ownerText(row, t)}
-        </div>
+        {row.question ? (
+          <div data-testid="opm-owner-question" className="mt-1.5 min-w-0 space-y-1.5 rounded-md bg-status-error/10 px-2 py-1.5 text-status-error typography-ui-label">
+            <p className="min-w-0 break-words [overflow-wrap:anywhere] font-medium">{row.question.text}</p>
+            {row.question.options.map((option) => (
+              <div key={option.key} className="flex min-w-0 flex-wrap items-center gap-2">
+                <p className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">
+                  <strong>{option.key} — {option.label}</strong>{option.detail ? ` (${option.detail})` : ''}
+                </p>
+                <Button size="xs" variant="outline" onClick={() => onCopy(option.command)}>
+                  <Icon name={copiedCommand === option.command ? 'check' : 'clipboard'} className="size-3" />
+                  {copiedCommand === option.command ? t('opm.actions.copied') : t('opm.actions.copy')}
+                </Button>
+              </div>
+            ))}
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <p className="min-w-0 flex-1">{t('opm.question.replyOwn')}</p>
+              <Button size="xs" variant="outline" onClick={() => onCopy('/agent decide ')}>
+                <Icon name={copiedCommand === '/agent decide ' ? 'check' : 'clipboard'} className="size-3" />
+                {copiedCommand === '/agent decide ' ? t('opm.actions.copied') : t('opm.actions.copy')}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className={cn(
+            'mt-1.5 min-w-0 break-words rounded-md px-2 py-1.5 typography-ui-label',
+            row.owner.required ? 'bg-status-error/10 text-status-error' : 'bg-status-success/10 text-status-success',
+          )}>
+            {ownerText(row, t)}
+          </div>
+        )}
         <div className="mt-1.5 min-w-0 space-y-1.5">
           {row.command ? (
             <code className="block w-full min-w-0 whitespace-pre-wrap break-all rounded-md bg-background px-2 py-1.5 typography-micro text-foreground">{row.command}</code>

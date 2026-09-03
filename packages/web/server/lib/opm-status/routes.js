@@ -55,6 +55,36 @@ const issueUrlFor = (issueUrls, project, ref) => {
   return template.replaceAll('{ref}', String(ref));
 };
 
+const questionFor = (question) => {
+  if (!question || typeof question !== 'object'
+    || typeof question.id !== 'string'
+    || typeof question.askedBy !== 'string'
+    || typeof question.text !== 'string'
+    || typeof question.url !== 'string'
+    || !Array.isArray(question.options)) return null;
+  const options = question.options.map((option) => {
+    if (!option || typeof option !== 'object'
+      || typeof option.key !== 'string'
+      || typeof option.label !== 'string'
+      || typeof option.detail !== 'string'
+      || typeof option.command !== 'string') return null;
+    return {
+      key: option.key,
+      label: option.label,
+      detail: option.detail,
+      command: option.command,
+    };
+  });
+  if (options.some((option) => option === null)) return null;
+  return {
+    id: question.id,
+    askedBy: question.askedBy,
+    text: question.text,
+    options,
+    url: question.url,
+  };
+};
+
 export const ownerGuidance = ({ needsOwner, deadLetter, reason, nextAction, phase, ref }) => {
   if (needsOwner) {
     return {
@@ -101,6 +131,7 @@ export const ownerGuidance = ({ needsOwner, deadLetter, reason, nextAction, phas
 
 const classifyEntry = (entry, activityState, issueUrls) => {
   const reason = typeof entry.reason === 'string' ? entry.reason : '';
+  const question = questionFor(entry.question);
   const needsOwner = entry.phase === 'blocked' && NEEDS_OWNER.test(reason);
   const deadLetter = entry.effect?.status === 'dead_letter' || DEAD_LETTER.test(reason);
   const command = needsOwner
@@ -124,6 +155,8 @@ const classifyEntry = (entry, activityState, issueUrls) => {
     workspacePath: entry.workspacePath ?? null,
     reason: reason || null,
     nextAction: entry.nextAction ?? null,
+    needsOwnerDecision: entry.needsOwnerDecision === true,
+    question,
     updatedAt: entry.updatedAt ?? null,
     effect: entry.effect && typeof entry.effect === 'object'
       ? {
@@ -142,12 +175,14 @@ const classifyEntry = (entry, activityState, issueUrls) => {
           action: child.action ?? null,
           activityState: child.activityState ?? null,
           reason: child.reason ?? null,
+          needsOwnerDecision: child.needsOwnerDecision === true,
+          question: questionFor(child.question),
           url: issueUrlFor(issueUrls, entry.project, child.ref),
         }))
       : [],
-    kind: needsOwner ? 'needs-owner' : deadLetter ? 'dead-letter' : null,
+    kind: question ? 'owner-question' : needsOwner ? 'needs-owner' : deadLetter ? 'dead-letter' : null,
     command,
-    owner: ownerGuidance({
+    owner: question ? { required: true, instruction: question.text } : ownerGuidance({
       needsOwner,
       deadLetter,
       reason,
@@ -168,7 +203,7 @@ const classifyChildren = (entry, issueUrls) => (Array.isArray(entry.children) ? 
   ));
 
 const rowRank = (row) => {
-  if (row.kind === 'needs-owner' || row.kind === 'dead-letter') return 0;
+  if (row.kind === 'owner-question' || row.kind === 'needs-owner' || row.kind === 'dead-letter') return 0;
   if (row.phase === 'blocked' || row.phase === 'failed' || row.phase === 'paused') return 1;
   if (row.phase === 'active' || row.phase === 'review') return 2;
   if (row.phase === 'planned') return 3;
@@ -184,7 +219,7 @@ export const buildSnapshot = ({ activity, status, issueUrls = {}, now = Date.now
     if (seen.has(key)) return;
     seen.add(key);
     rows.push(row);
-    if (row.kind === 'needs-owner' || row.kind === 'dead-letter') groups.needsYou.push(row);
+    if (row.question || row.kind === 'needs-owner' || row.kind === 'dead-letter') groups.needsYou.push(row);
     else if (row.phase === 'blocked' || row.phase === 'failed' || row.phase === 'paused') groups.blocked.push(row);
     else if (row.phase === 'planned' || row.activityState === 'queued' || /^queued:/.test(row.reason ?? '')) groups.queued.push(row);
     else if (row.phase === 'active' || row.phase === 'review') groups.active.push(row);
