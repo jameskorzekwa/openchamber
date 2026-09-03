@@ -6,6 +6,7 @@ const row = (overrides = {}) => ({
   project: 'openchamber', projectName: 'OpenChamber', ref: '1', title: 'Work', phase: 'active', state: 'implemented', action: 'active', activityState: 'working',
   parentRef: null, branch: null, sessionId: null, workspacePath: null, reason: null, nextAction: null, updatedAt: null,
   effect: null, children: [], kind: null, command: null, owner: { required: false, instruction: 'Nothing needed.' }, url: null,
+  needsOwnerDecision: false, question: null,
   ...overrides,
 });
 
@@ -50,7 +51,7 @@ describe('OPM status parser', () => {
     Reflect.deleteProperty(legacyRow, 'action');
     const parsed = parseOpmSnapshot(snapshot(legacyRow));
     if (!parsed.available) throw new Error('expected available snapshot');
-    expect(parsed.tree[0]).toMatchObject({ state: null, action: null });
+    expect(parsed.tree[0]).toMatchObject({ state: null, action: null, needsOwnerDecision: false, question: null });
   });
 
   test('keeps unavailable distinct from successful empty work', () => {
