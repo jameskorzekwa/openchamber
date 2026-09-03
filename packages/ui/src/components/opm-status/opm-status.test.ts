@@ -6,7 +6,7 @@ const row = (overrides = {}) => ({
   project: 'openchamber', projectName: 'OpenChamber', ref: '1', title: 'Work', phase: 'active', state: 'implemented', action: 'active', activityState: 'working',
   parentRef: null, branch: null, sessionId: null, workspacePath: null, reason: null, nextAction: null, updatedAt: null,
   effect: null, children: [], kind: null, command: null, owner: { required: false, instruction: 'Nothing needed.' }, url: null,
-  needsOwnerDecision: false, question: null,
+  needsOwnerDecision: false, question: null, alias: null, activeMs: 0, activeSince: null,
   ...overrides,
 });
 

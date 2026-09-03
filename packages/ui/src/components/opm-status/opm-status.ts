@@ -54,6 +54,9 @@ const rowBaseSchema = z.object({
   branch: nullableString,
   sessionId: nullableString,
   workspacePath: nullableString,
+  alias: nullableString.default(null),
+  activeMs: z.number().default(0),
+  activeSince: nullableString.default(null),
   reason: nullableString,
   nextAction: nullableString,
   needsOwnerDecision: z.boolean().default(false),
@@ -68,6 +71,30 @@ const rowBaseSchema = z.object({
 });
 
 export type OpmRow = z.infer<typeof rowBaseSchema>;
+export type OpmLane = 'needsYou' | 'running' | 'waiting' | 'backlog';
+
+const laneSchema = z.enum(['needsYou', 'running', 'waiting', 'backlog']);
+const projectGroupSchema = z.object({
+  project: z.string(),
+  projectName: nullableString,
+  alias: nullableString.default(null),
+  counts: z.object({ needsYou: z.number(), running: z.number(), waiting: z.number(), backlog: z.number() }),
+  items: z.array(rowBaseSchema.extend({ lane: laneSchema })),
+});
+export type OpmProjectGroup = z.infer<typeof projectGroupSchema>;
+export type OpmLaneRow = OpmProjectGroup['items'][number];
+
+const completedItemSchema = z.object({
+  project: nullableString,
+  projectName: nullableString,
+  alias: nullableString.default(null),
+  ref: z.union([z.string(), z.number()]),
+  title: z.string(),
+  url: nullableString,
+  completedAt: nullableString,
+  activeMs: z.number().default(0),
+});
+export type OpmCompletedItem = z.infer<typeof completedItemSchema>;
 export type OpmTreeRow = OpmRow & { childRows: OpmTreeRow[] };
 
 const treeRowSchema: z.ZodType<OpmTreeRow> = z.lazy(() => rowBaseSchema.extend({
@@ -97,6 +124,10 @@ const availableSnapshotSchema = z.object({
   }),
   groups: groupsSchema,
   tree: z.array(treeRowSchema),
+  // Older servers omit these; the dashboard falls back to the flat groups.
+  byProject: z.array(projectGroupSchema).default([]),
+  completed: z.array(completedItemSchema).default([]),
+  completedTotal: nullableNumber.default(null),
   supervisor: z.object({
     running: z.boolean(),
     pausedReason: nullableString,
@@ -214,6 +245,61 @@ export const postOpmCommand = async (row: OpmRow): Promise<OpmCommandResult> => 
   } catch {
     return { ok: false, error: `Request returned ${response.status}` };
   }
+};
+
+export type OpmPauseResult = { ok: true; paused: boolean } | { ok: false; error: string };
+
+const pauseResultSchema = z.union([
+  z.object({ ok: z.literal(true), paused: z.boolean() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+]);
+
+export const postOpmPause = async (paused: boolean): Promise<OpmPauseResult> => {
+  let response: Response;
+  try {
+    response = await runtimeFetch('/api/opm/pause', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paused }),
+    });
+  } catch {
+    return { ok: false, error: 'Request failed' };
+  }
+  try {
+    return pauseResultSchema.parse(await response.json());
+  } catch {
+    return { ok: false, error: `Request returned ${response.status}` };
+  }
+};
+
+// Lane counts across every project: the pill and the overview read these.
+export const getLaneCounts = (snapshot: OpmAvailableSnapshot) => {
+  const counts = { needsYou: 0, running: 0, waiting: 0, backlog: 0 };
+  for (const group of snapshot.byProject) {
+    counts.needsYou += group.counts.needsYou;
+    counts.running += group.counts.running;
+    counts.waiting += group.counts.waiting;
+    counts.backlog += group.counts.backlog;
+  }
+  return counts;
+};
+
+// "active 1h 04m" while the supervisor counts the item as worked; "worked
+// 45m" once it stops; nothing when it never ran. The live stretch is added
+// client-side from activeSince so the readout ticks between polls.
+export const activeDurationMs = (row: { activeMs: number; activeSince: string | null }, now: number) => {
+  if (!row.activeSince) return row.activeMs;
+  const started = Date.parse(row.activeSince);
+  return row.activeMs + (Number.isFinite(started) ? Math.max(0, now - started) : 0);
+};
+
+export const formatDuration = (ms: number) => {
+  const totalMinutes = Math.floor(ms / 60_000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours > 0) return `${hours}h ${String(minutes).padStart(2, '0')}m`;
+  if (totalMinutes > 0) return `${minutes}m`;
+  return `${Math.floor(ms / 1000)}s`;
 };
 
 export const getOpmCounts = (snapshot: OpmAvailableSnapshot) => ({

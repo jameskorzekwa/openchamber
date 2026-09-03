@@ -132,10 +132,15 @@ export const ownerGuidance = ({ needsOwner, deadLetter, reason, nextAction, phas
 const classifyEntry = (entry, activityState, issueUrls) => {
   const reason = typeof entry.reason === 'string' ? entry.reason : '';
   const question = questionFor(entry.question);
-  const needsOwner = entry.phase === 'blocked' && NEEDS_OWNER.test(reason);
+  // OPM marks every owner decision explicitly (waiting_owner phase,
+  // needsOwnerDecision + decisionCommand). Matching only the legacy
+  // protected-path reason filed those items under blocked/waiting, so the
+  // owner was never shown that a decision was his (2026-09-02).
+  const needsOwner = entry.needsOwnerDecision === true
+    || (entry.phase === 'blocked' && NEEDS_OWNER.test(reason));
   const deadLetter = entry.effect?.status === 'dead_letter' || DEAD_LETTER.test(reason);
   const command = needsOwner
-    ? (reason.match(AUTHORIZE_COMMAND)?.[0] ?? null)
+    ? (reason.match(AUTHORIZE_COMMAND)?.[0] ?? entry.decisionCommand ?? null)
     : deadLetter
       ? '/agent resume'
       : null;
@@ -153,6 +158,9 @@ const classifyEntry = (entry, activityState, issueUrls) => {
     branch: entry.branch ?? null,
     sessionId: entry.sessionId ?? null,
     workspacePath: entry.workspacePath ?? null,
+    alias: entry.alias ?? null,
+    activeMs: Number.isFinite(entry.activeMs) ? entry.activeMs : 0,
+    activeSince: entry.activeSince ?? null,
     reason: reason || null,
     nextAction: entry.nextAction ?? null,
     needsOwnerDecision: entry.needsOwnerDecision === true,
@@ -190,8 +198,43 @@ const classifyEntry = (entry, activityState, issueUrls) => {
       phase: entry.phase ?? null,
       ref: entry.ref,
     }),
-    url: issueUrlFor(issueUrls, entry.project, entry.ref),
+    url: entry.url ?? issueUrlFor(issueUrls, entry.project, entry.ref),
   };
+};
+
+// Within a project: what needs the owner, what is actually running (a live
+// session on a working action), what is waiting on something, and what has
+// not been picked up yet. This is the operator's question every time the
+// dashboard opens; the flat groups above answer it across projects only.
+const WORKING_ACTIONS = new Set(['active', 'reviewing', 'merging', 'deploying', 'verifying', 'remediating', 'planning', 'closing']);
+export const laneFor = (row) => {
+  if (row.question || row.kind === 'needs-owner' || row.kind === 'dead-letter') return 'needsYou';
+  if (row.phase === 'planned' && (row.action === 'queued' || row.activityState === 'queued')) return 'backlog';
+  if (/^queued/.test(row.reason ?? '') || /^queued/.test(row.action ?? '')) return 'backlog';
+  if (row.sessionId && WORKING_ACTIONS.has(row.action ?? '') && (row.phase === 'active' || row.phase === 'review')) return 'running';
+  return 'waiting';
+};
+
+const groupByProject = (rows, statusProjects) => {
+  const order = new Map();
+  for (const project of statusProjects) {
+    const slug = project.project ?? project.slug ?? null;
+    if (slug && !order.has(slug)) order.set(slug, { project: slug, projectName: project.projectName ?? project.name ?? slug, alias: null, items: [] });
+  }
+  for (const row of rows) {
+    const slug = row.project ?? 'unknown';
+    if (!order.has(slug)) order.set(slug, { project: slug, projectName: row.projectName ?? slug, alias: row.alias ?? null, items: [] });
+    const group = order.get(slug);
+    if (!group.alias && row.alias) group.alias = row.alias;
+    group.items.push({ ...row, lane: laneFor(row) });
+  }
+  const laneRank = { needsYou: 0, running: 1, waiting: 2, backlog: 3 };
+  return [...order.values()].map((group) => {
+    group.items.sort((a, b) => laneRank[a.lane] - laneRank[b.lane] || String(a.ref).localeCompare(String(b.ref), undefined, { numeric: true }));
+    group.counts = { needsYou: 0, running: 0, waiting: 0, backlog: 0 };
+    for (const item of group.items) group.counts[item.lane] += 1;
+    return group;
+  });
 };
 
 const classifyChildren = (entry, issueUrls) => (Array.isArray(entry.children) ? entry.children : [])
@@ -296,6 +339,20 @@ export const buildSnapshot = ({ activity, status, issueUrls = {}, now = Date.now
     },
     groups,
     tree,
+    byProject: groupByProject(rows, statusProjects),
+    completed: Array.isArray(activity?.completed)
+      ? activity.completed.map((item) => ({
+          project: item.project ?? null,
+          projectName: item.projectName ?? null,
+          alias: item.alias ?? null,
+          ref: item.ref,
+          title: item.title ?? '',
+          url: item.url ?? issueUrlFor(issueUrls, item.project, item.ref),
+          completedAt: item.completedAt ?? null,
+          activeMs: Number.isFinite(item.activeMs) ? item.activeMs : 0,
+        }))
+      : [],
+    completedTotal: Number.isFinite(activity?.completedTotal) ? activity.completedTotal : null,
     supervisor: {
       running: status?.running === true,
       pausedReason: status?.pausedReason ?? null,
@@ -461,6 +518,30 @@ export function registerOpmStatusRoutes(app, options = {}) {
       return res.json({ ok: true });
     } catch (error) {
       return res.status(500).json({ ok: false, error: error?.message || 'unexpected error' });
+    }
+  });
+
+  // Pause/resume the supervisor. OPM's control server accepts these only with
+  // allowControlMutation; the UI sends the same confirmation header the
+  // command route relies on (OpenChamber's own auth already gates the route).
+  app.post('/api/opm/pause', parseJsonBody, async (req, res) => {
+    // The body is untrusted JSON; accept exactly the two literal states.
+    const paused = req.body?.paused === true ? true : req.body?.paused === false ? false : null;
+    if (paused === null) return res.status(400).json({ ok: false, error: 'paused (boolean) is required' });
+    const target = `${(config.controlUrl ?? DEFAULT_CONTROL_URL).replace(/\/$/, '')}/${paused ? 'pause' : 'resume'}`;
+    try {
+      const response = await fetch(target, { method: 'POST', signal: AbortSignal.timeout(5000) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        return res.status(response.status === 403 ? 403 : 502).json({
+          ok: false,
+          error: response.status === 403 ? 'OPM control mutation is disabled (allowControlMutation)' : (body?.error || `OPM returned ${response.status}`),
+        });
+      }
+      void poller.poll();
+      return res.json({ ok: true, paused: body?.paused === true });
+    } catch (error) {
+      return res.status(502).json({ ok: false, error: error?.message || 'OPM control server unreachable' });
     }
   });
 
