@@ -307,9 +307,20 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       expect(level4Summary?.querySelector('[data-testid="opm-row-action"]')?.textContent).toBe('Queued');
 
       expect(parentSummary?.querySelector('[data-testid="opm-row-title"]')?.textContent).toBe('Protected change awaiting authorization');
-      // The reference line reads alias#ref (the project name lives in the group
-      // header and the expanded detail), so it never wraps on 390px.
-      expect(parentSummary?.querySelector('[data-testid="opm-row-reference"]')?.textContent).toBe('openchamber#10');
+      // The reference is bold and non-truncating on the primary line, preceding the title.
+      const parentReference = parentSummary?.querySelector('[data-testid="opm-row-reference"]');
+      expect(parentReference?.textContent).toBe('openchamber#10');
+      expect(parentReference?.className).toContain('font-semibold');
+      expect(parentReference?.className).toContain('shrink-0');
+      // The reference and title share the same primary line (same parent flex container).
+      const parentTitle = parentSummary?.querySelector('[data-testid="opm-row-title"]');
+      expect(parentReference?.parentElement).toBe(parentTitle?.parentElement);
+      // The title truncates; the reference does not.
+      expect(parentTitle?.className).toContain('truncate');
+      expect(parentReference?.className).not.toContain('truncate');
+      // The secondary line no longer contains the reference.
+      const secondaryLine = parentSummary?.querySelectorAll('span.typography-micro')?.[0];
+      expect(secondaryLine?.textContent).not.toContain('openchamber#10');
       const collapse = workTree?.querySelector<HTMLButtonElement>('[aria-label="Collapse subtasks"]');
       expect(collapse).not.toBeNull();
       await act(async () => {

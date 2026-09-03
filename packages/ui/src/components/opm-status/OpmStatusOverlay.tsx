@@ -406,15 +406,15 @@ const OpmWorkRow = ({
         >
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-1">
+              <span data-testid="opm-row-reference" className="shrink-0 font-semibold leading-4 text-foreground">{referenceLabel}</span>
               <span data-testid="opm-row-title" className="block min-w-0 flex-1 truncate font-medium leading-4 text-foreground">{row.title}</span>
               {statusPills}
             </span>
             <span className="flex min-w-0 items-center gap-1 leading-4 typography-micro text-muted-foreground">
-              <span data-testid="opm-row-reference" className="min-w-0 truncate">{referenceLabel}</span>
-              {isParent ? <span className="shrink-0">· {t('opm.row.parent')}</span> : null}
-              {isChild ? <span className="shrink-0">· {t('opm.row.child')}</span> : null}
-              {activeReadout ? <span data-testid="opm-row-active" className={cn('shrink-0', row.activeSince && 'text-status-success')}>· {activeReadout}</span> : null}
-              {row.reason && !row.question ? <span className="min-w-0 truncate">· {row.reason}</span> : <span className="shrink-0">· {relativeAge(row.updatedAt, locale)}</span>}
+              {isParent ? <span className="shrink-0">{t('opm.row.parent')}</span> : null}
+              {isChild ? <span className="shrink-0">{isParent ? '· ' : ''}{t('opm.row.child')}</span> : null}
+              {activeReadout ? <span data-testid="opm-row-active" className={cn('shrink-0', row.activeSince && 'text-status-success')}>{isParent || isChild ? '· ' : ''}{activeReadout}</span> : null}
+              {row.reason && !row.question ? <span className="min-w-0 truncate">{isParent || isChild || activeReadout ? '· ' : ''}{row.reason}</span> : <span className="shrink-0">{isParent || isChild || activeReadout ? '· ' : ''}{relativeAge(row.updatedAt, locale)}</span>}
             </span>
           </span>
           <Icon name="arrow-right-s" className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')} />
