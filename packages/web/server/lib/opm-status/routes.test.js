@@ -4,6 +4,7 @@ import {
   buildSnapshot,
   createOpmStatusPoller,
   isCommandAllowed,
+  laneFor,
   ownerGuidance,
   registerOpmStatusRoutes,
   resolveRepo,
@@ -106,6 +107,53 @@ describe('OPM owner guidance and classification', () => {
       command: null,
       owner: { required: true },
     });
+  });
+
+  it('classifies waiting_owner decisions as needs-you with the supervisor command, not only legacy authorisation', () => {
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({ ref: '115', phase: 'waiting_owner', action: 'waiting_owner', needsOwnerDecision: true, decisionCommand: '/agent decide <your decision and authorization>', reason: 'owner decision required: review rejected a641a8b8' })],
+      },
+      status: { ok: true, running: true },
+    });
+    expect(snapshot.groups.needsYou.map((row) => row.ref)).toEqual(['115']);
+    expect(snapshot.groups.needsYou[0].kind).toBe('needs-owner');
+    expect(snapshot.groups.needsYou[0].command).toBe('/agent decide <your decision and authorization>');
+    expect(snapshot.groups.blocked).toEqual([]);
+  });
+
+  it('groups rows by project into owner lanes and passes through urls, alias, active time, completed', () => {
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [
+          entry({ project: 'hh', projectName: 'Heirloom', alias: 'hh', ref: '1', phase: 'waiting_owner', action: 'waiting_owner', needsOwnerDecision: true, decisionCommand: '/agent decide A', url: 'https://x/1' }),
+          entry({ project: 'hh', projectName: 'Heirloom', alias: 'hh', ref: '2', phase: 'waiting_external', action: 'waiting_external', reason: 'waiting for checks on abc', activeMs: 5000 }),
+        ],
+        active: [entry({ project: 'hh', projectName: 'Heirloom', alias: 'hh', ref: '3', phase: 'active', action: 'reviewing', sessionId: 'ses_1', activeMs: 100, activeSince: '2026-09-02T00:00:00Z' })],
+        queued: [entry({ project: 'opm', projectName: 'OPM', alias: 'opm', ref: '4', phase: 'planned', action: 'queued', reason: 'queued: project is at its 1-worker limit' })],
+        completed: [{ project: 'hh', projectName: 'Heirloom', alias: 'hh', ref: '9', title: 'Done', url: 'https://x/9', completedAt: '2026-09-02T00:00:00Z', activeMs: 42 }],
+        completedTotal: 7,
+      },
+      status: { ok: true, running: true, projects: [
+        { projectId: 'u1', project: 'hh', projectName: 'Heirloom' },
+        { projectId: 'u2', project: 'opm', projectName: 'OPM' },
+        { projectId: 'u3', project: 'ducks', projectName: 'QuickDucks' },
+      ] },
+      issueUrls: { opm: 'https://map/{ref}' },
+    });
+    expect(snapshot.byProject.map((group) => [group.project, group.counts])).toEqual([
+      ['hh', { needsYou: 1, running: 1, waiting: 1, backlog: 0 }],
+      ['opm', { needsYou: 0, running: 0, waiting: 0, backlog: 1 }],
+      ['ducks', { needsYou: 0, running: 0, waiting: 0, backlog: 0 }],
+    ]);
+    expect(snapshot.byProject[0].items.map((item) => [item.ref, item.lane])).toEqual([['1', 'needsYou'], ['3', 'running'], ['2', 'waiting']]);
+    expect(snapshot.byProject[0].items[0].url).toBe('https://x/1');
+    expect(snapshot.byProject[0].items[1].activeSince).toBe('2026-09-02T00:00:00Z');
+    expect(snapshot.byProject[0].items[2].activeMs).toBe(5000);
+    expect(snapshot.byProject[1].items[0].url).toBe('https://map/4');
+    expect(snapshot.completed).toEqual([{ project: 'hh', projectName: 'Heirloom', alias: 'hh', ref: '9', title: 'Done', url: 'https://x/9', completedAt: '2026-09-02T00:00:00Z', activeMs: 42 }]);
+    expect(snapshot.completedTotal).toBe(7);
+    expect(laneFor({ phase: 'active', action: 'active', sessionId: null, reason: null })).toBe('waiting');
   });
 
   it('builds one parent-child tree, synthesizes missing children, and keeps rich rows', () => {

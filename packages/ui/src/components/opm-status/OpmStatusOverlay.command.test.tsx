@@ -195,7 +195,7 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
     try {
       const workTree = document.querySelector('[data-testid="opm-work-tree"]');
       const summaries = [...(workTree?.querySelectorAll<HTMLButtonElement>('button[aria-expanded]') ?? [])]
-        .filter((button) => button.textContent?.includes('OpenChamber'));
+        .filter((button) => button.textContent?.includes('openchamber#'));
       const needsOwnerSummary = summaries.find((button) => button.textContent?.includes('Protected change'));
       const activeSummary = summaries.find((button) => button.textContent?.includes('Ordinary background'));
       expect(needsOwnerSummary?.getAttribute('aria-expanded')).toBe('false');
@@ -307,7 +307,9 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       expect(level4Summary?.querySelector('[data-testid="opm-row-action"]')?.textContent).toBe('Queued');
 
       expect(parentSummary?.querySelector('[data-testid="opm-row-title"]')?.textContent).toBe('Protected change awaiting authorization');
-      expect(parentSummary?.querySelector('[data-testid="opm-row-reference"]')?.textContent).toBe('OpenChamber #10');
+      // The reference line reads alias#ref (the project name lives in the group
+      // header and the expanded detail), so it never wraps on 390px.
+      expect(parentSummary?.querySelector('[data-testid="opm-row-reference"]')?.textContent).toBe('openchamber#10');
       const collapse = workTree?.querySelector<HTMLButtonElement>('[aria-label="Collapse subtasks"]');
       expect(collapse).not.toBeNull();
       await act(async () => {
