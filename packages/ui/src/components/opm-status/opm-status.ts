@@ -25,6 +25,19 @@ const childSummarySchema = z.object({
   action: nullableString.default(null),
   activityState: nullableString,
   reason: nullableString,
+  needsOwnerDecision: z.boolean().default(false),
+  question: z.object({
+    id: z.string(),
+    askedBy: z.string(),
+    text: z.string(),
+    options: z.array(z.object({
+      key: z.string(),
+      label: z.string(),
+      detail: z.string(),
+      command: z.string(),
+    })),
+    url: z.string(),
+  }).nullable().default(null),
   url: nullableString,
 });
 
@@ -43,10 +56,12 @@ const rowBaseSchema = z.object({
   workspacePath: nullableString,
   reason: nullableString,
   nextAction: nullableString,
+  needsOwnerDecision: z.boolean().default(false),
+  question: childSummarySchema.shape.question,
   updatedAt: z.union([z.string(), z.number()]).nullable(),
   effect: effectSchema,
   children: z.array(childSummarySchema),
-  kind: z.enum(['needs-owner', 'dead-letter']).nullable(),
+  kind: z.enum(['owner-question', 'needs-owner', 'dead-letter']).nullable(),
   command: nullableString,
   owner: ownerSchema,
   url: nullableString,
@@ -222,6 +237,7 @@ export const getTotalOpmCount = (snapshot: OpmSnapshot): number | null => {
 };
 
 export const ownerGuidanceKind = (row: OpmRow) => {
+  if (row.kind === 'owner-question') return 'question';
   if (row.kind === 'needs-owner') return 'authorize';
   if (row.kind === 'dead-letter') return 'deadLetter';
   if (row.phase === 'paused') return 'paused';
