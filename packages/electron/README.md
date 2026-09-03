@@ -84,7 +84,7 @@ macOS builds produce `dmg` and `zip` artifacts. Windows builds produce an NSIS i
 
 ### J2K macOS release channel
 
-The customized macOS channel currently supports arm64 only. Every successful push or manually dispatched `J2K Validate` run for `j2k/current` starts the `J2K Desktop Release` workflow automatically. Manual desktop dispatch remains available for recovery and requires the exact 40-character source SHA. The workflow signs only when the validated or requested SHA, the current `j2k/current` tip, and the trusted workflow commit are identical and a successful `J2K Validate` run exists for that commit. Pull-request and `j2k/v*` validation cannot publish desktop releases.
+The customized macOS channel currently supports arm64 only. `J2K Sync Upstream` follows canonical upstream tags and creates an exact `j2k/vX.Y.Z` candidate. After `J2K Validate` succeeds, `J2K Release` runs the web release gate and calls `J2K Desktop Release` as a build-only component for that same candidate SHA. The desktop workflow has no publication permission. The unified publisher can advance `j2k/current`, create both tags, and publish either release only after both artifact sets pass their trusted verifiers.
 
 Desktop versions use canonical SemVer `X.Y.Z-j2k.N` and tags `desktop-vX.Y.Z-j2k.N`. These GitHub Releases are always prereleases with `make_latest=false`, so they never affect the stable web channel or `/releases/latest`. A desktop release has exactly these six assets:
 
@@ -101,13 +101,14 @@ The J2K macOS updater reads `latest-mac.yml` from the dedicated `desktop-channel
 
 The workflow stages the desktop version in the root, Electron, web, and shared UI package identities. It embeds the exact source SHA in the bundled web assets, rebuilds `node-pty` and `bun-pty` for Electron arm64, bundles the pinned OpenCode CLI, signs with the pinned private identity, and checks the app from staging, the ZIP, and the mounted DMG before publication. The release metadata records the verified certificate SHA-256 fingerprint and checksums without storing private key material.
 
-Publication is resumable but immutable. A retry may reuse a matching tag and draft release only when every existing asset is byte-identical; it uploads missing draft assets but never overwrites. After the exact six-asset prerelease is published, the trusted publisher creates a one-file `desktop-channel` commit and pushes it with the branch lease captured before the build. Candidate code runs only in a read-only job. The `contents:write` job checks candidates with verifier code from trusted `j2k/current` and never executes candidate files.
+Publication is resumable but immutable. Web and desktop use the same `X.Y.Z-j2k.N` revision and source SHA. A retry may reuse a matching tag and draft release only when every existing asset is byte-identical; it uploads missing draft assets but never overwrites. The unified publisher promotes the candidate with a `j2k/current` force-with-lease, publishes the desktop prerelease before the stable web release, then creates a one-file `desktop-channel` commit with the lease captured before either build. Candidate jobs have read-only repository permissions. The `contents:write` job checks both artifact sets with verifier code from trusted `j2k/current` and never executes candidate files.
 
-The repository must define these Actions secrets before the workflow can run:
+Create a protected GitHub Actions environment named `j2k-release`, allow deployment only from `j2k/current`, and define these environment secrets before the workflows can run. Do not store them as repository-level secrets: candidate branches are same-repository branches and can define their own workflows, so repository-level secrets would cross the candidate trust boundary.
 
 - `MACOS_PRIVATE_CERTIFICATE`: Base64 of a password-protected PKCS#12 file containing the private signing certificate and key.
 - `MACOS_PRIVATE_CERTIFICATE_PASSWORD`: The PKCS#12 export password.
 - `MACOS_PRIVATE_CERTIFICATE_SHA256`: The 64-character SHA-256 fingerprint of the public certificate, with or without colons.
+- `UPSTREAM_SYNC_TOKEN`: A narrowly scoped token for GitHub owner `github:38769771` with Contents and Workflows read/write access to this repository. The sync workflow uses it only for exact mirror and candidate ref writes that can contain workflow files. Recovery issues, artifacts, and releases use the job's scoped `GITHUB_TOKEN`.
 
 Create a self-signed root certificate in Keychain Access with the exact common name `Developer ID Application: OpenChamber Private Updates`, certificate type `Code Signing`, a long explicit validity period, digital-signature key usage, and code-signing extended key usage. Export the identity as a password-protected `.p12` for the workflow. Export the public certificate separately for installation on managed Macs. Never copy the private key to client Macs.
 
