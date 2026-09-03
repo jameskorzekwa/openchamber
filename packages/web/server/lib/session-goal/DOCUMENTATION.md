@@ -46,11 +46,6 @@ session and drops the write when the stored goal id no longer matches.
 
 ## Managed-worktree external state contract
 
-`packages/opencode-session-lifecycle` owns the writer and lifecycle controller
-for this state. This server module owns the matching reader and goal gate. The
-plugin package version must match the OpenChamber base version so the two halves
-cannot change independently.
-
 Managed-worktree sessions set `managedWorktree: true` and keep their lifecycle
 authority under `~/.local/state/opencode/session-worktrees`:
 
