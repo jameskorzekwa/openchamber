@@ -146,8 +146,9 @@ describe('OpmStatusOverlay project groups, lanes, active clock, pause, completed
     try {
       const running = document.querySelector('[data-testid="opm-lane-running"] [data-testid="opm-row-active"]');
       expect(/active 1[12]m/.test(running?.textContent ?? '')).toBe(true);
+      // The secondary line no longer includes the reference, so the first metadata item (worked time) has no leading separator.
       const waiting = document.querySelector('[data-testid="opm-lane-waiting"] [data-testid="opm-row-active"]');
-      expect(waiting?.textContent).toBe('· worked 15m');
+      expect(waiting?.textContent).toBe('worked 15m');
       expect(document.querySelector('[data-testid="opm-lane-backlog"] [data-testid="opm-row-active"]')).toBeNull();
     } finally { await unmount(); }
   });
