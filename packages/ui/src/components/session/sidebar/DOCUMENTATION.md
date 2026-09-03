@@ -41,7 +41,3 @@ Session rows also derive hosted PTY waiting state from the row session's
 and compact waiting count only while live status is idle; busy and retry remain
 authoritative. The row memo compares only the derived waiting fields, not the
 whole metadata object.
-
-`packages/opencode-session-lifecycle` owns the PTY plugin that writes this
-metadata. The shared UI owns its parser and presentation. Keep the package
-version matched to the OpenChamber base version when either half changes.
