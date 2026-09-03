@@ -10,7 +10,6 @@ const PACKAGES = [
   'package.json',
   'packages/ui/package.json',
   'packages/web/package.json',
-  'packages/opencode-session-lifecycle/package.json',
   'packages/electron/package.json',
   'packages/vscode/package.json',
 ];
