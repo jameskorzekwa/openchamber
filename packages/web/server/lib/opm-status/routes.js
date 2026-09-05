@@ -268,10 +268,17 @@ export const buildSnapshot = ({ activity, status, issueUrls = {}, now = Date.now
     else if (row.phase === 'active' || row.phase === 'review') groups.active.push(row);
     else groups.waiting.push(row);
   };
+  // OPM's progress view has four buckets. An item whose next lifecycle effect
+  // is due but not yet executed (a wake, a cleanup, a merge) sits in
+  // pendingOperations, and its waiting ancestors follow it out of blockers.
+  // Reading only three buckets made such an item, and its parent epic, vanish
+  // from the dashboard until the supervisor deferred the effect again, so the
+  // visible count flickered between polls (2026-09-05, heirloom#856/#854).
   const lists = [
     [activity?.blockers, 'stopped'],
     [activity?.active, 'working'],
     [activity?.queued, 'queued'],
+    [activity?.pendingOperations, 'pending'],
   ];
 
   // Rich top-level rows win deduplication over inline child summaries.
