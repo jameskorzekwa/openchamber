@@ -807,9 +807,16 @@ export function createValidatedReleaseInstaller(options = {}) {
   const previousLink = path.join(installRoot, 'previous');
   let activeInstall = null;
   let status = statePayload('installed', currentVersion);
+  // The updatedAt of the persisted record this process last read or wrote.
+  // Disk only overrides in-memory status when another writer (the detached
+  // restart helper) has changed the file since then; otherwise a stale
+  // terminal record would clobber the in-memory `available` that a fresh
+  // channel check just noted.
+  let persistedUpdatedAt = null;
 
   try {
     const persisted = parsePersistedState(JSON.parse(fs.readFileSync(statePath, 'utf8')));
+    persistedUpdatedAt = persisted?.updatedAt ?? null;
     const selectedVersion = readSelectedVersion(currentLink, installRoot);
     const transactionPending = fs.existsSync(transactionPath);
     if (transactionPending && (persisted?.state === 'restarting' || ACTIVE_STATES.has(persisted?.state))) {
@@ -841,6 +848,7 @@ export function createValidatedReleaseInstaller(options = {}) {
       await handle.close();
     }
     await fsp.rename(temporary, statePath);
+    persistedUpdatedAt = next.updatedAt;
     await syncDirectory(installRoot);
   }
 
@@ -848,7 +856,8 @@ export function createValidatedReleaseInstaller(options = {}) {
     if (activeInstall) return status;
     try {
       const persisted = parsePersistedState(JSON.parse(fs.readFileSync(statePath, 'utf8')));
-      if (persisted && persisted.updatedAt !== status.updatedAt) {
+      if (persisted && persisted.updatedAt !== persistedUpdatedAt) {
+        persistedUpdatedAt = persisted.updatedAt;
         if (persisted.state === 'restarting' || ACTIVE_STATES.has(persisted.state)) {
           status = fs.existsSync(transactionPath)
             ? { ...persisted, state: 'restarting', currentVersion }

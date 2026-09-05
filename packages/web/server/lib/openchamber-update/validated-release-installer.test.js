@@ -328,6 +328,39 @@ describe('validated release installation', () => {
     expect(harness.installer.getStatus()).toMatchObject({ state: 'installed', currentVersion: VERSION });
   });
 
+  it('keeps a freshly noted available status over the stale installed record of the previous update', async () => {
+    const harness = await makeHarness();
+    const previousInstall = {
+      schemaVersion: 1,
+      state: 'installed',
+      currentVersion: '1.0.0',
+      targetVersion: '1.0.0',
+      previousVersion: '0.9.0',
+      error: null,
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    };
+    await fsp.writeFile(path.join(harness.installRoot, 'update-status.json'), JSON.stringify(previousInstall));
+    const installer = createValidatedReleaseInstaller({
+      fetchImpl: makeFetch(),
+      installRoot: harness.installRoot,
+      currentInstallDir: harness.oldInstall,
+      currentVersion: '1.0.0',
+      platform: 'darwin',
+      arch: 'arm64',
+      nodeAbi: NODE_ABI,
+    });
+    expect(installer.getStatus()).toMatchObject({ state: 'installed', targetVersion: '1.0.0' });
+
+    await expect(installer.checkForUpdate()).resolves.toMatchObject({ available: true, version: VERSION });
+    expect(installer.getStatus()).toMatchObject({ state: 'available', currentVersion: '1.0.0', targetVersion: VERSION });
+    expect(installer.getStatus()).toMatchObject({ state: 'available', targetVersion: VERSION });
+    expect(JSON.parse(await fsp.readFile(path.join(harness.installRoot, 'update-status.json'), 'utf8'))).toEqual(previousInstall);
+
+    const helperWrite = { ...previousInstall, state: 'failed', error: 'helper wrote this', updatedAt: '2026-09-02T00:00:00.000Z' };
+    await fsp.writeFile(path.join(harness.installRoot, 'update-status.json'), JSON.stringify(helperWrite));
+    expect(installer.getStatus()).toMatchObject({ state: 'failed', error: 'helper wrote this' });
+  });
+
   it('reports no validated release when the latest channel base is older than the running base', async () => {
     const harness = await makeHarness(makeFetch(), undefined, { currentVersion: '3.0.0' });
     await expect(harness.installer.checkForUpdate()).resolves.toMatchObject({ available: false, noValidatedRelease: true, reason: 'channel-base-older' });

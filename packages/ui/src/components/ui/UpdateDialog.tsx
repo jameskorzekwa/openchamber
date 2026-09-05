@@ -125,9 +125,14 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const installation = useUpdateStore((state) => state.installation);
+  const installationCompleted = useUpdateStore((state) => state.installationCompleted);
   const refreshInstallation = useUpdateStore((state) => state.refreshInstallation);
   const startWebUpdate = useUpdateStore((state) => state.startWebUpdate);
-  const webUpdateState = installation?.state ?? 'available';
+  // A persisted `installed` from an earlier update is idle, not "just done":
+  // only an install this page watched finish counts as installed here.
+  const webUpdateState = installation?.state === 'installed' && !installationCompleted
+    ? 'available'
+    : (installation?.state ?? 'available');
   const webError = installation?.error ?? null;
 
   const releaseUrl = info?.version
@@ -148,10 +153,10 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
   }, [isWebRuntime, open, refreshInstallation]);
 
   useEffect(() => {
-    if (installation?.state !== 'installed') return;
+    if (!installationCompleted) return;
     const timer = window.setTimeout(() => window.location.reload(), 500);
     return () => window.clearTimeout(timer);
-  }, [installation?.state]);
+  }, [installationCompleted]);
 
   const handleCopyCommand = async () => {
     const result = await copyTextToClipboard(updateCommand);
