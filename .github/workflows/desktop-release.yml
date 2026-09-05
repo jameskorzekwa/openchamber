@@ -212,7 +212,7 @@ jobs:
           fi
           revision="$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).revision' "$app/Contents/Resources/web-dist/build-revision.json")"
           test "$revision" = '${{ needs.metadata.outputs.source_commit }}'
-          bundle_version="$(defaults read "$app/Contents/Info" CFBundleShortVersionString)"
+          bundle_version="$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist")"
           test "$bundle_version" = "$version"
           opencode_version="$(node -p 'require(`./package.json`).dependencies[`@opencode-ai/sdk`]')"
           node tools/desktop-release/verify-macos-app.mjs \
@@ -269,12 +269,16 @@ jobs:
           ditto -x -k unsigned-candidate/OpenChamber.app.zip prepackaged
           app="$GITHUB_WORKSPACE/prepackaged/OpenChamber.app"
           test -d "$app"
-          if codesign -dv "$app" >/dev/null 2>&1; then
-            echo 'Unsigned candidate acquired a signature before the trusted signing job.' >&2
+          # arm64 binaries carry a linker ad-hoc signature; only an identity
+          # signature (an Authority line) means the candidate was signed early.
+          signature="$(codesign -dvv "$app" 2>&1 || true)"
+          if grep -q '^Authority=' <<<"$signature"; then
+            echo 'Unsigned candidate acquired an identity signature before the trusted signing job.' >&2
+            printf '%s\n' "$signature" >&2
             exit 1
           fi
           test "$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).revision' "$app/Contents/Resources/web-dist/build-revision.json")" = '${{ needs.metadata.outputs.source_commit }}'
-          test "$(defaults read "$app/Contents/Info" CFBundleShortVersionString)" = '${{ needs.metadata.outputs.version }}'
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist")" = '${{ needs.metadata.outputs.version }}'
 
       - name: Install pinned private signing certificate
         env:
