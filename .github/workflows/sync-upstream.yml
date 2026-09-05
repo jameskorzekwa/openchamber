@@ -127,7 +127,7 @@ jobs:
             if (runs.some((run) => run.status === 'queued' || run.status === 'in_progress')) process.stdout.write('active');
             else if (runs.some((run) => run.conclusion === 'success')) process.stdout.write('success');
             else process.stdout.write('retry');
-            NODE
+          NODE
             )"
             if [[ "$run_state" == 'active' ]]; then
               echo "Validation for $branch at $branch_sha is already active."
@@ -184,7 +184,7 @@ jobs:
                 'git rebase --onto ' + process.env.UPSTREAM_TAG + ' ' + process.env.PREVIOUS_BASE,
               ],
             }, null, 2));
-            NODE
+          NODE
             node tools/desktop-release/upstream-recovery.mjs --input "$recovery" --body "$body" --title "$title_file"
             title="$(<"$title_file")"
 
