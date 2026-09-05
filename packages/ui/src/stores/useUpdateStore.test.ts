@@ -51,6 +51,30 @@ describe('web installation lifecycle recovery', () => {
     expect(useUpdateStore.getState().installation?.state).toBe('rollback');
   });
 
+  test('an installed record left over from an earlier update is not a completed install', async () => {
+    setUpdateStoreRuntimeFetchForTests(async () => new Response(JSON.stringify(status('installed')), { status: 200 }));
+    await useUpdateStore.getState().refreshInstallation();
+    expect(useUpdateStore.getState().installation?.state).toBe('installed');
+    expect(useUpdateStore.getState().installationCompleted).toBe(false);
+  });
+
+  test('only an install watched through its active lifecycle counts as completed', async () => {
+    let lifecycle = status('restarting');
+    setUpdateStoreRuntimeFetchForTests(async () => new Response(JSON.stringify(lifecycle), { status: 200 }));
+    await useUpdateStore.getState().refreshInstallation();
+    expect(useUpdateStore.getState().installationCompleted).toBe(false);
+
+    lifecycle = status('installed');
+    await useUpdateStore.getState().refreshInstallation();
+    expect(useUpdateStore.getState().installationCompleted).toBe(true);
+
+    await useUpdateStore.getState().refreshInstallation();
+    expect(useUpdateStore.getState().installationCompleted).toBe(true);
+
+    useUpdateStore.getState().reset();
+    expect(useUpdateStore.getState().installationCompleted).toBe(false);
+  });
+
   test('retains the accepted POST lifecycle instead of inventing success', async () => {
     let posts = 0;
     setUpdateStoreRuntimeFetchForTests(async (_input, init) => {
