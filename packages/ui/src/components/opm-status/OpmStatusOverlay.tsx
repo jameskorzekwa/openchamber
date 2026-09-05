@@ -25,6 +25,7 @@ import {
   openOpmRowSession,
   ownerGuidanceKind,
   postOpmCommand,
+  postQuestionDecision,
   type OpmAttention,
   type OpmCompletedItem,
   type OpmLane,
@@ -32,6 +33,7 @@ import {
   type OpmProjectGroup,
   type OpmAvailableSnapshot,
   type OpmCommandResult,
+  type OpmQuestionDecisionParams,
   type OpmRow,
   type OpmSnapshot,
   type OpmStatusLoadResult,
@@ -329,6 +331,133 @@ type RunState =
   | { status: 'sent' }
   | { status: 'error'; message: string };
 
+// Component for rendering question options with submit buttons and custom answer input
+const QuestionDecisionBlock = ({
+  row,
+  onCopy,
+  copiedCommand,
+  decisionState,
+  onDecide,
+}: {
+  row: OpmRow;
+  onCopy: (command: string) => void;
+  copiedCommand: string | null;
+  decisionState?: QuestionDecisionState;
+  onDecide?: (row: OpmRow, optionKey: string | null, customText: string | null) => void;
+}) => {
+  const { t } = useI18n();
+  const [customText, setCustomText] = React.useState('');
+  const question = row.question;
+  if (!question) return null;
+
+  // Determine if any submission is in progress
+  const isAnyPending = decisionState?.status === 'pending';
+  const isSent = decisionState?.status === 'sent';
+  const pendingKey = decisionState?.status === 'pending' ? decisionState.key : null;
+
+  // Find the first option (recommendation) - OPM convention is that the first option is recommended
+  const recommendedKey = question.options[0]?.key ?? null;
+
+  const handleOptionSubmit = (optionKey: string) => {
+    if (onDecide) onDecide(row, optionKey, null);
+  };
+
+  const handleCustomSubmit = () => {
+    if (onDecide && customText.trim()) {
+      onDecide(row, null, customText.trim());
+      setCustomText('');
+    }
+  };
+
+  return (
+    <div data-testid="opm-owner-question" className="mt-1.5 min-w-0 space-y-1.5 rounded-md bg-status-error/10 px-2 py-1.5 text-status-error typography-ui-label">
+      <p className="min-w-0 break-words [overflow-wrap:anywhere] font-medium">{question.text}</p>
+      {question.options.map((option) => {
+        const isRecommended = option.key === recommendedKey;
+        const isThisPending = pendingKey === option.key;
+        return (
+          <div
+            key={option.key}
+            data-testid={isRecommended ? 'opm-question-option-recommended' : 'opm-question-option'}
+            className={cn(
+              'flex min-w-0 flex-wrap items-center gap-2 rounded-md px-1.5 py-1',
+              isRecommended && 'bg-status-error/10 ring-1 ring-status-error/30',
+            )}
+          >
+            <p className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">
+              <strong>{option.key} — {option.label}</strong>
+              {isRecommended ? <span className="ml-1 text-[0.65rem] font-semibold uppercase tracking-wide opacity-80">({t('opm.question.recommended')})</span> : null}
+              {option.detail ? ` (${option.detail})` : ''}
+            </p>
+            <div className="flex shrink-0 items-center gap-1">
+              <Button
+                size="xs"
+                variant={isRecommended ? 'default' : 'outline'}
+                data-testid="opm-question-submit"
+                disabled={isAnyPending || isSent}
+                onClick={() => handleOptionSubmit(option.key)}
+              >
+                {isThisPending
+                  ? t('opm.actions.running')
+                  : isSent
+                    ? t('opm.actions.sent')
+                    : t('opm.question.submit')}
+              </Button>
+              <Button size="xs" variant="ghost" onClick={() => onCopy(option.command)} title={t('opm.actions.copy')}>
+                <Icon name={copiedCommand === option.command ? 'check' : 'clipboard'} className="size-3" />
+              </Button>
+            </div>
+          </div>
+        );
+      })}
+      <div className="flex min-w-0 flex-wrap items-center gap-2 border-t border-status-error/20 pt-1.5">
+        <label className="min-w-0 flex-1">
+          <span className="block text-[0.65rem] font-medium uppercase tracking-wide opacity-80">{t('opm.question.customLabel')}</span>
+          <input
+            type="text"
+            data-testid="opm-question-custom-input"
+            className="mt-0.5 w-full rounded-md border border-status-error/30 bg-background px-2 py-1 text-foreground typography-ui-label placeholder:text-muted-foreground focus:border-status-error/50 focus:outline-none focus:ring-1 focus:ring-status-error/30"
+            placeholder={t('opm.question.customPlaceholder')}
+            value={customText}
+            onChange={(event) => setCustomText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && customText.trim() && !isAnyPending && !isSent) {
+                handleCustomSubmit();
+              }
+            }}
+            disabled={isAnyPending || isSent}
+          />
+        </label>
+        <Button
+          size="xs"
+          variant="outline"
+          data-testid="opm-question-custom-submit"
+          disabled={!customText.trim() || isAnyPending || isSent}
+          onClick={handleCustomSubmit}
+        >
+          {pendingKey === null && isAnyPending
+            ? t('opm.actions.running')
+            : isSent
+              ? t('opm.actions.sent')
+              : t('opm.question.submitCustom')}
+        </Button>
+        <Button size="xs" variant="ghost" onClick={() => onCopy('/agent decide ')} title={t('opm.actions.copy')}>
+          <Icon name={copiedCommand === '/agent decide ' ? 'check' : 'clipboard'} className="size-3" />
+        </Button>
+      </div>
+      {decisionState?.status === 'error' ? (
+        <p className="mt-1 min-w-0 break-words typography-micro text-status-error" role="alert">{decisionState.message}</p>
+      ) : null}
+    </div>
+  );
+};
+
+type QuestionDecisionState =
+  | { status: 'idle' }
+  | { status: 'pending'; key: string | null }
+  | { status: 'sent' }
+  | { status: 'error'; message: string };
+
 const OpmWorkRow = ({
   row,
   isParent,
@@ -344,6 +473,8 @@ const OpmWorkRow = ({
   onToggleChildren,
   summaryRef,
   now,
+  questionDecisionState,
+  onQuestionDecide,
 }: {
   row: OpmRow;
   isParent: boolean;
@@ -359,6 +490,8 @@ const OpmWorkRow = ({
   onToggleChildren?: () => void;
   summaryRef?: (element: HTMLButtonElement | null) => void;
   now: number;
+  questionDecisionState?: QuestionDecisionState;
+  onQuestionDecide?: (row: OpmRow, optionKey: string | null, customText: string | null) => void;
 }) => {
   const { locale, t } = useI18n();
   const projectLabel = `${row.projectName || row.project || 'OPM'} #${row.ref}`;
@@ -430,27 +563,13 @@ const OpmWorkRow = ({
         {row.reason ? <p className="mt-1 min-w-0 break-words [overflow-wrap:anywhere] typography-ui-label text-muted-foreground">{row.reason}</p> : null}
         {row.nextAction && row.nextAction !== row.reason ? <p className="mt-1 min-w-0 break-words [overflow-wrap:anywhere] typography-ui-label text-muted-foreground">{t('opm.row.nextAction', { action: row.nextAction })}</p> : null}
         {row.question ? (
-          <div data-testid="opm-owner-question" className="mt-1.5 min-w-0 space-y-1.5 rounded-md bg-status-error/10 px-2 py-1.5 text-status-error typography-ui-label">
-            <p className="min-w-0 break-words [overflow-wrap:anywhere] font-medium">{row.question.text}</p>
-            {row.question.options.map((option) => (
-              <div key={option.key} className="flex min-w-0 flex-wrap items-center gap-2">
-                <p className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">
-                  <strong>{option.key} — {option.label}</strong>{option.detail ? ` (${option.detail})` : ''}
-                </p>
-                <Button size="xs" variant="outline" onClick={() => onCopy(option.command)}>
-                  <Icon name={copiedCommand === option.command ? 'check' : 'clipboard'} className="size-3" />
-                  {copiedCommand === option.command ? t('opm.actions.copied') : t('opm.actions.copy')}
-                </Button>
-              </div>
-            ))}
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <p className="min-w-0 flex-1">{t('opm.question.replyOwn')}</p>
-              <Button size="xs" variant="outline" onClick={() => onCopy('/agent decide ')}>
-                <Icon name={copiedCommand === '/agent decide ' ? 'check' : 'clipboard'} className="size-3" />
-                {copiedCommand === '/agent decide ' ? t('opm.actions.copied') : t('opm.actions.copy')}
-              </Button>
-            </div>
-          </div>
+          <QuestionDecisionBlock
+            row={row}
+            onCopy={onCopy}
+            copiedCommand={copiedCommand}
+            decisionState={questionDecisionState}
+            onDecide={onQuestionDecide}
+          />
         ) : (
           <div className={cn(
             'mt-1.5 min-w-0 break-words rounded-md px-2 py-1.5 typography-ui-label',
@@ -740,11 +859,13 @@ export const OpmStatusOverlay = ({
   openSession = (sessionId, workspacePath) => useSessionUIStore.getState().setCurrentSession(sessionId, workspacePath),
   sendCommand = postOpmCommand,
   setPaused = postOpmPause,
+  sendQuestionDecision = postQuestionDecision,
 }: {
   loadStatus?: () => Promise<OpmStatusLoadResult>;
   openSession?: (sessionId: string, workspacePath: string | null) => void;
   sendCommand?: (row: OpmRow) => Promise<OpmCommandResult>;
   setPaused?: (paused: boolean) => Promise<OpmPauseResult>;
+  sendQuestionDecision?: (params: OpmQuestionDecisionParams) => Promise<OpmCommandResult>;
 }) => {
   const { locale, t } = useI18n();
   const [snapshot, setSnapshot] = React.useState<OpmSnapshot | null>(null);
@@ -754,6 +875,7 @@ export const OpmStatusOverlay = ({
   const [open, setOpen] = React.useState(false);
   const [copiedCommand, setCopiedCommand] = React.useState<string | null>(null);
   const [runStates, setRunStates] = React.useState<Record<string, RunState>>({});
+  const [questionDecisionStates, setQuestionDecisionStates] = React.useState<Record<string, QuestionDecisionState>>({});
   // Details stay collapsed until the owner opens them. Every summary remains
   // visible, including children, so the dashboard is useful at a glance.
   const [expandedOverrides, setExpandedOverrides] = React.useState<Record<string, boolean>>({});
@@ -871,6 +993,30 @@ export const OpmStatusOverlay = ({
       setRunStates((previous) => ({ ...previous, [key]: { status: 'error', message: result.error } }));
     }
   };
+  const submitQuestionDecision = async (row: OpmRow, optionKey: string | null, customText: string | null) => {
+    if (!row.question || !row.project) return;
+    const key = rowKey(row);
+    setQuestionDecisionStates((previous) => ({ ...previous, [key]: { status: 'pending', key: optionKey } }));
+    const result = await sendQuestionDecision({
+      project: row.project,
+      ref: row.ref,
+      questionId: row.question.id,
+      optionKey: optionKey ?? undefined,
+      customText: customText ?? undefined,
+    });
+    if (result.ok) {
+      setQuestionDecisionStates((previous) => ({ ...previous, [key]: { status: 'sent' } }));
+      window.setTimeout(() => {
+        setQuestionDecisionStates((previous) => {
+          const rest = { ...previous };
+          delete rest[key];
+          return rest;
+        });
+      }, SENT_RESET_MS);
+    } else {
+      setQuestionDecisionStates((previous) => ({ ...previous, [key]: { status: 'error', message: result.error } }));
+    }
+  };
   const togglePause = async () => {
     if (!snapshot.available) return;
     setPauseState({ pending: true, error: null });
@@ -900,6 +1046,8 @@ export const OpmStatusOverlay = ({
       if (element) rowSummaries.current.set(rowKey(row), element);
       else rowSummaries.current.delete(rowKey(row));
     } : undefined,
+    questionDecisionState: questionDecisionStates[rowKey(row)],
+    onQuestionDecide: (target: OpmRow, optionKey: string | null, customText: string | null) => void submitQuestionDecision(target, optionKey, customText),
   });
   const renderHierarchy = (rows: OpmTreeRow[], depth = 0): React.ReactNode => rows.map((row) => {
     const children = row.childRows;
