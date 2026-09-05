@@ -85,7 +85,9 @@ const canRunGit = () => {
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
+    // A git child process can still be closing files under .git when the test
+    // returns; on the macOS runners that surfaced as ENOTEMPTY from rmSync.
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
