@@ -361,7 +361,10 @@ jobs:
             writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
           }
           NODE
-          bun x electron-builder --project packages/electron \
+          # Same entry point as candidate-build: runs the workspace's pinned
+          # electron-builder from packages/electron, so afterPack and the
+          # dist output resolve against the project, not this shell's cwd.
+          node packages/electron/scripts/package.mjs \
             --prepackaged "$APP_PATH" --mac dmg zip --arm64 --publish=never \
             --config.mac.identity=null --config.mac.notarize=false
 
