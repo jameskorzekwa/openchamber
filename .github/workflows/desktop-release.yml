@@ -200,8 +200,14 @@ jobs:
           app='packages/electron/dist/mac-arm64/OpenChamber.app'
           [[ -d "$app" ]] || app='packages/electron/dist/mac/OpenChamber.app'
           test -d "$app"
-          if codesign -dv "$app" >/dev/null 2>&1; then
-            echo 'Candidate app must remain unsigned before crossing the signing boundary.' >&2
+          # Apple Silicon binaries always carry a linker ad-hoc signature, so
+          # `codesign -dv` succeeds on every arm64 Electron app. Only an
+          # identity signature (an Authority line) means the candidate crossed
+          # the signing boundary early.
+          signature="$(codesign -dvv "$app" 2>&1 || true)"
+          if grep -q '^Authority=' <<<"$signature"; then
+            echo 'Candidate app must not carry an identity signature before crossing the signing boundary.' >&2
+            printf '%s\n' "$signature" >&2
             exit 1
           fi
           revision="$(node -p 'require(process.argv[1]).revision' "$app/Contents/Resources/web-dist/build-revision.json")"
