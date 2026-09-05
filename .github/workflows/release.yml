@@ -378,6 +378,9 @@ jobs:
       base_version: ${{ needs.metadata.outputs.base_version }}
       revision: ${{ needs.metadata.outputs.revision }}
       release_date: ${{ needs.metadata.outputs.release_date }}
+    # A called workflow sees no repository secrets unless the caller passes
+    # them; sign-and-verify needs the private signing certificate.
+    secrets: inherit
 
   publish:
     if: >-
