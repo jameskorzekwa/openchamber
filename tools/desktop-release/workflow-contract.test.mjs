@@ -27,7 +27,7 @@ test('private signing is fingerprint-pinned and never requests Apple notarizatio
   assert.match(desktopWorkflow, /actual_sha256.*expected_sha256/);
   assert.match(desktopWorkflow, /sudo security add-trusted-cert -d -r trustRoot -p codeSign -k \/Library\/Keychains\/System\.keychain "\$leaf"/);
   assert.match(desktopWorkflow, /security find-identity -v -p codesigning/);
-  assert.match(desktopWorkflow, /import \{ signAsync \} from '@electron\/osx-sign'/);
+  assert.match(desktopWorkflow, /const \{ signAsync \} = createRequire\(appBuilderLib\)\('@electron\/osx-sign'\)/);
   assert.match(desktopWorkflow, /--certificate-sha256/);
   assert.doesNotMatch(desktopWorkflow, /APPLE_ID|APPLE_PASSWORD|APPLE_TEAM_ID|notarytool|stapler staple/);
   assert.match(macVerifier, /`--extract-certificates=\$\{prefix\}`/);

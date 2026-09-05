@@ -328,8 +328,15 @@ jobs:
         run: |
           set -euo pipefail
           APP_PATH="$APP_PATH" CSC_NAME="$CSC_NAME" CSC_KEYCHAIN="$CSC_KEYCHAIN" node --input-type=module <<'NODE'
-          import { signAsync } from '@electron/osx-sign';
+          import { createRequire } from 'node:module';
+          import { realpathSync } from 'node:fs';
           import { resolve } from 'node:path';
+          // Bun's isolated linker does not hoist app-builder-lib's transitive
+          // @electron/osx-sign, so resolve it the way electron-builder does:
+          // from electron-builder to app-builder-lib to osx-sign.
+          const electronBuilder = realpathSync(resolve('packages/electron/node_modules/electron-builder/package.json'));
+          const appBuilderLib = createRequire(electronBuilder).resolve('app-builder-lib/package.json');
+          const { signAsync } = createRequire(appBuilderLib)('@electron/osx-sign');
           const entitlements = resolve('packages/electron/resources/entitlements.mac.plist');
           await signAsync({
             app: process.env.APP_PATH,
