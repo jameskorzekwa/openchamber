@@ -609,9 +609,12 @@ jobs:
           }
           NODE
 
-          releases="$(gh api --paginate "repos/${{ github.repository }}/releases?per_page=100" --slurp)"
-          desktop_release_json="$(RELEASES="$releases" RELEASE_TAG="$DESKTOP_RELEASE_TAG" node <<'NODE'
-          const matches = JSON.parse(process.env.RELEASES).flat().filter((release) => release.tag_name === process.env.RELEASE_TAG);
+          # The full listing exceeds ARG_MAX as an environment value
+          # ("node: Argument list too long"); hand it over through a file.
+          desktop_releases_file="$RUNNER_TEMP/desktop-releases.json"
+          gh api --paginate "repos/${{ github.repository }}/releases?per_page=100" --slurp > "$desktop_releases_file"
+          desktop_release_json="$(RELEASES_FILE="$desktop_releases_file" RELEASE_TAG="$DESKTOP_RELEASE_TAG" node <<'NODE'
+          const matches = JSON.parse(require('node:fs').readFileSync(process.env.RELEASES_FILE, 'utf8')).flat().filter((release) => release.tag_name === process.env.RELEASE_TAG);
           if (matches.length > 1) throw new Error(`Multiple releases use ${process.env.RELEASE_TAG}`);
           if (matches[0]) process.stdout.write(JSON.stringify(matches[0]));
           NODE
