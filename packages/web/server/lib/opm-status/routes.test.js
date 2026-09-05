@@ -60,6 +60,30 @@ describe('OPM owner guidance and classification', () => {
     expect(snapshot.groups.active[0]).toMatchObject({ state: 'implemented', action: 'active' });
   });
 
+  it('keeps an item whose lifecycle effect is due on the board instead of dropping it between polls', () => {
+    // OPM moves such an item into its fourth bucket, pendingOperations; the
+    // dashboard read three and the row vanished until the effect was deferred
+    // again (heirloom#856 flickered 5 <-> 3 on 2026-09-05).
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({ ref: '820', phase: 'waiting_external', reason: 'waiting on 4/5 chunks' })],
+        pendingOperations: [entry({
+          ref: '856',
+          phase: 'active',
+          action: 'remediating',
+          parentRef: '854',
+          effect: { kind: 'session.wake', status: 'pending', attempts: 0, error: null },
+          nextAction: 'session.wake is queued for the supervisor.',
+        })],
+      },
+      status: { ok: true },
+    });
+
+    expect(snapshot.groups.active.map((row) => row.ref)).toEqual(['856']);
+    expect(snapshot.groups.active[0]).toMatchObject({ activityState: 'pending', action: 'remediating' });
+    expect(snapshot.counts).toEqual({ needsYou: 0, blocked: 0, active: 1, waiting: 1, queued: 0 });
+  });
+
   it('promotes authorization and dead-letter rows into needs-you with exact commands', () => {
     const snapshot = buildSnapshot({
       activity: {
