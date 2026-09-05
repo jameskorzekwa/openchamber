@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import YAML from 'yaml';
 
 const desktopWorkflow = readFileSync(new URL('../../.github/workflows/desktop-release.yml', import.meta.url), 'utf8');
 const releaseWorkflow = readFileSync(new URL('../../.github/workflows/release.yml', import.meta.url), 'utf8');
@@ -133,4 +135,31 @@ test('all release secrets are protected by the trusted-branch environment', () =
   assert.match(releaseWorkflow.slice(releaseWorkflow.indexOf('  publish:')), /environment: j2k-release/);
   assert.doesNotMatch(releaseWorkflow, /secrets:\n      MACOS_PRIVATE_CERTIFICATE/);
   assert.doesNotMatch(recoveryWorkflow, /secrets\.UPSTREAM_SYNC_TOKEN/);
+});
+
+test('every workflow run block is parseable bash, including heredoc terminators', () => {
+  // A `<<'NODE'` heredoc ends only at a `NODE` line in column 0 of the run
+  // block. An indented terminator inside an if/subshell swallows the rest of
+  // the script, and bash reports "unexpected end of file" at runtime; this
+  // stopped the release metadata job before any release was cut.
+  const workflows = [
+    ['desktop-release.yml', desktopWorkflow],
+    ['release.yml', releaseWorkflow],
+    ['sync-upstream.yml', syncWorkflow],
+    ['recover-upstream-release.yml', recoveryWorkflow],
+    ['validate.yml', validateWorkflow],
+  ];
+  const failures = [];
+  for (const [name, source] of workflows) {
+    const jobs = YAML.parse(source).jobs ?? {};
+    for (const [jobName, job] of Object.entries(jobs)) {
+      (job.steps ?? []).forEach((step, index) => {
+        const script = String(step.run ?? '').replace(/\$\{\{[^}]*\}\}/g, 'expression');
+        if (script === '') return;
+        const result = spawnSync('bash', ['-n'], { input: script, encoding: 'utf8' });
+        if (result.status !== 0) failures.push(`${name} ${jobName} step ${index} (${step.name ?? 'unnamed'}): ${result.stderr.trim()}`);
+      });
+    }
+  }
+  assert.deepEqual(failures, []);
 });
