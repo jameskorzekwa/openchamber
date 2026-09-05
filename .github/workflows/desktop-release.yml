@@ -343,6 +343,11 @@ jobs:
             platform: 'darwin',
             identity: process.env.CSC_NAME,
             keychain: process.env.CSC_KEYCHAIN,
+            // The private certificate is trusted for the codeSign policy only,
+            // so osx-sign's `security find-identity -v` (basic policy) lists
+            // nothing. The install step already proved the SHA-1 is present
+            // under `-p codesigning`; let codesign resolve it directly.
+            identityValidation: false,
             preAutoEntitlements: false,
             preEmbedProvisioningProfile: false,
             optionsForFile: () => ({ entitlements, hardenedRuntime: true, timestamp: 'none' }),
