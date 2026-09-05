@@ -224,7 +224,7 @@ jobs:
             if (baseOrder > 0 || (baseOrder === 0 && currentRevision > Number(process.env.TARGET_REVISION))) {
               throw new Error(`Refusing to rewind j2k/current from ${process.env.CURRENT_BASE}-j2k.${currentRevision}`);
             }
-            NODE
+          NODE
           fi
           BRANCH="$source_ref" COMMIT="$source_commit" SERIES_COMMIT="$patch_series_source" PREVIOUS_BASE="$previous_base_tag" node <<'NODE'
           const { writeFileSync } = require('node:fs');
@@ -491,7 +491,7 @@ jobs:
               if (current[index] < target[index]) break;
               if (current[index] > target[index]) throw new Error(`Refusing to rewind desktop-channel from ${process.env.CURRENT_VERSION}`);
             }
-            NODE
+          NODE
           fi
 
           tag_commit="$(git -C "$repo" ls-remote origin "refs/tags/$RELEASE_TAG^{}" | cut -f1)"
