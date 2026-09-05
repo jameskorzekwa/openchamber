@@ -43,7 +43,7 @@ test('candidate build has no write token and publisher runs trusted verifier onl
   assert.doesNotMatch(build, /MACOS_PRIVATE_CERTIFICATE|CSC_NAME|CSC_KEYCHAIN/);
   assert.match(signer, /ref: \$\{\{ github\.workflow_sha \}\}/);
   assert.match(signer, /environment: j2k-release/);
-  assert.match(signer, /Unsigned candidate acquired a signature before the trusted signing job/);
+  assert.match(signer, /Unsigned candidate acquired an identity signature before the trusted signing job/);
   assert.match(build, /--unsigned true/);
   assert.match(signer, /--skip-cli-execution true/);
   assert.match(macVerifier, /if \(!skipCliExecution\)/);
