@@ -1,8 +1,8 @@
-version: 1.21.0-j2k.5
+version: 1.21.0-j2k.21
 files:
-  - url: https://github.com/jameskorzekwa/openchamber/releases/download/desktop-v1.21.0-j2k.5/OpenChamber-1.21.0-j2k.5-mac-arm64.zip
-    sha512: ZBD+3XSBtZA88VgOQhG0FEWaIIFtcPcZZ+EbHNgvvnz9vFZOkdVn3xrQKlJZjZVTIVmzHUi+h+zLKdJ0F9qy7w==
-    size: 206054418
-path: https://github.com/jameskorzekwa/openchamber/releases/download/desktop-v1.21.0-j2k.5/OpenChamber-1.21.0-j2k.5-mac-arm64.zip
-sha512: ZBD+3XSBtZA88VgOQhG0FEWaIIFtcPcZZ+EbHNgvvnz9vFZOkdVn3xrQKlJZjZVTIVmzHUi+h+zLKdJ0F9qy7w==
-releaseDate: '2026-09-03T05:35:59.000Z'
+  - url: https://github.com/jameskorzekwa/openchamber/releases/download/desktop-v1.21.0-j2k.21/OpenChamber-1.21.0-j2k.21-mac-arm64.zip
+    sha512: ncn+t54iG3JZ4Cs7Pz5oo4hZ/cAxKMN4gm8r5FOHGBKb7+KQ62hh4Uwk1aJXeY9x2rwXDPX/72dIr8suS0PCLg==
+    size: 205970183
+path: https://github.com/jameskorzekwa/openchamber/releases/download/desktop-v1.21.0-j2k.21/OpenChamber-1.21.0-j2k.21-mac-arm64.zip
+sha512: ncn+t54iG3JZ4Cs7Pz5oo4hZ/cAxKMN4gm8r5FOHGBKb7+KQ62hh4Uwk1aJXeY9x2rwXDPX/72dIr8suS0PCLg==
+releaseDate: '2026-09-05T08:29:49.000Z'
