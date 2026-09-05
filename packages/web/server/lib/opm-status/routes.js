@@ -419,6 +419,31 @@ export const isCommandAllowed = (snapshot, { project, ref, command }) => {
     && (snapshot.supervisor?.attention ?? []).some((item) => String(item.ref) === String(ref));
 };
 
+// Validate that a question decision can be submitted. The question ID must
+// match the current snapshot's question for that (project, ref), and either
+// the option key must exist or custom text is allowed. Returns the full
+// command to post, or null if validation fails.
+export const validateQuestionDecision = (snapshot, { project, ref, questionId, optionKey, customText }) => {
+  if (!snapshot?.available) return null;
+  const rows = collectRows(snapshot)
+    .filter((row) => String(row.project) === String(project) && String(row.ref) === String(ref));
+  for (const row of rows) {
+    if (!row.question || row.question.id !== questionId) continue;
+    // Option key submission: find the matching option and return its command
+    if (optionKey !== undefined && optionKey !== null) {
+      const option = row.question.options.find((opt) => opt.key === optionKey);
+      if (option) return option.command;
+      return null; // Invalid option key
+    }
+    // Custom text submission: construct the decide command
+    if (typeof customText === 'string' && customText.trim().length > 0) {
+      return `/agent decide ${customText.trim()}`;
+    }
+    return null; // No valid option or custom text
+  }
+  return null; // Question not found or ID mismatch
+};
+
 const parseJsonBody = express.json({ limit: '256kb' });
 
 const fetchJson = async (url) => {
@@ -514,6 +539,65 @@ export function registerOpmStatusRoutes(app, options = {}) {
       }
       // The comment changes OPM state; poll now so the next snapshot reflects
       // reality sooner than the regular interval would.
+      void poller.poll();
+      return res.json({ ok: true });
+    } catch (error) {
+      return res.status(500).json({ ok: false, error: error?.message || 'unexpected error' });
+    }
+  });
+
+  // Answer an OPM question by submitting an option key or custom text. The
+  // question ID must match the current snapshot to prevent stale submissions.
+  app.post('/api/opm/question/decide', parseJsonBody, async (req, res) => {
+    try {
+      const body = req.body;
+      const project = typeof body?.project === 'string' ? body.project : null;
+      const ref = typeof body?.ref === 'string' || typeof body?.ref === 'number' ? String(body.ref) : null;
+      const questionId = typeof body?.questionId === 'string' ? body.questionId : null;
+      const optionKey = typeof body?.optionKey === 'string' ? body.optionKey : null;
+      const customText = typeof body?.customText === 'string' ? body.customText : null;
+
+      if (!project || !ref || !questionId) {
+        return res.status(400).json({ ok: false, error: 'project, ref, and questionId are required' });
+      }
+      if (optionKey === null && customText === null) {
+        return res.status(400).json({ ok: false, error: 'Either optionKey or customText is required' });
+      }
+
+      const command = validateQuestionDecision(poller.current(), { project, ref, questionId, optionKey, customText });
+      if (!command) {
+        return res.status(400).json({
+          ok: false,
+          error: optionKey !== null
+            ? `Invalid option or stale question for ${project}#${ref}. Refresh and try again.`
+            : `Question is stale or invalid for ${project}#${ref}. Refresh and try again.`,
+        });
+      }
+
+      const repo = resolveRepo(config, project);
+      if (!repo) {
+        return res.status(400).json({
+          ok: false,
+          error: `No GitHub repository is configured for project "${project}". Add a repos entry to ~/.config/openchamber-opm-status.json.`,
+        });
+      }
+
+      try {
+        await new Promise((resolve, reject) => {
+          execFile(
+            'gh',
+            ['issue', 'comment', ref, '--repo', repo, '--body', command],
+            { timeout: COMMAND_TIMEOUT_MS },
+            (error, _stdout, stderr) => {
+              if (error) reject(new Error(String(stderr || error.message || error).trim() || 'gh issue comment failed'));
+              else resolve(undefined);
+            },
+          );
+        });
+      } catch (error) {
+        return res.status(502).json({ ok: false, error: error?.message || 'gh issue comment failed' });
+      }
+
       void poller.poll();
       return res.json({ ok: true });
     } catch (error) {
