@@ -129,15 +129,16 @@ describe('OpenChamber validated update routes', () => {
     try {
       await fsp.mkdir(actualInstallRoot);
       await fsp.symlink(actualInstallRoot, configuredInstallRoot);
+      const canonicalInstallRoot = await fsp.realpath(actualInstallRoot);
       const { dependencies } = createApp({
         environment: { OPENCHAMBER_MANAGED_INSTALL_ROOT: configuredInstallRoot },
         survivingTransaction: { schemaVersion: 3, transactionId },
       });
-      expect(dependencies.createValidatedReleaseInstaller).toHaveBeenCalledWith(expect.objectContaining({ installRoot: actualInstallRoot }));
+      expect(dependencies.createValidatedReleaseInstaller).toHaveBeenCalledWith(expect.objectContaining({ installRoot: canonicalInstallRoot }));
       await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
       expect(spawn).toHaveBeenCalledWith(process.execPath, expect.arrayContaining([
         '--delayed-fallback',
-        path.join(actualInstallRoot, 'restart-transaction.json'),
+        path.join(canonicalInstallRoot, 'restart-transaction.json'),
         '--transaction-id',
         transactionId,
       ]), expect.objectContaining({ detached: true }));

@@ -9,7 +9,7 @@ import { openOpmRowSession, parseOpmSnapshot, type OpmStatusLoadResult } from '.
 
 const availableResult = (): OpmStatusLoadResult => {
   const workRow = {
-    project: 'openchamber', projectName: 'OpenChamber', ref: '1', title: 'Port status', phase: 'active', activityState: 'working',
+    project: 'openchamber', projectName: 'OpenChamber', ref: '1', title: 'Port status', phase: 'active', state: 'implemented', action: 'active', activityState: 'working',
     parentRef: null, branch: 'j2k/v1.21.0', sessionId: 'ses_opm', workspacePath: '/repo/worktree', reason: null, nextAction: null,
     updatedAt: 100, effect: null, children: [], kind: null, command: null, owner: { required: false, instruction: 'Nothing needed.' }, url: null,
   };

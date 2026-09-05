@@ -20,7 +20,11 @@ defaults:
 
 jobs:
   sync:
+    if: >-
+      github.ref == 'refs/heads/j2k/current' &&
+      github.workflow_ref == format('{0}/.github/workflows/sync-upstream.yml@refs/heads/j2k/current', github.repository)
     runs-on: ubuntu-latest
+    environment: j2k-release
     timeout-minutes: 20
     steps:
       - name: Check out fork
@@ -39,6 +43,7 @@ jobs:
       - name: Fast-forward mirror main
         env:
           GH_TOKEN: ${{ github.token }}
+          UPSTREAM_SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
         run: |
           set -euo pipefail
           if ! git merge-base --is-ancestor origin/main upstream/main; then
@@ -49,15 +54,31 @@ jobs:
             echo 'origin/main is not an ancestor of upstream/main; refusing to force-push the mirror.' >&2
             exit 1
           fi
-          git push origin upstream/main:refs/heads/main
+          if [[ -z "$UPSTREAM_SYNC_TOKEN" ]]; then
+            echo 'UPSTREAM_SYNC_TOKEN is required to update the upstream mirror.' >&2
+            exit 1
+          fi
+          authorization="$(printf 'x-access-token:%s' "$UPSTREAM_SYNC_TOKEN" | base64 | tr -d '\n')"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $authorization" \
+            push origin upstream/main:refs/heads/main
           test "$(git rev-parse upstream/main)" = "$(git ls-remote origin refs/heads/main | cut -f1)"
 
       - name: Rebase patch series onto newest upstream release
         id: rebase
         env:
           GH_TOKEN: ${{ github.token }}
+          UPSTREAM_SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
         run: |
           set -euo pipefail
+          if [[ -z "$UPSTREAM_SYNC_TOKEN" ]]; then
+            echo 'UPSTREAM_SYNC_TOKEN is required for candidate ref writes.' >&2
+            exit 1
+          fi
+          push_release_ref() {
+            local authorization
+            authorization="$(printf 'x-access-token:%s' "$UPSTREAM_SYNC_TOKEN" | base64 | tr -d '\n')"
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $authorization" push origin "$@"
+          }
           latest_tag=''
           while IFS= read -r candidate; do
             if [[ "$candidate" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && git merge-base --is-ancestor "$candidate" upstream/main; then
@@ -119,37 +140,70 @@ jobs:
               exit 0
             fi
             echo "Redispatching validation for stranded branch $branch at $branch_sha."
-            printf 'changed=true\nbranch=%s\n' "$branch" >> "$GITHUB_OUTPUT"
+            printf 'dispatch=true\nbranch=%s\n' "$branch" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          series_commit="$(git rev-parse "$series_ref^{commit}")"
+          upstream_commit="$(git rev-parse "$latest_tag^{commit}")"
           git switch --create "$branch" "$series_ref"
           if ! git rebase --onto "$latest_tag" "$current_tag"; then
             conflicts="$(git diff --name-only --diff-filter=U)"
             status="$(git status --short)"
+            failed_patch="$(git rev-parse REBASE_HEAD)"
             git rebase --abort
-            git push origin "$series_ref:refs/heads/$branch"
-            title="Rebase conflict: patch series vs $latest_tag"
+            GH_TOKEN="$UPSTREAM_SYNC_TOKEN" gh api --method POST "repos/${{ github.repository }}/git/refs" \
+              -f ref="refs/heads/$branch" -f sha="$series_commit" >/dev/null
+            recovery="$RUNNER_TEMP/upstream-recovery.json"
             body="$RUNNER_TEMP/rebase-conflict.md"
-            {
-              printf 'The scheduled rebase from `%s` onto `%s` stopped on conflicts.\n\n' "$current_tag" "$latest_tag"
-              printf 'A recovery branch was created at `%s`; resolve and rebase it without rewriting `main`.\n\n' "$branch"
-              printf '## Conflicting files\n\n```text\n%s\n```\n\n' "${conflicts:-<none reported>}"
-              printf '## Rebase status\n\n```text\n%s\n```\n' "${status:-<empty>}"
-            } > "$body"
-            if [[ "$(gh issue list --state open --search "in:title $title" --json title --jq "map(select(.title == \"$title\")) | length")" == 0 ]]; then
-              gh issue create --title "$title" --body-file "$body"
+            title_file="$RUNNER_TEMP/rebase-conflict-title"
+            UPSTREAM_COMMIT="$upstream_commit" UPSTREAM_TAG="$latest_tag" PREVIOUS_BASE="$current_tag" \
+              SERIES_COMMIT="$series_commit" BRANCH="$branch" FAILED_PATCH="$failed_patch" \
+              CONFLICTS="$conflicts" STATUS="$status" WORKFLOW_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              RECOVERY="$recovery" node <<'NODE'
+            const { writeFileSync } = require('node:fs');
+            const conflicts = process.env.CONFLICTS.split('\n').filter(Boolean);
+            writeFileSync(process.env.RECOVERY, JSON.stringify({
+              failureKind: 'rebase-conflict',
+              upstreamRepository: 'openchamber/openchamber',
+              upstreamTag: process.env.UPSTREAM_TAG,
+              upstreamCommit: process.env.UPSTREAM_COMMIT,
+              previousBaseTag: process.env.PREVIOUS_BASE,
+              patchSeriesSourceCommit: process.env.SERIES_COMMIT,
+              candidateBranch: process.env.BRANCH,
+              failedPatchCommit: process.env.FAILED_PATCH,
+              conflictingFiles: conflicts,
+              logs: process.env.STATUS,
+              workflowUrl: process.env.WORKFLOW_URL,
+              recreateCommands: [
+                'git fetch origin j2k/current ' + process.env.BRANCH,
+                'git fetch https://github.com/openchamber/openchamber.git ' + process.env.UPSTREAM_TAG,
+                'git switch --force-create ' + process.env.BRANCH + ' ' + process.env.SERIES_COMMIT,
+                'git rebase --onto ' + process.env.UPSTREAM_TAG + ' ' + process.env.PREVIOUS_BASE,
+              ],
+            }, null, 2));
+            NODE
+            node tools/desktop-release/upstream-recovery.mjs --input "$recovery" --body "$body" --title "$title_file"
+            title="$(<"$title_file")"
+
+            issue_number="$(gh issue list --repo "${{ github.repository }}" --state open --search "in:title $title" \
+              --json number,title --jq "map(select(.title == \"$title\")) | first | .number // empty")"
+            if [[ -z "$issue_number" ]]; then
+              gh issue create --repo "${{ github.repository }}" --title "$title" --body-file "$body" --label opm:ready
+            else
+              gh issue edit "$issue_number" --repo "${{ github.repository }}" --body-file "$body" --add-label opm:ready
+              gh issue reopen "$issue_number" --repo "${{ github.repository }}" 2>/dev/null || true
             fi
             exit 1
           fi
 
-          git push origin "HEAD:refs/heads/$branch"
-          printf 'changed=true\nbranch=%s\n' "$branch" >> "$GITHUB_OUTPUT"
+          push_release_ref "HEAD:refs/heads/$branch"
+          echo 'dispatch=false' >> "$GITHUB_OUTPUT"
 
       - name: Dispatch validation for rebased branch
-        if: steps.rebase.outputs.changed == 'true'
+        if: steps.rebase.outputs.dispatch == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

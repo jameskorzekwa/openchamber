@@ -140,46 +140,28 @@ jobs:
       startsWith(github.ref_name, 'j2k/v')
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
-      issues: write
+      issues: read
     steps:
-      - name: Create, update, or close validation issue
+      - name: Check out trusted recovery renderer
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Defer failure recovery to trusted workflow-run handler
         env:
-          GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.ref_name }}
-          SOURCE_COMMIT: ${{ github.sha }}
           RESULT: ${{ needs.validate.result }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           if [[ ! "$BRANCH" =~ ^j2k/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Ignoring non-release branch $BRANCH."
             exit 0
           fi
-          title="Validation failed: $BRANCH"
-          issue_number="$(gh issue list --repo "${{ github.repository }}" --state all \
-            --search "in:title $title" --json number,title \
-            --jq "map(select(.title == \"$title\")) | first | .number // empty")"
           if [[ "$RESULT" == 'success' ]]; then
-            if [[ -n "$issue_number" ]]; then
-              state="$(gh issue view "$issue_number" --repo "${{ github.repository }}" --json state --jq .state)"
-              if [[ "$state" == 'OPEN' ]]; then
-                gh issue close "$issue_number" --repo "${{ github.repository }}" \
-                  --comment "Validation passed for exact commit \`$SOURCE_COMMIT\`: $RUN_URL"
-              fi
-            fi
             exit 0
           fi
-
-          body="$RUNNER_TEMP/validation-failure.md"
-          printf 'Validation for `%s` failed at exact commit `%s`.\n\nRun: %s\n\nFix this branch and push it, or rerun **J2K Sync Upstream** to redispatch validation of the unchanged stranded commit.\n' \
-            "$BRANCH" "$SOURCE_COMMIT" "$RUN_URL" > "$body"
-          if [[ -z "$issue_number" ]]; then
-            gh issue create --repo "${{ github.repository }}" --title "$title" --body-file "$body"
-          else
-            gh issue edit "$issue_number" --repo "${{ github.repository }}" --body-file "$body"
-            state="$(gh issue view "$issue_number" --repo "${{ github.repository }}" --json state --jq .state)"
-            if [[ "$state" != 'OPEN' ]]; then
-              gh issue reopen "$issue_number" --repo "${{ github.repository }}"
-            fi
-          fi
+          echo "Validation ended with $RESULT; converting it to a failure for the trusted workflow-run recovery handler." >&2
+          exit 1

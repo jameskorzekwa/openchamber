@@ -24,6 +24,8 @@ const MAX_FILE_BYTES = 128 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 50_000;
 const MAX_TAR_METADATA_BYTES = 64 * 1024;
 const MAX_REDIRECTS = 5;
+const REQUEST_TIMEOUT_MS = 30_000;
+const ARCHIVE_DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 const LOCK_STALE_MS = 30 * 60 * 1000;
 const TAR_BLOCK_SIZE = 512;
 const MODULE_PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -214,16 +216,17 @@ function validateFetchUrl(value, mode, initialUrl) {
   return url;
 }
 
-async function fetchWithRedirects(fetchImpl, value, label, githubToken) {
+async function fetchWithRedirects(fetchImpl, value, label, options = {}) {
   const initialUrl = new URL(value);
   const mode = initialUrl.hostname === 'api.github.com' ? 'api' : 'asset';
+  const signal = AbortSignal.timeout(options.timeoutMs || REQUEST_TIMEOUT_MS);
   let url = validateFetchUrl(initialUrl, mode, initialUrl);
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
     const headers = { Accept: mode === 'api' ? 'application/vnd.github+json' : 'application/octet-stream', 'User-Agent': 'openchamber-validated-updater' };
-    if (mode === 'api' && githubToken) headers.Authorization = `Bearer ${githubToken}`;
+    if (mode === 'api' && options.githubToken) headers.Authorization = `Bearer ${options.githubToken}`;
     const response = await fetchImpl(url.href, {
       headers,
-      signal: AbortSignal.timeout(30_000),
+      signal,
       redirect: 'manual',
     });
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
@@ -236,7 +239,7 @@ async function fetchWithRedirects(fetchImpl, value, label, githubToken) {
 }
 
 async function fetchBytes(fetchImpl, url, limit, label, options = {}) {
-  const response = await fetchWithRedirects(fetchImpl, url, label, options.githubToken);
+  const response = await fetchWithRedirects(fetchImpl, url, label, options);
   if (options.noReleaseOn404 && response.status === 404) throw new NoValidatedReleaseError();
   if (!response.ok) fail(`${label} request failed with ${response.status}`);
   return readResponseBytes(response, limit, label);
@@ -450,7 +453,7 @@ async function buildTreeManifest(directory) {
 }
 
 async function downloadArchive(fetchImpl, url, destination, expectedSize, expectedSha256) {
-  const response = await fetchWithRedirects(fetchImpl, url, 'OpenChamber archive');
+  const response = await fetchWithRedirects(fetchImpl, url, 'OpenChamber archive', { timeoutMs: ARCHIVE_DOWNLOAD_TIMEOUT_MS });
   if (!response.ok) fail(`OpenChamber archive request failed with ${response.status}`);
   const contentLength = response.headers.get('content-length');
   const declaredLength = contentLength === null ? null : Number(contentLength);
@@ -899,7 +902,8 @@ export function createValidatedReleaseInstaller(options = {}) {
     );
     const upstreamTagUrl = `https://api.github.com/repos/openchamber/openchamber/commits/${encodeURIComponent(channel.upstreamTag || `v${channel.baseVersion}`)}`;
     const upstreamCommit = parseTagCommit(await fetchJson(fetchImpl, upstreamTagUrl, 'GitHub upstream tag metadata', { githubToken }));
-    const compareUrl = `https://api.github.com/repos/${repository}/compare/${upstreamCommit}...${channel.sourceCommit}`;
+    // GitHub includes changed-file patches only on page 1; later pages retain the ancestry fields.
+    const compareUrl = `https://api.github.com/repos/${repository}/compare/${upstreamCommit}...${channel.sourceCommit}?per_page=1&page=2`;
     parseCompare(await fetchJson(fetchImpl, compareUrl, 'GitHub upstream ancestry metadata', { githubToken }), upstreamCommit, channel.sourceCommit);
     const releaseAssetNames = release.assets.map((asset) => asset.name).sort();
     if (JSON.stringify(releaseAssetNames) !== JSON.stringify([...channel.assets].sort())) {

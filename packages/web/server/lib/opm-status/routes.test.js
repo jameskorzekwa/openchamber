@@ -4,6 +4,7 @@ import {
   buildSnapshot,
   createOpmStatusPoller,
   isCommandAllowed,
+  laneFor,
   ownerGuidance,
   registerOpmStatusRoutes,
   resolveRepo,
@@ -16,6 +17,8 @@ const entry = (overrides = {}) => ({
   ref: '100',
   title: 'Port OPM status',
   phase: 'active',
+  state: 'implemented',
+  action: 'active',
   updatedAt: '2026-08-26T12:00:00.000Z',
   ...overrides,
 });
@@ -54,6 +57,7 @@ describe('OPM owner guidance and classification', () => {
     expect(snapshot.groups.active.map((row) => row.ref)).toEqual(['1']);
     expect(snapshot.groups.waiting.map((row) => row.ref)).toEqual(['2']);
     expect(snapshot.groups.queued.map((row) => row.ref)).toEqual(['4']);
+    expect(snapshot.groups.active[0]).toMatchObject({ state: 'implemented', action: 'active' });
   });
 
   it('promotes authorization and dead-letter rows into needs-you with exact commands', () => {
@@ -72,6 +76,86 @@ describe('OPM owner guidance and classification', () => {
     expect(snapshot.groups.needsYou[1]).toMatchObject({ kind: 'dead-letter', command: '/agent resume', owner: { required: true } });
   });
 
+  it('preserves owner questions and classifies them only as needs-you', () => {
+    const question = {
+      id: 'question-1',
+      askedBy: 'worker',
+      text: 'Which release path should I use?',
+      options: [
+        { key: 'A', label: 'Stable', detail: 'Use the stable channel', command: '/agent decide A' },
+        { key: 'B', label: 'Preview', detail: 'Use the preview channel', command: '/agent decide B' },
+      ],
+      url: 'https://github.com/owner/openchamber/issues/12#issuecomment-1',
+    };
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '12',
+          phase: 'waiting_external',
+          needsOwnerDecision: true,
+          question,
+        })],
+      },
+      status: { ok: true },
+    });
+
+    expect(snapshot.counts).toEqual({ needsYou: 1, blocked: 0, active: 0, waiting: 0, queued: 0 });
+    expect(snapshot.groups.needsYou[0]).toMatchObject({
+      kind: 'owner-question',
+      needsOwnerDecision: true,
+      question,
+      command: null,
+      owner: { required: true },
+    });
+  });
+
+  it('classifies waiting_owner decisions as needs-you with the supervisor command, not only legacy authorisation', () => {
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({ ref: '115', phase: 'waiting_owner', action: 'waiting_owner', needsOwnerDecision: true, decisionCommand: '/agent decide <your decision and authorization>', reason: 'owner decision required: review rejected a641a8b8' })],
+      },
+      status: { ok: true, running: true },
+    });
+    expect(snapshot.groups.needsYou.map((row) => row.ref)).toEqual(['115']);
+    expect(snapshot.groups.needsYou[0].kind).toBe('needs-owner');
+    expect(snapshot.groups.needsYou[0].command).toBe('/agent decide <your decision and authorization>');
+    expect(snapshot.groups.blocked).toEqual([]);
+  });
+
+  it('groups rows by project into owner lanes and passes through urls, alias, active time, completed', () => {
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [
+          entry({ project: 'hh', projectName: 'Heirloom', alias: 'hh', ref: '1', phase: 'waiting_owner', action: 'waiting_owner', needsOwnerDecision: true, decisionCommand: '/agent decide A', url: 'https://x/1' }),
+          entry({ project: 'hh', projectName: 'Heirloom', alias: 'hh', ref: '2', phase: 'waiting_external', action: 'waiting_external', reason: 'waiting for checks on abc', activeMs: 5000 }),
+        ],
+        active: [entry({ project: 'hh', projectName: 'Heirloom', alias: 'hh', ref: '3', phase: 'active', action: 'reviewing', sessionId: 'ses_1', activeMs: 100, activeSince: '2026-09-02T00:00:00Z' })],
+        queued: [entry({ project: 'opm', projectName: 'OPM', alias: 'opm', ref: '4', phase: 'planned', action: 'queued', reason: 'queued: project is at its 1-worker limit' })],
+        completed: [{ project: 'hh', projectName: 'Heirloom', alias: 'hh', ref: '9', title: 'Done', url: 'https://x/9', completedAt: '2026-09-02T00:00:00Z', activeMs: 42 }],
+        completedTotal: 7,
+      },
+      status: { ok: true, running: true, projects: [
+        { projectId: 'u1', project: 'hh', projectName: 'Heirloom' },
+        { projectId: 'u2', project: 'opm', projectName: 'OPM' },
+        { projectId: 'u3', project: 'ducks', projectName: 'QuickDucks' },
+      ] },
+      issueUrls: { opm: 'https://map/{ref}' },
+    });
+    expect(snapshot.byProject.map((group) => [group.project, group.counts])).toEqual([
+      ['hh', { needsYou: 1, running: 1, waiting: 1, backlog: 0 }],
+      ['opm', { needsYou: 0, running: 0, waiting: 0, backlog: 1 }],
+      ['ducks', { needsYou: 0, running: 0, waiting: 0, backlog: 0 }],
+    ]);
+    expect(snapshot.byProject[0].items.map((item) => [item.ref, item.lane])).toEqual([['1', 'needsYou'], ['3', 'running'], ['2', 'waiting']]);
+    expect(snapshot.byProject[0].items[0].url).toBe('https://x/1');
+    expect(snapshot.byProject[0].items[1].activeSince).toBe('2026-09-02T00:00:00Z');
+    expect(snapshot.byProject[0].items[2].activeMs).toBe(5000);
+    expect(snapshot.byProject[1].items[0].url).toBe('https://map/4');
+    expect(snapshot.completed).toEqual([{ project: 'hh', projectName: 'Heirloom', alias: 'hh', ref: '9', title: 'Done', url: 'https://x/9', completedAt: '2026-09-02T00:00:00Z', activeMs: 42 }]);
+    expect(snapshot.completedTotal).toBe(7);
+    expect(laneFor({ phase: 'active', action: 'active', sessionId: null, reason: null })).toBe('waiting');
+  });
+
   it('builds one parent-child tree, synthesizes missing children, and keeps rich rows', () => {
     const snapshot = buildSnapshot({
       activity: {
@@ -80,8 +164,8 @@ describe('OPM owner guidance and classification', () => {
           phase: 'waiting_external',
           reason: 'waiting on 2/3 chunks',
           children: [
-            { ref: '21', title: 'Rich child', phase: 'waiting_external', activityState: 'stopped', reason: 'waiting for checks' },
-            { ref: '22', title: 'Inline child', phase: 'planned', activityState: 'queued', reason: null },
+            { ref: '21', title: 'Rich child', phase: 'waiting_external', state: 'implemented', action: 'reviewing', activityState: 'stopped', reason: 'waiting for checks' },
+            { ref: '22', title: 'Inline child', phase: 'planned', state: 'planned', action: 'queued', activityState: 'queued', reason: null },
           ],
         })],
         active: [entry({ ref: '21', parentRef: '20', sessionId: 'ses_21', workspacePath: '/repo/worktree' })],
@@ -93,7 +177,7 @@ describe('OPM owner guidance and classification', () => {
     expect(snapshot.tree[0].ref).toBe('20');
     expect(snapshot.tree[0].childRows.map((row) => row.ref)).toEqual(['21', '22']);
     expect(snapshot.tree[0].childRows[0]).toMatchObject({ sessionId: 'ses_21', workspacePath: '/repo/worktree' });
-    expect(snapshot.tree[0].childRows[1].owner).toBeDefined();
+    expect(snapshot.tree[0].childRows[1]).toMatchObject({ state: 'planned', action: 'queued', owner: expect.any(Object) });
   });
 
   it('raises a family containing an owner-required child above active roots', () => {
@@ -110,6 +194,30 @@ describe('OPM owner guidance and classification', () => {
 
     expect(snapshot.tree.map((row) => row.ref)).toEqual(['40', '30']);
     expect(snapshot.tree[0].childRows[0].ref).toBe('41');
+  });
+
+  it('retains project labels and binds supervisor attention to its task', () => {
+    const snapshot = buildSnapshot({
+      activity: { blockers: [entry({ ref: '88', phase: 'blocked', reason: 'owner decision required' })] },
+      status: {
+        ok: false,
+        projects: [{ projectId: 'project-uuid', project: 'openchamber', projectName: 'OpenChamber' }],
+        attention: [{ kind: 'owner-decision', projectId: 'project-uuid', ref: '88', detail: 'review rejected' }],
+      },
+      issueUrls: { openchamber: 'https://github.com/owner/openchamber/issues/{ref}' },
+    });
+
+    expect(snapshot.supervisor.projects[0]).toMatchObject({
+      projectId: 'project-uuid',
+      project: 'openchamber',
+      projectName: 'OpenChamber',
+    });
+    expect(snapshot.supervisor.attention[0]).toMatchObject({
+      project: 'openchamber',
+      projectName: 'OpenChamber',
+      ref: '88',
+      url: 'https://github.com/owner/openchamber/issues/88',
+    });
   });
 });
 

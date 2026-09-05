@@ -21,8 +21,23 @@ const childSummarySchema = z.object({
   ref: z.union([z.string(), z.number()]),
   title: z.string(),
   phase: nullableString,
+  state: nullableString.default(null),
+  action: nullableString.default(null),
   activityState: nullableString,
   reason: nullableString,
+  needsOwnerDecision: z.boolean().default(false),
+  question: z.object({
+    id: z.string(),
+    askedBy: z.string(),
+    text: z.string(),
+    options: z.array(z.object({
+      key: z.string(),
+      label: z.string(),
+      detail: z.string(),
+      command: z.string(),
+    })),
+    url: z.string(),
+  }).nullable().default(null),
   url: nullableString,
 });
 
@@ -32,23 +47,54 @@ const rowBaseSchema = z.object({
   ref: z.union([z.string(), z.number()]),
   title: z.string(),
   phase: nullableString,
+  state: nullableString.default(null),
+  action: nullableString.default(null),
   activityState: z.string(),
   parentRef: z.union([z.string(), z.number()]).nullable(),
   branch: nullableString,
   sessionId: nullableString,
   workspacePath: nullableString,
+  alias: nullableString.default(null),
+  activeMs: z.number().default(0),
+  activeSince: nullableString.default(null),
   reason: nullableString,
   nextAction: nullableString,
+  needsOwnerDecision: z.boolean().default(false),
+  question: childSummarySchema.shape.question,
   updatedAt: z.union([z.string(), z.number()]).nullable(),
   effect: effectSchema,
   children: z.array(childSummarySchema),
-  kind: z.enum(['needs-owner', 'dead-letter']).nullable(),
+  kind: z.enum(['owner-question', 'needs-owner', 'dead-letter']).nullable(),
   command: nullableString,
   owner: ownerSchema,
   url: nullableString,
 });
 
 export type OpmRow = z.infer<typeof rowBaseSchema>;
+export type OpmLane = 'needsYou' | 'running' | 'waiting' | 'backlog';
+
+const laneSchema = z.enum(['needsYou', 'running', 'waiting', 'backlog']);
+const projectGroupSchema = z.object({
+  project: z.string(),
+  projectName: nullableString,
+  alias: nullableString.default(null),
+  counts: z.object({ needsYou: z.number(), running: z.number(), waiting: z.number(), backlog: z.number() }),
+  items: z.array(rowBaseSchema.extend({ lane: laneSchema })),
+});
+export type OpmProjectGroup = z.infer<typeof projectGroupSchema>;
+export type OpmLaneRow = OpmProjectGroup['items'][number];
+
+const completedItemSchema = z.object({
+  project: nullableString,
+  projectName: nullableString,
+  alias: nullableString.default(null),
+  ref: z.union([z.string(), z.number()]),
+  title: z.string(),
+  url: nullableString,
+  completedAt: nullableString,
+  activeMs: z.number().default(0),
+});
+export type OpmCompletedItem = z.infer<typeof completedItemSchema>;
 export type OpmTreeRow = OpmRow & { childRows: OpmTreeRow[] };
 
 const treeRowSchema: z.ZodType<OpmTreeRow> = z.lazy(() => rowBaseSchema.extend({
@@ -78,6 +124,10 @@ const availableSnapshotSchema = z.object({
   }),
   groups: groupsSchema,
   tree: z.array(treeRowSchema),
+  // Older servers omit these; the dashboard falls back to the flat groups.
+  byProject: z.array(projectGroupSchema).default([]),
+  completed: z.array(completedItemSchema).default([]),
+  completedTotal: nullableNumber.default(null),
   supervisor: z.object({
     running: z.boolean(),
     pausedReason: nullableString,
@@ -91,12 +141,17 @@ const availableSnapshotSchema = z.object({
     }).passthrough(),
     attention: z.array(z.object({
       kind: nullableString,
+      project: nullableString.default(null),
+      projectName: nullableString.default(null),
       ref: z.union([z.string(), z.number()]).nullable(),
       detail: nullableString,
       error: nullableString,
+      url: nullableString.default(null),
     })),
     projects: z.array(z.object({
       projectId: nullableString,
+      project: nullableString.default(null),
+      projectName: nullableString.default(null),
       passes: nullableNumber,
       failures: nullableNumber,
       lastPassAt: nullableNumber,
@@ -119,6 +174,7 @@ const snapshotSchema = z.discriminatedUnion('available', [availableSnapshotSchem
 export type OpmSnapshot = z.infer<typeof snapshotSchema>;
 type OpmSnapshotPayload = z.input<typeof snapshotSchema>;
 export type OpmAvailableSnapshot = z.infer<typeof availableSnapshotSchema>;
+export type OpmAttention = OpmAvailableSnapshot['supervisor']['attention'][number];
 
 export type OpmStatusLoadResult =
   | { status: 'supported'; snapshot: OpmSnapshot }
@@ -191,6 +247,91 @@ export const postOpmCommand = async (row: OpmRow): Promise<OpmCommandResult> => 
   }
 };
 
+export type OpmPauseResult = { ok: true; paused: boolean } | { ok: false; error: string };
+
+const pauseResultSchema = z.union([
+  z.object({ ok: z.literal(true), paused: z.boolean() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+]);
+
+export type OpmQuestionDecisionParams = {
+  project: string;
+  ref: string | number;
+  questionId: string;
+  optionKey?: string;
+  customText?: string;
+};
+
+// Posts a question decision (either an option key or custom text) for
+// server-side validation and execution as a GitHub issue comment.
+export const postQuestionDecision = async (params: OpmQuestionDecisionParams): Promise<OpmCommandResult> => {
+  const { project, ref, questionId, optionKey, customText } = params;
+  if (!optionKey && !customText) return { ok: false, error: 'Either optionKey or customText is required' };
+  let response: Response;
+  try {
+    response = await runtimeFetch('/api/opm/question/decide', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project, ref, questionId, optionKey, customText }),
+    });
+  } catch {
+    return { ok: false, error: 'Request failed' };
+  }
+  try {
+    return commandResultSchema.parse(await response.json());
+  } catch {
+    return { ok: false, error: `Request returned ${response.status}` };
+  }
+};
+
+export const postOpmPause = async (paused: boolean): Promise<OpmPauseResult> => {
+  let response: Response;
+  try {
+    response = await runtimeFetch('/api/opm/pause', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paused }),
+    });
+  } catch {
+    return { ok: false, error: 'Request failed' };
+  }
+  try {
+    return pauseResultSchema.parse(await response.json());
+  } catch {
+    return { ok: false, error: `Request returned ${response.status}` };
+  }
+};
+
+// Lane counts across every project: the pill and the overview read these.
+export const getLaneCounts = (snapshot: OpmAvailableSnapshot) => {
+  const counts = { needsYou: 0, running: 0, waiting: 0, backlog: 0 };
+  for (const group of snapshot.byProject) {
+    counts.needsYou += group.counts.needsYou;
+    counts.running += group.counts.running;
+    counts.waiting += group.counts.waiting;
+    counts.backlog += group.counts.backlog;
+  }
+  return counts;
+};
+
+// "active 1h 04m" while the supervisor counts the item as worked; "worked
+// 45m" once it stops; nothing when it never ran. The live stretch is added
+// client-side from activeSince so the readout ticks between polls.
+export const activeDurationMs = (row: { activeMs: number; activeSince: string | null }, now: number) => {
+  if (!row.activeSince) return row.activeMs;
+  const started = Date.parse(row.activeSince);
+  return row.activeMs + (Number.isFinite(started) ? Math.max(0, now - started) : 0);
+};
+
+export const formatDuration = (ms: number) => {
+  const totalMinutes = Math.floor(ms / 60_000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours > 0) return `${hours}h ${String(minutes).padStart(2, '0')}m`;
+  if (totalMinutes > 0) return `${minutes}m`;
+  return `${Math.floor(ms / 1000)}s`;
+};
+
 export const getOpmCounts = (snapshot: OpmAvailableSnapshot) => ({
   needsYou: snapshot.groups.needsYou.length,
   blocked: snapshot.groups.blocked.length,
@@ -212,6 +353,7 @@ export const getTotalOpmCount = (snapshot: OpmSnapshot): number | null => {
 };
 
 export const ownerGuidanceKind = (row: OpmRow) => {
+  if (row.kind === 'owner-question') return 'question';
   if (row.kind === 'needs-owner') return 'authorize';
   if (row.kind === 'dead-letter') return 'deadLetter';
   if (row.phase === 'paused') return 'paused';

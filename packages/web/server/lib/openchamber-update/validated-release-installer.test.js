@@ -131,7 +131,7 @@ function makeFetch({ archive, channel, checksum, releaseStatus = 200, overrides 
     ['https://api.github.com/repos/jameskorzekwa/openchamber/releases/latest', JSON.stringify(release)],
     [`https://api.github.com/repos/jameskorzekwa/openchamber/commits/${TAG}`, JSON.stringify({ sha: COMMIT })],
     [`https://api.github.com/repos/openchamber/openchamber/commits/v${BASE_VERSION}`, JSON.stringify({ sha: UPSTREAM_COMMIT })],
-    [`https://api.github.com/repos/jameskorzekwa/openchamber/compare/${UPSTREAM_COMMIT}...${COMMIT}`, JSON.stringify({ status: 'ahead', merge_base_commit: { sha: UPSTREAM_COMMIT } })],
+    [`https://api.github.com/repos/jameskorzekwa/openchamber/compare/${UPSTREAM_COMMIT}...${COMMIT}?per_page=1&page=2`, JSON.stringify({ status: 'ahead', merge_base_commit: { sha: UPSTREAM_COMMIT } })],
     [`${RELEASE_ROOT}/channel.json`, JSON.stringify(actualChannel)],
     [`${RELEASE_ROOT}/SHA256SUMS`, checksumBody],
     [`${RELEASE_ROOT}/${ARCHIVE_NAME}`, actualArchive],
@@ -376,10 +376,20 @@ describe('validated release installation', () => {
   });
 
   it('rejects source commits that do not descend from the claimed upstream tag', async () => {
-    const compareUrl = `https://api.github.com/repos/jameskorzekwa/openchamber/compare/${UPSTREAM_COMMIT}...${COMMIT}`;
+    const compareUrl = `https://api.github.com/repos/jameskorzekwa/openchamber/compare/${UPSTREAM_COMMIT}...${COMMIT}?per_page=1&page=2`;
     const fetchImpl = makeFetch({ overrides: new Map([[compareUrl, JSON.stringify({ status: 'diverged', merge_base_commit: { sha: 'b'.repeat(40) } })]]) });
     const harness = await makeHarness(fetchImpl);
     await expect(harness.installer.checkForUpdate()).rejects.toThrow('does not prove ancestry');
+  });
+
+  it('omits changed-file patches from the GitHub ancestry response', async () => {
+    const fetchImpl = makeFetch();
+    const harness = await makeHarness(fetchImpl);
+    await harness.installer.checkForUpdate();
+    expect(fetchImpl).toHaveBeenCalledWith(
+      `https://api.github.com/repos/jameskorzekwa/openchamber/compare/${UPSTREAM_COMMIT}...${COMMIT}?per_page=1&page=2`,
+      expect.any(Object),
+    );
   });
 
   it('allows bounded GitHub asset redirects and rejects other destinations', async () => {
@@ -396,6 +406,30 @@ describe('validated release installation', () => {
     const rejected = makeFetch({ overrides: new Map([[`${RELEASE_ROOT}/SHA256SUMS`, () => new Response(null, { status: 302, headers: { Location: 'https://evil.example/archive' } })]]) });
     const rejectedHarness = await makeHarness(rejected);
     await expect(rejectedHarness.installer.install({ targetVersion: VERSION, handoffRestart: vi.fn() })).rejects.toThrow('redirect destination is not allowed');
+  });
+
+  it('allows a longer bounded timeout only for the release archive', async () => {
+    const requestTimeouts = new WeakMap();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((milliseconds) => {
+      const signal = new AbortController().signal;
+      requestTimeouts.set(signal, milliseconds);
+      return signal;
+    });
+    try {
+      const requests = [];
+      const baseFetch = makeFetch();
+      const fetchImpl = vi.fn((url, options) => {
+        requests.push({ url: String(url), timeout: requestTimeouts.get(options.signal) });
+        return baseFetch(url, options);
+      });
+      const harness = await makeHarness(fetchImpl);
+      await harness.installer.install({ targetVersion: VERSION, handoffRestart: vi.fn() });
+      const archiveUrl = `${RELEASE_ROOT}/${ARCHIVE_NAME}`;
+      expect(requests.find((request) => request.url === archiveUrl)?.timeout).toBe(10 * 60 * 1000);
+      expect(requests.filter((request) => request.url !== archiveUrl).every((request) => request.timeout === 30_000)).toBe(true);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it('sends an optional token only to the GitHub API', async () => {

@@ -6,18 +6,19 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 const release = readFileSync('.github/workflows/release.yml', 'utf8');
+const docsSource = readFileSync('.github/workflows/docs-source.yml', 'utf8');
 const sync = readFileSync('.github/workflows/sync-upstream.yml', 'utf8');
 const validate = readFileSync('.github/workflows/validate.yml', 'utf8');
 const docs = readFileSync('docs/CI_RELEASE_CHANNEL.md', 'utf8');
 
-test('release supports exact-SHA j2k/current and upstream release branches without push recursion', () => {
-  assert.match(release, /head_branch == 'j2k\/current'/);
+test('release triggers from validated candidate branches without push recursion', () => {
   assert.match(release, /startsWith\(github\.event\.workflow_run\.head_branch, 'j2k\/v'\)/);
   assert.doesNotMatch(release, /^\s+push:\s*$/m);
   assert.match(release, /source_commit.*WORKFLOW_HEAD_SHA|workflow_sha.*WORKFLOW_HEAD_SHA/s);
   assert.match(release, /matching_tag/);
   assert.match(release, /git remote add upstream https:\/\/github\.com\/openchamber\/openchamber\.git/);
   assert.match(release, /git fetch upstream '\+refs\/tags\/v\*:refs\/tags\/v\*'/);
+  assert.match(release, /github\.ref == 'refs\/heads\/j2k\/current'/);
 });
 
 test('release publication is resumable and keeps candidate code outside the token step', () => {
@@ -28,13 +29,12 @@ test('release publication is resumable and keeps candidate code outside the toke
   assert.doesNotMatch(tokenStep, /tools\/channel-release/);
   assert.match(tokenStep, /-F draft=true/);
   assert.match(tokenStep, /cmp -s/);
-  assert.match(tokenStep, /gh release upload "\$RELEASE_TAG" "artifacts\/\$asset" --repo "\$\{\{ github\.repository \}\}"/);
+  assert.match(tokenStep, /gh release upload "\$RELEASE_TAG"/);
   assert.match(tokenStep, /releases\?per_page=100/);
   assert.match(tokenStep, /releases\/\$release_id/);
-  assert.match(tokenStep, /RELEASES_JSON=.*node -e/);
+  assert.match(tokenStep, /RELEASES_FILE=.*RELEASE_TAG=.*node/s);
   assert.doesNotMatch(tokenStep, /RESUME:/);
-  assert.match(tokenStep, /if \[\[ -n "\$current_j2k" && "\$current_j2k" != "\$SOURCE_COMMIT" \]\]/);
-  assert.match(tokenStep, /merge-base --is-ancestor "\$SOURCE_COMMIT" refs\/remotes\/origin\/j2k-current/);
+  assert.match(tokenStep, /current_j2k.*EXPECTED_J2K.*SOURCE_COMMIT/s);
   assert.match(tokenStep, /--force-with-lease=refs\/heads\/j2k\/current:/);
   assert.match(release, /persist-credentials: false/);
   assert.match(release, /runs-on: macos-15/);
@@ -55,6 +55,12 @@ test('release smoke uses the strict channel and stage-version has no misplaced c
   assert.match(smokeStep, /OPENCHAMBER_UPDATE_GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
 });
 
+test('docs source cannot append assets to validated j2k channel releases', () => {
+  const job = docsSource.slice(docsSource.indexOf('  validate-and-package:'));
+  assert.match(job, /github\.event_name != 'release' \|\| !contains\(github\.event\.release\.tag_name, '-j2k\.'\)/);
+  assert.match(job, /github\.event_name != 'workflow_dispatch' \|\| !contains\(inputs\.release_tag, '-j2k\.'\)/);
+});
+
 test('manual dispatch and the privileged job require the trusted j2k/current workflow definition', () => {
   const metadata = release.slice(release.indexOf('  metadata:'), release.indexOf('  validate-release:'));
   const publish = release.slice(release.indexOf('  publish:'));
@@ -66,12 +72,12 @@ test('manual dispatch and the privileged job require the trusted j2k/current wor
   assert.ok(publish.match(trustedWorkflow).index < publish.indexOf('contents: write'));
 });
 
-test('publication leases a no-op source update and rechecks it before publishing', () => {
+test('publication leases source ref atomically with j2k/current in a single push', () => {
   const publish = release.slice(release.indexOf('  publish:'));
   assert.match(publish, /source_refspec="refs\/remotes\/origin\/source:refs\/heads\/\$SOURCE_REF"/);
-  const lease = /--force-with-lease=refs\/heads\/\$SOURCE_REF:\$SOURCE_COMMIT/g;
-  assert.equal([...publish.matchAll(lease)].length, 2);
-  assert.ok(publish.lastIndexOf('--force-with-lease=refs/heads/$SOURCE_REF:$SOURCE_COMMIT') < publish.indexOf('-F draft=false'));
+  assert.match(publish, /push_options=\(--atomic "--force-with-lease=refs\/heads\/\$SOURCE_REF:\$SOURCE_COMMIT"\)/);
+  assert.match(publish, /push_options\+=\("--force-with-lease=refs\/heads\/j2k\/current:/);
+  assert.match(publish, /git -C "\$repo" push "\$\{push_options\[@\]\}" origin "\$\{refs\[@\]\}"/);
 });
 
 test('git rejects a no-op source update when its exact lease is stale or deleted', () => {
@@ -117,10 +123,10 @@ test('git rejects a no-op source update when its exact lease is stale or deleted
   }
 });
 
-test('failed release-branch validation is deduplicated and safely redispatched', () => {
-  assert.match(validate, /Validation failed: \$BRANCH/);
-  assert.match(validate, /--state all/);
-  assert.match(validate, /gh issue edit/);
+test('failed release-branch validation defers to recovery workflow and sync safely redispatches', () => {
+  assert.match(validate, /converting it to a failure for the trusted workflow-run recovery handler/);
+  assert.match(validate, /report-release-branch-result/);
+  assert.match(validate, /startsWith\(github\.ref_name, 'j2k\/v'\)/);
   assert.match(sync, /run_state.*active/s);
   assert.match(sync, /run_state.*success/s);
   assert.match(sync, /Redispatching validation for stranded branch/);
