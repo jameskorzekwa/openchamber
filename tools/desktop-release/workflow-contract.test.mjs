@@ -154,8 +154,8 @@ test('every workflow run block is parseable bash, including heredoc terminators'
     const jobs = YAML.parse(source).jobs ?? {};
     for (const [jobName, job] of Object.entries(jobs)) {
       (job.steps ?? []).forEach((step, index) => {
-        if (typeof step.run !== 'string') return;
-        const script = step.run.replace(/\$\{\{[^}]*\}\}/g, 'expression');
+        const script = String(step.run ?? '').replace(/\$\{\{[^}]*\}\}/g, 'expression');
+        if (script === '') return;
         const result = spawnSync('bash', ['-n'], { input: script, encoding: 'utf8' });
         if (result.status !== 0) failures.push(`${name} ${jobName} step ${index} (${step.name ?? 'unnamed'}): ${result.stderr.trim()}`);
       });
