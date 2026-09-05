@@ -418,18 +418,14 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       expect(questionBlock?.textContent).toContain('Which release channel?');
       expect(questionBlock?.textContent).toContain('A — Stable');
       expect(questionBlock?.textContent).toContain('B — Preview');
-      expect(questionBlock?.textContent).toContain('Reply with your own direction');
+      expect(questionBlock?.textContent).toContain('Or reply with your own answer');
 
-      const copyButtons = [...(questionBlock?.querySelectorAll<HTMLButtonElement>('button') ?? [])].filter((button) => button.textContent?.includes('Copy'));
-      expect(copyButtons).toHaveLength(3);
+      // QuestionDecisionBlock uses Submit buttons for each option
+      const submitButtons = [...(questionBlock?.querySelectorAll<HTMLButtonElement>('button') ?? [])].filter((button) => button.textContent?.includes('Submit'));
+      expect(submitButtons).toHaveLength(3); // 2 options + 1 custom input
 
-      await act(async () => copyButtons[0].dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 })));
-      await act(async () => {});
-      expect(copied).toContain('/agent decide A');
-
-      await act(async () => copyButtons[2].dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 })));
-      await act(async () => {});
-      expect(copied).toContain('/agent decide ');
+      // First option should be marked as recommended
+      expect(questionBlock?.textContent).toContain('Recommended');
 
       const needsYouLink = document.querySelector('[data-testid="opm-needs-you"] a[href]');
       expect(needsYouLink?.getAttribute('href')).toBe(question.url);

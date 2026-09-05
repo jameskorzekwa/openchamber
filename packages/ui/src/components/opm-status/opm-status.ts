@@ -254,6 +254,36 @@ const pauseResultSchema = z.union([
   z.object({ ok: z.literal(false), error: z.string() }),
 ]);
 
+export type OpmQuestionDecisionParams = {
+  project: string;
+  ref: string | number;
+  questionId: string;
+  optionKey?: string;
+  customText?: string;
+};
+
+// Posts a question decision (either an option key or custom text) for
+// server-side validation and execution as a GitHub issue comment.
+export const postQuestionDecision = async (params: OpmQuestionDecisionParams): Promise<OpmCommandResult> => {
+  const { project, ref, questionId, optionKey, customText } = params;
+  if (!optionKey && !customText) return { ok: false, error: 'Either optionKey or customText is required' };
+  let response: Response;
+  try {
+    response = await runtimeFetch('/api/opm/question/decide', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project, ref, questionId, optionKey, customText }),
+    });
+  } catch {
+    return { ok: false, error: 'Request failed' };
+  }
+  try {
+    return commandResultSchema.parse(await response.json());
+  } catch {
+    return { ok: false, error: `Request returned ${response.status}` };
+  }
+};
+
 export const postOpmPause = async (paused: boolean): Promise<OpmPauseResult> => {
   let response: Response;
   try {

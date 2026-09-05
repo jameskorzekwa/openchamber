@@ -153,13 +153,16 @@ describe('OpmStatusOverlay project groups, lanes, active clock, pause, completed
     } finally { await unmount(); }
   });
 
-  test('renders an owner question with copyable exact commands in the needs-you lane', async () => {
+  test('renders an owner question with submit and copy buttons in the needs-you lane', async () => {
     const unmount = await mountAndOpen();
     try {
       const question = document.querySelector('[data-testid="opm-lane-needsYou"] [data-testid="opm-owner-question"]');
       expect(question?.textContent).toContain('Hardware evidence is owner-only');
       expect(question?.textContent).toContain('A — Run on the canary device');
-      expect(question?.querySelectorAll('button').length).toBe(3);
+      // 2 options × (submit + copy) + custom input (submit + copy) = 6 buttons
+      expect(question?.querySelectorAll('button').length).toBe(6);
+      // First option should be marked as recommended
+      expect(question?.textContent).toContain('Recommended');
     } finally { await unmount(); }
   });
 
