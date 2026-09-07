@@ -2,7 +2,10 @@ name: J2K Sync Upstream
 
 on:
   schedule:
-    - cron: '17 */6 * * *'
+    # Hourly. Upstream cannot signal a fork, so the mirror and the patch
+    # series only advance when this polls; six-hourly left a merged upstream
+    # fix invisible for most of a day.
+    - cron: '17 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -42,20 +45,29 @@ jobs:
 
       - name: Fast-forward mirror main
         env:
-          GH_TOKEN: ${{ github.token }}
+          # Recovery issues are filed with the owner's token, not GITHUB_TOKEN:
+          # OPM acts only on owner-authored work items, and an issue authored
+          # by github-actions[bot] is invisible to it. The scoped job token
+          # also could not create issues here (GraphQL createIssue: resource
+          # not accessible), which left a mirror divergence unreported for
+          # two days.
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
           UPSTREAM_SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
         run: |
           set -euo pipefail
+          if [[ -z "$UPSTREAM_SYNC_TOKEN" ]]; then
+            echo 'UPSTREAM_SYNC_TOKEN is required to update the upstream mirror.' >&2
+            exit 1
+          fi
           if ! git merge-base --is-ancestor origin/main upstream/main; then
             title='Mirror divergence: fork main cannot fast-forward'
             if [[ "$(gh issue list --state open --search "in:title $title" --json title --jq "map(select(.title == \"$title\")) | length")" == 0 ]]; then
-              gh issue create --title "$title" --body 'The scheduled upstream sync refused to rewrite `main`. Restore `main` to an exact upstream commit, then rerun **J2K Sync Upstream**.'
+              gh issue create --title "$title" --body "$(printf '%s\n\n%s\n\n%s' \
+                'The scheduled upstream sync refused to rewrite `main`: `origin/main` is not an ancestor of `openchamber/openchamber:main`.' \
+                '`main` is an exact upstream mirror. Something merged into it directly; every pull request in this fork must target `j2k/current`.' \
+                'Restore `main` to an exact upstream commit (`git push --force-with-lease origin upstream/main:refs/heads/main`), port anything that was merged there onto `j2k/current`, then rerun **J2K Sync Upstream**.')"
             fi
             echo 'origin/main is not an ancestor of upstream/main; refusing to force-push the mirror.' >&2
-            exit 1
-          fi
-          if [[ -z "$UPSTREAM_SYNC_TOKEN" ]]; then
-            echo 'UPSTREAM_SYNC_TOKEN is required to update the upstream mirror.' >&2
             exit 1
           fi
           authorization="$(printf 'x-access-token:%s' "$UPSTREAM_SYNC_TOKEN" | base64 | tr -d '\n')"
@@ -188,13 +200,16 @@ jobs:
             node tools/desktop-release/upstream-recovery.mjs --input "$recovery" --body "$body" --title "$title_file"
             title="$(<"$title_file")"
 
-            issue_number="$(gh issue list --repo "${{ github.repository }}" --state open --search "in:title $title" \
+            # Owner token for the recovery issue: it carries opm:ready and OPM
+            # admits only owner-authored work items, so an issue authored by
+            # github-actions[bot] would never be picked up.
+            issue_number="$(GH_TOKEN="$UPSTREAM_SYNC_TOKEN" gh issue list --repo "${{ github.repository }}" --state open --search "in:title $title" \
               --json number,title --jq "map(select(.title == \"$title\")) | first | .number // empty")"
             if [[ -z "$issue_number" ]]; then
-              gh issue create --repo "${{ github.repository }}" --title "$title" --body-file "$body" --label opm:ready
+              GH_TOKEN="$UPSTREAM_SYNC_TOKEN" gh issue create --repo "${{ github.repository }}" --title "$title" --body-file "$body" --label opm:ready
             else
-              gh issue edit "$issue_number" --repo "${{ github.repository }}" --body-file "$body" --add-label opm:ready
-              gh issue reopen "$issue_number" --repo "${{ github.repository }}" 2>/dev/null || true
+              GH_TOKEN="$UPSTREAM_SYNC_TOKEN" gh issue edit "$issue_number" --repo "${{ github.repository }}" --body-file "$body" --add-label opm:ready
+              GH_TOKEN="$UPSTREAM_SYNC_TOKEN" gh issue reopen "$issue_number" --repo "${{ github.repository }}" 2>/dev/null || true
             fi
             exit 1
           fi
