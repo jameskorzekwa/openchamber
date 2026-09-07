@@ -365,6 +365,9 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
         { key: 'A', label: 'Stable', detail: 'Use the stable channel', command: '/agent decide A' },
         { key: 'B', label: 'Preview', detail: 'Use the preview channel', command: '/agent decide B' },
       ],
+      // Deliberately not the first option: the recommendation is OPM's
+      // structured field, never option order.
+      recommendation: { key: 'B', reason: 'Preview carries the fix already' },
       url: 'https://github.com/owner/openchamber/issues/50#issuecomment-1',
     };
     const questionRow = {
@@ -424,8 +427,12 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       const submitButtons = [...(questionBlock?.querySelectorAll<HTMLButtonElement>('button') ?? [])].filter((button) => button.textContent?.includes('Submit'));
       expect(submitButtons).toHaveLength(3); // 2 options + 1 custom input
 
-      // First option should be marked as recommended
-      expect(questionBlock?.textContent).toContain('Recommended');
+      // Exactly the option OPM recommends is highlighted, with its reason.
+      const recommended = questionBlock?.querySelectorAll('[data-testid="opm-question-option-recommended"]') ?? [];
+      expect(recommended).toHaveLength(1);
+      expect(recommended[0]?.textContent).toContain('B — Preview');
+      expect(recommended[0]?.textContent).toContain('Recommended');
+      expect(questionBlock?.querySelector('[data-testid="opm-question-recommendation-reason"]')?.textContent).toBe('Preview carries the fix already');
 
       const needsYouLink = document.querySelector('[data-testid="opm-needs-you"] a[href]');
       expect(needsYouLink?.getAttribute('href')).toBe(question.url);
