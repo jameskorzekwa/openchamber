@@ -8,6 +8,7 @@ import {
   ownerGuidance,
   registerOpmStatusRoutes,
   resolveRepo,
+  validateQuestionDecision,
 } from './routes.js';
 
 const SHA = 'a'.repeat(40);
@@ -432,5 +433,99 @@ describe('OPM command endpoint', () => {
     expect(failRes.body).toMatchObject({ ok: false, error: expect.stringContaining('ENOENT') });
     expect(failing.poller.poll).not.toHaveBeenCalled();
     failing.runtime.close();
+  });
+});
+
+describe('OPM owner questions', () => {
+  const options = [
+    { key: 'A', label: 'Stable', detail: 'Use the stable channel', command: '/agent decide A' },
+    { key: 'B', label: 'Preview', detail: 'Use the preview channel', command: '/agent decide B' },
+  ];
+  const question = (overrides = {}) => ({
+    id: 'q1',
+    askedBy: 'controller',
+    text: 'Which release channel?',
+    options,
+    url: 'https://github.com/owner/name/issues/50#issuecomment-1',
+    ...overrides,
+  });
+  const questionSnapshot = (q = question()) => buildSnapshot({
+    activity: { active: [entry({ ref: '50', phase: 'waiting_owner', question: q })] },
+    status: { ok: true },
+  });
+
+  it('carries OPM structured recommendation through the snapshot and drops one naming an unknown option', () => {
+    const recommended = questionSnapshot(question({ recommendation: { key: 'B', reason: 'Preview carries the fix already' } }));
+    expect(recommended.groups.needsYou[0].question).toMatchObject({
+      id: 'q1',
+      recommendation: { key: 'B', reason: 'Preview carries the fix already' },
+    });
+
+    const legacy = questionSnapshot(question());
+    expect(legacy.groups.needsYou[0].question.recommendation).toBeNull();
+
+    const unknown = questionSnapshot(question({ recommendation: { key: 'Z', reason: 'not an option' } }));
+    expect(unknown.groups.needsYou[0].question.recommendation).toBeNull();
+  });
+
+  it('validates a decision against the live question: exact id, known option, or custom text', () => {
+    const snapshot = questionSnapshot();
+    const base = { project: 'openchamber', ref: '50', questionId: 'q1' };
+    expect(validateQuestionDecision(snapshot, { ...base, optionKey: 'B' })).toBe('/agent decide B');
+    expect(validateQuestionDecision(snapshot, { ...base, optionKey: 'Z' })).toBeNull();
+    expect(validateQuestionDecision(snapshot, { ...base, customText: '  ship it on Monday ' })).toBe('/agent decide ship it on Monday');
+    expect(validateQuestionDecision(snapshot, { ...base, customText: '   ' })).toBeNull();
+    expect(validateQuestionDecision(snapshot, { ...base, questionId: 'stale', optionKey: 'A' })).toBeNull();
+    expect(validateQuestionDecision(snapshot, { ...base, ref: '51', optionKey: 'A' })).toBeNull();
+    expect(validateQuestionDecision({ available: false }, { ...base, optionKey: 'A' })).toBeNull();
+  });
+
+  it('posts the exact option command as an issue comment and fails closed on a stale question', async () => {
+    const posted = new Map();
+    const calls = [];
+    const poller = { poll: vi.fn(), current: () => questionSnapshot() };
+    const runtime = registerOpmStatusRoutes({
+      get: () => {},
+      post: (route, ...handlers) => posted.set(route, handlers.at(-1)),
+    }, {
+      poller,
+      config: { controlUrl: 'http://127.0.0.1:47651', issueUrls: {}, repos: { openchamber: 'owner/name' } },
+      execFile: vi.fn((command, args, _options, callback) => { calls.push([command, args]); callback(null, '', ''); }),
+    });
+    poller.poll.mockClear();
+    const handler = posted.get('/api/opm/question/decide');
+    const createRes = () => {
+      const res = { statusCode: 200, body: null };
+      res.status = (code) => { res.statusCode = code; return res; };
+      res.json = (payload) => { res.body = payload; return res; };
+      return res;
+    };
+
+    try {
+      const ok = createRes();
+      await handler({ body: { project: 'openchamber', ref: '50', questionId: 'q1', optionKey: 'B' } }, ok);
+      expect(ok.statusCode).toBe(200);
+      expect(ok.body).toEqual({ ok: true });
+      expect(calls).toEqual([['gh', ['issue', 'comment', '50', '--repo', 'owner/name', '--body', '/agent decide B']]]);
+      expect(poller.poll).toHaveBeenCalledTimes(1);
+
+      const custom = createRes();
+      await handler({ body: { project: 'openchamber', ref: 50, questionId: 'q1', customText: 'ship it' } }, custom);
+      expect(custom.statusCode).toBe(200);
+      expect(calls.at(-1)[1].at(-1)).toBe('/agent decide ship it');
+
+      const stale = createRes();
+      await handler({ body: { project: 'openchamber', ref: '50', questionId: 'old', optionKey: 'A' } }, stale);
+      expect(stale.statusCode).toBe(400);
+      expect(stale.body).toMatchObject({ ok: false, error: expect.stringContaining('stale') });
+      expect(calls).toHaveLength(2);
+
+      const missing = createRes();
+      await handler({ body: { project: 'openchamber', ref: '50', questionId: 'q1' } }, missing);
+      expect(missing.statusCode).toBe(400);
+      expect(calls).toHaveLength(2);
+    } finally {
+      runtime.close();
+    }
   });
 });

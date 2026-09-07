@@ -153,13 +153,18 @@ describe('OpmStatusOverlay project groups, lanes, active clock, pause, completed
     } finally { await unmount(); }
   });
 
-  test('renders an owner question with copyable exact commands in the needs-you lane', async () => {
+  test('renders an owner question with submit and copy buttons in the needs-you lane', async () => {
     const unmount = await mountAndOpen();
     try {
       const question = document.querySelector('[data-testid="opm-lane-needsYou"] [data-testid="opm-owner-question"]');
       expect(question?.textContent).toContain('Hardware evidence is owner-only');
       expect(question?.textContent).toContain('A — Run on the canary device');
-      expect(question?.querySelectorAll('button').length).toBe(3);
+      // 2 options × (submit + copy) + custom input (submit + copy) = 6 buttons
+      expect(question?.querySelectorAll('button').length).toBe(6);
+      // A legacy question carries no recommendation, and the UI must not
+      // invent one from option order.
+      expect(question?.querySelectorAll('[data-testid="opm-question-option-recommended"]').length).toBe(0);
+      expect(question?.textContent).not.toContain('Recommended');
     } finally { await unmount(); }
   });
 

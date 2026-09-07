@@ -36,7 +36,8 @@ jobs:
        github.workflow_ref == format('{0}/.github/workflows/release.yml@refs/heads/j2k/current', github.repository)) ||
       (github.event.workflow_run.conclusion == 'success' &&
        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') &&
-       startsWith(github.event.workflow_run.head_branch, 'j2k/v'))
+       (startsWith(github.event.workflow_run.head_branch, 'j2k/v') ||
+        github.event.workflow_run.head_branch == 'j2k/current'))
     runs-on: ubuntu-latest
     outputs:
       source_ref: ${{ steps.identity.outputs.source_ref }}
@@ -99,8 +100,12 @@ jobs:
             source_ref="$INPUT_SOURCE_REF"
             workflow_sha=''
           fi
-          if [[ ! "$source_ref" =~ ^j2k/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Source ref must be j2k/vX.Y.Z; got $source_ref" >&2
+          # Two sources release: an automatic j2k/vX.Y.Z candidate produced by
+          # the upstream sync, and an ordinary validated patch commit merged to
+          # the long-lived j2k/current series. Without the second, a merged
+          # fix sat on j2k/current unreleased until the next upstream tag.
+          if [[ ! "$source_ref" =~ ^j2k/v[0-9]+\.[0-9]+\.[0-9]+$ && "$source_ref" != 'j2k/current' ]]; then
+            echo "Source ref must be j2k/vX.Y.Z or j2k/current; got $source_ref" >&2
             exit 1
           fi
 
@@ -116,8 +121,15 @@ jobs:
             exit 1
           fi
 
-          [[ "$source_ref" =~ ^j2k/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]
-          base_version="${BASH_REMATCH[1]}"
+          if [[ "$source_ref" =~ ^j2k/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            base_version="${BASH_REMATCH[1]}"
+          else
+            # j2k/current names no version: its base is the newest stable
+            # upstream tag in the validated commit's own ancestry.
+            series_base_tag="$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-j2k.*' --abbrev=0 "$source_commit")"
+            [[ "$series_base_tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]
+            base_version="${BASH_REMATCH[1]}"
+          fi
           upstream_tag="v$base_version"
           git rev-parse "$upstream_tag^{commit}" >/dev/null
           git merge-base --is-ancestor "$upstream_tag" "$source_commit"

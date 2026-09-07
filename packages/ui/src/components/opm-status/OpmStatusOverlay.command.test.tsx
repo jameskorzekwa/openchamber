@@ -365,6 +365,9 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
         { key: 'A', label: 'Stable', detail: 'Use the stable channel', command: '/agent decide A' },
         { key: 'B', label: 'Preview', detail: 'Use the preview channel', command: '/agent decide B' },
       ],
+      // Deliberately not the first option: the recommendation is OPM's
+      // structured field, never option order.
+      recommendation: { key: 'B', reason: 'Preview carries the fix already' },
       url: 'https://github.com/owner/openchamber/issues/50#issuecomment-1',
     };
     const questionRow = {
@@ -418,18 +421,18 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       expect(questionBlock?.textContent).toContain('Which release channel?');
       expect(questionBlock?.textContent).toContain('A — Stable');
       expect(questionBlock?.textContent).toContain('B — Preview');
-      expect(questionBlock?.textContent).toContain('Reply with your own direction');
+      expect(questionBlock?.textContent).toContain('Or reply with your own answer');
 
-      const copyButtons = [...(questionBlock?.querySelectorAll<HTMLButtonElement>('button') ?? [])].filter((button) => button.textContent?.includes('Copy'));
-      expect(copyButtons).toHaveLength(3);
+      // QuestionDecisionBlock uses Submit buttons for each option
+      const submitButtons = [...(questionBlock?.querySelectorAll<HTMLButtonElement>('button') ?? [])].filter((button) => button.textContent?.includes('Submit'));
+      expect(submitButtons).toHaveLength(3); // 2 options + 1 custom input
 
-      await act(async () => copyButtons[0].dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 })));
-      await act(async () => {});
-      expect(copied).toContain('/agent decide A');
-
-      await act(async () => copyButtons[2].dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 })));
-      await act(async () => {});
-      expect(copied).toContain('/agent decide ');
+      // Exactly the option OPM recommends is highlighted, with its reason.
+      const recommended = questionBlock?.querySelectorAll('[data-testid="opm-question-option-recommended"]') ?? [];
+      expect(recommended).toHaveLength(1);
+      expect(recommended[0]?.textContent).toContain('B — Preview');
+      expect(recommended[0]?.textContent).toContain('Recommended');
+      expect(questionBlock?.querySelector('[data-testid="opm-question-recommendation-reason"]')?.textContent).toBe('Preview carries the fix already');
 
       const needsYouLink = document.querySelector('[data-testid="opm-needs-you"] a[href]');
       expect(needsYouLink?.getAttribute('href')).toBe(question.url);
