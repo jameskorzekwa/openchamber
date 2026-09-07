@@ -355,8 +355,11 @@ const QuestionDecisionBlock = ({
   const isSent = decisionState?.status === 'sent';
   const pendingKey = decisionState?.status === 'pending' ? decisionState.key : null;
 
-  // Find the first option (recommendation) - OPM convention is that the first option is recommended
-  const recommendedKey = question.options[0]?.key ?? null;
+  // OPM's question model names exactly one recommended option with a reason.
+  // Option order carries no meaning; a legacy question without a
+  // recommendation highlights nothing.
+  const recommendedKey = question.recommendation?.key ?? null;
+  const recommendationReason = question.recommendation?.reason?.trim() ?? '';
 
   const handleOptionSubmit = (optionKey: string) => {
     if (onDecide) onDecide(row, optionKey, null);
@@ -388,6 +391,9 @@ const QuestionDecisionBlock = ({
               <strong>{option.key} — {option.label}</strong>
               {isRecommended ? <span className="ml-1 text-[0.65rem] font-semibold uppercase tracking-wide opacity-80">({t('opm.question.recommended')})</span> : null}
               {option.detail ? ` (${option.detail})` : ''}
+              {isRecommended && recommendationReason ? (
+                <span data-testid="opm-question-recommendation-reason" className="block opacity-80">{recommendationReason}</span>
+              ) : null}
             </p>
             <div className="flex shrink-0 items-center gap-1">
               <Button

@@ -161,8 +161,10 @@ describe('OpmStatusOverlay project groups, lanes, active clock, pause, completed
       expect(question?.textContent).toContain('A — Run on the canary device');
       // 2 options × (submit + copy) + custom input (submit + copy) = 6 buttons
       expect(question?.querySelectorAll('button').length).toBe(6);
-      // First option should be marked as recommended
-      expect(question?.textContent).toContain('Recommended');
+      // A legacy question carries no recommendation, and the UI must not
+      // invent one from option order.
+      expect(question?.querySelectorAll('[data-testid="opm-question-option-recommended"]').length).toBe(0);
+      expect(question?.textContent).not.toContain('Recommended');
     } finally { await unmount(); }
   });
 

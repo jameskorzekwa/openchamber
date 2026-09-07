@@ -36,6 +36,10 @@ const childSummarySchema = z.object({
       detail: z.string(),
       command: z.string(),
     })),
+    recommendation: z.object({
+      key: z.string(),
+      reason: z.string().default(''),
+    }).nullable().optional().default(null),
     url: z.string(),
   }).nullable().default(null),
   url: nullableString,

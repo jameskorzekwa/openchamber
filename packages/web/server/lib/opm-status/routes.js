@@ -76,11 +76,24 @@ const questionFor = (question) => {
     };
   });
   if (options.some((option) => option === null)) return null;
+  // OPM's canonical question model carries exactly one structured
+  // recommendation ({ key, reason }) bound to one of the options. It is the
+  // only source of "recommended": option order carries no meaning. Legacy
+  // questions that predate the model have none, and the UI must not invent one.
+  const recommendation = question.recommendation && typeof question.recommendation === 'object'
+    && typeof question.recommendation.key === 'string'
+    && options.some((option) => option.key === question.recommendation.key)
+    ? {
+      key: question.recommendation.key,
+      reason: typeof question.recommendation.reason === 'string' ? question.recommendation.reason : '',
+    }
+    : null;
   return {
     id: question.id,
     askedBy: question.askedBy,
     text: question.text,
     options,
+    recommendation,
     url: question.url,
   };
 };
