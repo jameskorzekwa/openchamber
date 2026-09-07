@@ -19,9 +19,11 @@ workflow events only for files already on the default branch.
 
 ### J2K Sync Upstream
 
-`.github/workflows/sync-upstream.yml` runs at minute 17 every six hours and by
-manual dispatch. It uses the default `GITHUB_TOKEN` with `actions: write`,
-`contents: write`, and `issues: write`.
+`.github/workflows/sync-upstream.yml` runs at minute 17 every hour and by
+manual dispatch. Upstream cannot signal a fork, so polling is the only way the
+mirror and the patch series advance. Ref writes and recovery issues use the
+owner's `UPSTREAM_SYNC_TOKEN`; validation dispatch uses the default
+`GITHUB_TOKEN` with `actions: write`.
 
 The workflow:
 
@@ -32,7 +34,11 @@ The workflow:
 5. Dispatches `J2K Validate` for a clean rebase.
 
 If `main` has diverged, the workflow opens a mirror-divergence issue and stops.
-It never force-pushes `main`. If the series conflicts, it pushes a recovery
+It never force-pushes `main`. Divergence has exactly one cause: something was
+merged into `main` directly. Every pull request in this fork targets
+`j2k/current`; a change merged to `main` is not released, breaks the sync, and
+must be ported. OPM is configured with `defaultBranch: j2k/current` for this
+repository and refuses to merge a change whose base is any other branch. If the series conflicts, it pushes a recovery
 branch at the pre-rebase series head, opens `Rebase conflict: patch series vs
 vX.Y.Z`, and stops without publishing.
 
@@ -98,7 +104,10 @@ with the exact failed SHA and run URL.
 ### J2K Release
 
 `.github/workflows/release.yml` starts after successful push or manually
-dispatched validation of either `j2k/current` or `j2k/vX.Y.Z`. It can also be dispatched
+dispatched validation of either `j2k/current` or `j2k/vX.Y.Z`. A pull request
+merged to `j2k/current` therefore releases on its own: validation runs for the
+merge commit, and its success starts a `vX.Y.Z-j2k.N` release whose base is the
+newest stable upstream tag in that commit's ancestry. It can also be dispatched
 manually with either branch name. Pull-request validation cannot start a
 release, and release-created ref updates use `GITHUB_TOKEN`, so they do not
 recursively start another workflow.
