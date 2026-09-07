@@ -11,8 +11,15 @@ const sync = readFileSync('.github/workflows/sync-upstream.yml', 'utf8');
 const validate = readFileSync('.github/workflows/validate.yml', 'utf8');
 const docs = readFileSync('docs/CI_RELEASE_CHANNEL.md', 'utf8');
 
-test('release triggers from validated candidate branches without push recursion', () => {
+test('release triggers from validated candidate branches and j2k/current without push recursion', () => {
   assert.match(release, /startsWith\(github\.event\.workflow_run\.head_branch, 'j2k\/v'\)/);
+  // The documented contract: an ordinary validated patch commit merged to
+  // j2k/current releases too. Before this, a merged fix waited unreleased for
+  // the next upstream tag, and the docs and the workflow disagreed.
+  assert.match(release, /github\.event\.workflow_run\.head_branch == 'j2k\/current'/);
+  assert.match(release, /"\$source_ref" != 'j2k\/current'/);
+  assert.match(release, /git describe --tags --match 'v\[0-9\]\*\.\[0-9\]\*\.\[0-9\]\*' --exclude '\*-j2k\.\*' --abbrev=0 "\$source_commit"/);
+  assert.match(docs, /validated ordinary patch commit on long-lived `j2k\/current`/);
   assert.doesNotMatch(release, /^\s+push:\s*$/m);
   assert.match(release, /source_commit.*WORKFLOW_HEAD_SHA|workflow_sha.*WORKFLOW_HEAD_SHA/s);
   assert.match(release, /matching_tag/);
