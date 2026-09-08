@@ -110,12 +110,6 @@ export const createManagedGoalStaleRecovery = ({
     abortRetries.set(key, state);
   };
 
-  const isAbortExhausted = ({ goalId, sessionId, messageId, taskCallId }) => {
-    const key = abortRetryKey({ goalId, sessionId, messageId, taskCallId });
-    const state = abortRetries.get(key);
-    return state?.attempts >= MAX_ABORT_ATTEMPTS;
-  };
-
   const observe = (update) => {
     if (!update || update.parentID || typeof update.sessionId !== 'string' || !update.sessionId) return;
     if (
@@ -290,10 +284,7 @@ export const createManagedGoalStaleRecovery = ({
       const messageId = message?.info?.id || '';
       const taskCallId = orphanedTask?.id || '';
 
-      if (!shouldAttemptAbort({ goalId, sessionId, messageId, taskCallId })) {
-        if (isAbortExhausted({ goalId, sessionId, messageId, taskCallId })) continue;
-        continue;
-      }
+      if (!shouldAttemptAbort({ goalId, sessionId, messageId, taskCallId })) continue;
 
       if (orphanedTask) {
         await recover({ sessionId, rootId, directory, goalId, reason: 'orphaned task', messageId, taskCallId });
