@@ -8,6 +8,8 @@ import test from 'node:test';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const afterPackPath = path.join(__dirname, 'after-pack.cjs');
+const electronPackageDir = path.join(__dirname, '..');
+const packageScriptPath = path.join(__dirname, 'package.mjs');
 
 // Run the after-pack hook in a subprocess with controlled environment
 const runAfterPack = ({ appOutDir, j2kBuild = false }) => {
@@ -128,6 +130,69 @@ test('generates app-update.yml with GitHub feed for non-J2K builds', (t) => {
     assert.equal(config.owner, 'openchamber', 'owner should be openchamber');
     assert.equal(config.repo, 'openchamber', 'repo should be openchamber');
     assert.equal(config.updaterCacheDirName, 'openchamber-updater', 'updaterCacheDirName should be set');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('package.mjs writes updater configuration to a no-publish unsigned macOS app', { timeout: 120_000 }, (t) => {
+  if (process.platform !== 'darwin' || process.arch !== 'arm64') {
+    t.skip('macOS arm64 packaging requires a native macOS arm64 host');
+    return;
+  }
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-package-updater-'));
+  try {
+    const output = path.join(root, 'dist');
+    const builderConfigPath = path.join(root, 'electron-builder.json');
+    const builderConfig = {
+      appId: 'dev.openchamber.desktop.characterization',
+      productName: 'OpenChamber',
+      files: ['preload.mjs'],
+      extraMetadata: { main: 'preload.mjs' },
+      afterPack: afterPackPath,
+      directories: { output },
+      mac: {
+        identity: null,
+        notarize: false,
+        target: ['dir'],
+      },
+    };
+    fs.writeFileSync(builderConfigPath, JSON.stringify(builderConfig));
+
+    const result = spawnSync(process.execPath, [
+      packageScriptPath,
+      '--mac',
+      '--arm64',
+      '--dir',
+      '--publish=never',
+      '--config',
+      builderConfigPath,
+    ], {
+      cwd: electronPackageDir,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        CSC_IDENTITY_AUTO_DISCOVERY: 'false',
+        OPENCHAMBER_J2K_DESKTOP_BUILD: '1',
+        OPENCHAMBER_TARGET_ARCH: 'arm64',
+      },
+    });
+
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const appUpdatePath = path.join(
+      output,
+      'mac-arm64',
+      'OpenChamber.app',
+      'Contents',
+      'Resources',
+      'app-update.yml',
+    );
+    assert.equal(
+      fs.readFileSync(appUpdatePath, 'utf8'),
+      "provider: generic\nurl: 'https://raw.githubusercontent.com/jameskorzekwa/openchamber/desktop-channel/'\nupdaterCacheDirName: openchamber-updater\n",
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
