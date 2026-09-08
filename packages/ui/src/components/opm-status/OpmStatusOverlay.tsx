@@ -18,6 +18,7 @@ import {
   activeDurationMs,
   formatDuration,
   getLaneCounts,
+  isCommandActionable,
   postOpmPause,
   fetchOpmStatus,
   getOpmCounts,
@@ -588,13 +589,25 @@ const OpmWorkRow = ({
           {row.command ? (
             <code className="block w-full min-w-0 whitespace-pre-wrap break-all rounded-md bg-background px-2 py-1.5 typography-micro text-foreground">{row.command}</code>
           ) : null}
+          {/* Render operator-attention guidance when the row needs operator
+              inspection rather than owner action. The command is shown but
+              not actionable; the operator must diagnose first. */}
+          {row.needsOperatorAttention && !isCommandActionable(row) ? (
+            <div className="mt-1 rounded-md border border-status-warning/30 bg-status-warning/10 px-2 py-1.5 typography-ui-label text-status-warning">
+              {t('opm.operator.diagnosisNeeded')}
+            </div>
+          ) : null}
           {(row.command || row.sessionId) ? (
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              {row.command ? (
+              {/* Only show the Run button when the command is actionable.
+                  Operational faults show the command for reference but don't
+                  offer a primary action that won't help without diagnosis. */}
+              {row.command && isCommandActionable(row) ? (
                 <>
                   <Button
                     size="xs"
                     variant="default"
+                    data-testid="opm-command-run"
                     disabled={runState?.status === 'pending' || runState?.status === 'sent'}
                     onClick={() => onRun(row)}
                   >
@@ -609,6 +622,12 @@ const OpmWorkRow = ({
                     {copiedCommand === row.command ? t('opm.actions.copied') : t('opm.actions.copy')}
                   </Button>
                 </>
+              ) : row.command ? (
+                /* Command exists but not actionable: show copy only */
+                <Button size="xs" variant="outline" onClick={() => onCopy(row.command ?? '')}>
+                  <Icon name={copiedCommand === row.command ? 'check' : 'clipboard'} className="size-3" />
+                  {copiedCommand === row.command ? t('opm.actions.copied') : t('opm.actions.copy')}
+                </Button>
               ) : null}
               {row.sessionId ? (
                 <Button size="xs" variant="outline" onClick={() => onOpenSession(row)}>
@@ -640,6 +659,8 @@ const TaskOverview = ({ snapshot }: { snapshot: OpmAvailableSnapshot }) => {
   const states = lanes
     ? [
         { label: t('opm.lane.needsYou'), count: lanes.needsYou, tone: 'text-status-error bg-status-error/10' },
+        // operatorAttention is separate from needsYou: operational faults vs owner decisions
+        ...(lanes.operatorAttention > 0 ? [{ label: t('opm.lane.operatorAttention'), count: lanes.operatorAttention, tone: 'text-status-warning bg-status-warning/10' }] : []),
         { label: t('opm.lane.running'), count: lanes.running, tone: 'text-status-success bg-status-success/10' },
         { label: t('opm.lane.waiting'), count: lanes.waiting, tone: 'text-status-info bg-status-info/10' },
         { label: t('opm.lane.backlog'), count: lanes.backlog, tone: 'text-muted-foreground bg-[var(--surface-muted)]' },
@@ -647,6 +668,8 @@ const TaskOverview = ({ snapshot }: { snapshot: OpmAvailableSnapshot }) => {
       ]
     : [
         { label: phaseLabel('waiting_owner', t), count: legacy.needsYou, tone: 'text-status-error bg-status-error/10' },
+        // Show operatorAttention in legacy mode too if present
+        ...(legacy.operatorAttention > 0 ? [{ label: t('opm.lane.operatorAttention'), count: legacy.operatorAttention, tone: 'text-status-warning bg-status-warning/10' }] : []),
         { label: phaseLabel('blocked', t), count: legacy.blocked, tone: 'text-status-warning bg-status-warning/10' },
         { label: phaseLabel('active', t), count: legacy.active, tone: 'text-status-success bg-status-success/10' },
         { label: phaseLabel('waiting_external', t), count: legacy.waiting, tone: 'text-status-info bg-status-info/10' },
@@ -751,14 +774,16 @@ const SupervisorSummary = ({
 
 const rowKey = (row: OpmRow) => `${row.project}#${row.ref}`;
 
-const LANE_ORDER: OpmLane[] = ['needsYou', 'running', 'waiting', 'backlog'];
+const LANE_ORDER: OpmLane[] = ['needsYou', 'operatorAttention', 'running', 'waiting', 'backlog'];
 const laneTone = (lane: OpmLane) => lane === 'needsYou'
   ? 'text-status-error'
-  : lane === 'running'
-    ? 'text-status-success'
-    : lane === 'waiting'
-      ? 'text-status-info'
-      : 'text-muted-foreground';
+  : lane === 'operatorAttention'
+    ? 'text-status-warning'
+    : lane === 'running'
+      ? 'text-status-success'
+      : lane === 'waiting'
+        ? 'text-status-info'
+        : 'text-muted-foreground';
 
 // One section per project; inside, the four lanes the operator asks about.
 // Empty projects collapse to their header so a five-project dashboard stays

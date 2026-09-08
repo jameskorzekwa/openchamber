@@ -142,21 +142,141 @@ export const ownerGuidance = ({ needsOwner, deadLetter, reason, nextAction, phas
   };
 };
 
+// Derive blockerKind from the entry's state machine. This classifies the
+// nature of a blocker without relying on English text patterns. The UI uses
+// this to render truthful guidance and appropriate controls per category.
+// Values: owner_decision (answerable question or protected approval),
+// worker_recovery (dead letter, operational fault needing operator inspection),
+// capability_blocked (missing capability, rate limited), evidence_reconciliation
+// (audit/tracking mismatch), external_dependency (waiting on external system),
+// child_dependency (waiting on child items), paused (owner-paused), or null.
+const deriveBlockerKind = (entry, question, reason) => {
+  // Owner-provided blockerKind from the backend takes precedence.
+  if (typeof entry.blockerKind === 'string') return entry.blockerKind;
+
+  // Structured owner question is always an owner decision.
+  if (question) return 'owner_decision';
+
+  // Legacy protected-path authorization (text pattern fallback).
+  if (entry.phase === 'blocked' && NEEDS_OWNER.test(reason)) return 'owner_decision';
+
+  // Explicit owner decision flag, but WITHOUT a question requires careful
+  // classification. Some are genuine owner gates (changed branch binding,
+  // unreadable review workspace, owner-only evidence), while others are
+  // operational stalls masquerading as owner decisions (cfg#179 bug).
+  //
+  // Classification rules for needsOwnerDecision=true + question=null:
+  // 1. 'stalled:' prefix without explicit owner request → worker_recovery
+  // 2. Corrupt/malformed question data → evidence_reconciliation
+  // 3. Protected-head: authorization.kind='protected_change' OR
+  //    decisionCommand=/agent authorize <sha> → owner_decision
+  // 4. Explicit owner gate: reason='owner decision required: ...' with
+  //    /agent decide command → owner_decision (NOT protected-path)
+  // 5. Generic restart/resume or missing command → worker_recovery
+  if (entry.needsOwnerDecision === true && !question) {
+    // Stalled items without explicit owner request are worker recovery.
+    if (/^stalled:/i.test(reason)) return 'worker_recovery';
+
+    // Corrupt or malformed question data needs evidence reconciliation.
+    // (entry.question exists but failed questionFor() validation)
+    if (entry.question && typeof entry.question === 'object') return 'evidence_reconciliation';
+
+    // Protected-head authorization: identified by authorization metadata.
+    if (entry.authorization?.kind === 'protected_change') return 'owner_decision';
+
+    const cmd = entry.decisionCommand ?? '';
+
+    // Protected-head via decisionCommand pattern (exact 40-hex SHA).
+    if (AUTHORIZE_COMMAND.test(cmd)) return 'owner_decision';
+
+    // Explicit owner gates with /agent decide command: these are real owner
+    // decisions even without a structured question. Examples: changed branch
+    // binding, unreadable review workspace, owner-only evidence. The reason
+    // typically contains 'owner decision required:' diagnostic.
+    if (/^\/agent decide\b/.test(cmd)) return 'owner_decision';
+
+    // Generic restart/resume or missing command = worker recovery.
+    // cfg#179: needsOwnerDecision=true + question=null + decisionCommand=
+    // '/agent restart' should NOT show as owner decision.
+    return 'worker_recovery';
+  }
+
+  // Dead letter / exhausted retries = worker recovery (operational fault).
+  if (entry.effect?.status === 'dead_letter' || DEAD_LETTER.test(reason)) return 'worker_recovery';
+
+  // Owner-paused items.
+  if (entry.phase === 'paused') return 'paused';
+
+  // Waiting on child chunks.
+  if (/waiting on \d+\/\d+ chunks/.test(reason)) return 'child_dependency';
+
+  // External dependencies (review, checks, deployment).
+  if (/waiting for (review|checks|deployment)/.test(reason)) return 'external_dependency';
+  if (entry.phase === 'waiting_external') return 'external_dependency';
+
+  // Rate limited or capability issues.
+  if (/rate.?limit/i.test(reason) || entry.rateLimited === true) return 'capability_blocked';
+
+  // Worker limit is an operational constraint, not an owner decision.
+  if (/worker limit/.test(reason)) return 'capability_blocked';
+
+  // Evidence/tracking issues (audit, reconciliation, location tracking).
+  if (/tracked.?source|location|audit|reconcil/i.test(reason)) return 'evidence_reconciliation';
+
+  return null;
+};
+
+// Determine if an entry requires operator (worker/developer) attention rather
+// than owner decision. Operational faults, dead letters, capability issues,
+// and evidence reconciliation all need operator inspection.
+const needsOperatorAttention = (blockerKind, entry) => {
+  // Explicit backend field takes precedence.
+  if (typeof entry.needsOperatorAttention === 'boolean') return entry.needsOperatorAttention;
+
+  // Worker recovery, capability blocked, and evidence reconciliation need operator.
+  if (blockerKind === 'worker_recovery') return true;
+  if (blockerKind === 'capability_blocked') return true;
+  if (blockerKind === 'evidence_reconciliation') return true;
+
+  // Dead letter effect status always needs operator investigation.
+  if (entry.effect?.status === 'dead_letter') return true;
+
+  return false;
+};
+
 const classifyEntry = (entry, activityState, issueUrls) => {
   const reason = typeof entry.reason === 'string' ? entry.reason : '';
   const question = questionFor(entry.question);
-  // OPM marks every owner decision explicitly (waiting_owner phase,
-  // needsOwnerDecision + decisionCommand). Matching only the legacy
-  // protected-path reason filed those items under blocked/waiting, so the
-  // owner was never shown that a decision was his (2026-09-02).
-  const needsOwner = entry.needsOwnerDecision === true
-    || (entry.phase === 'blocked' && NEEDS_OWNER.test(reason));
-  const deadLetter = entry.effect?.status === 'dead_letter' || DEAD_LETTER.test(reason);
+  const blockerKind = deriveBlockerKind(entry, question, reason);
+
+  // A genuine owner decision requires an answerable question OR explicit
+  // protected-path authorization. NOT just needsOwnerDecision=true with
+  // question=null (that's cfg#179: operational stall, not owner decision).
+  const needsOwner = blockerKind === 'owner_decision';
+  const deadLetter = blockerKind === 'worker_recovery'
+    && (entry.effect?.status === 'dead_letter' || DEAD_LETTER.test(reason));
+
+  // Command is only provided for genuine owner decisions or explicit legacy
+  // dead-letter recovery. Operational faults with decisionCommand='/agent
+  // restart' should NOT expose that command as actionable.
   const command = needsOwner
     ? (reason.match(AUTHORIZE_COMMAND)?.[0] ?? entry.decisionCommand ?? null)
     : deadLetter
       ? '/agent resume'
       : null;
+
+  // Determine the row kind. Only genuine owner decisions get owner-* kinds.
+  // Operational faults (worker_recovery without dead letter) get null kind
+  // to prevent them from appearing in the "Needs You" lane incorrectly.
+  const kind = question
+    ? 'owner-question'
+    : needsOwner
+      ? 'needs-owner'
+      : deadLetter
+        ? 'dead-letter'
+        : null;
+
+  const operatorAttention = needsOperatorAttention(blockerKind, entry);
 
   return {
     project: entry.project ?? null,
@@ -188,21 +308,41 @@ const classifyEntry = (entry, activityState, issueUrls) => {
         }
       : null,
     children: Array.isArray(entry.children)
-      ? entry.children.map((child) => ({
-          ref: child.ref,
-          title: child.title ?? '',
-          phase: child.phase ?? null,
-          state: child.state ?? null,
-          action: child.action ?? null,
-          activityState: child.activityState ?? null,
-          reason: child.reason ?? null,
-          needsOwnerDecision: child.needsOwnerDecision === true,
-          question: questionFor(child.question),
-          url: issueUrlFor(issueUrls, entry.project, child.ref),
-        }))
+      ? entry.children.map((child) => {
+          const childQuestion = questionFor(child.question);
+          const childBlockerKind = deriveBlockerKind(child, childQuestion, child.reason ?? '');
+          const childNeedsOwner = childBlockerKind === 'owner_decision';
+          const childCmd = childNeedsOwner
+            ? ((child.reason ?? '').match(AUTHORIZE_COMMAND)?.[0] ?? child.decisionCommand ?? null)
+            : null;
+          return {
+            ref: child.ref,
+            title: child.title ?? '',
+            phase: child.phase ?? null,
+            state: child.state ?? null,
+            action: child.action ?? null,
+            activityState: child.activityState ?? null,
+            reason: child.reason ?? null,
+            needsOwnerDecision: child.needsOwnerDecision === true,
+            question: childQuestion,
+            decisionCommand: child.decisionCommand ?? null,
+            blockerKind: childBlockerKind,
+            needsOperatorAttention: needsOperatorAttention(childBlockerKind, child),
+            authorization: child.authorization && typeof child.authorization === 'object'
+              ? { kind: child.authorization.kind ?? null, sha: child.authorization.sha ?? null, command: child.authorization.command ?? null }
+              : null,
+            command: childCmd,
+            url: issueUrlFor(issueUrls, entry.project, child.ref),
+          };
+        })
       : [],
-    kind: question ? 'owner-question' : needsOwner ? 'needs-owner' : deadLetter ? 'dead-letter' : null,
+    kind,
+    blockerKind,
+    needsOperatorAttention: operatorAttention,
     command,
+    authorization: entry.authorization && typeof entry.authorization === 'object'
+      ? { kind: entry.authorization.kind ?? null, sha: entry.authorization.sha ?? null, command: entry.authorization.command ?? null }
+      : null,
     owner: question ? { required: true, instruction: question.text } : ownerGuidance({
       needsOwner,
       deadLetter,
@@ -215,13 +355,28 @@ const classifyEntry = (entry, activityState, issueUrls) => {
   };
 };
 
-// Within a project: what needs the owner, what is actually running (a live
-// session on a working action), what is waiting on something, and what has
-// not been picked up yet. This is the operator's question every time the
-// dashboard opens; the flat groups above answer it across projects only.
+// Within a project: what needs the owner, what needs operator attention, what
+// is actually running (a live session on a working action), what is waiting on
+// something, and what has not been picked up yet. This is the operator's
+// question every time the dashboard opens.
+//
+// Lanes: needsYou (genuine owner decisions), operatorAttention (operational
+// faults needing worker/operator inspection), running, waiting, backlog.
 const WORKING_ACTIONS = new Set(['active', 'reviewing', 'merging', 'deploying', 'verifying', 'remediating', 'planning', 'closing']);
 export const laneFor = (row) => {
-  if (row.question || row.kind === 'needs-owner' || row.kind === 'dead-letter') return 'needsYou';
+  // Genuine owner decisions: structured question OR explicit needs-owner with
+  // an answerable command. Dead-letter is an operator concern, not owner.
+  if (row.question || row.kind === 'needs-owner') return 'needsYou';
+
+  // Dead-letter and other operational faults go to operator attention, not
+  // "needs you" (the owner). The owner cannot fix these without first
+  // understanding what the operator needs to investigate.
+  if (row.kind === 'dead-letter') return 'operatorAttention';
+  if (row.needsOperatorAttention) return 'operatorAttention';
+  if (row.blockerKind === 'worker_recovery') return 'operatorAttention';
+  if (row.blockerKind === 'capability_blocked') return 'operatorAttention';
+  if (row.blockerKind === 'evidence_reconciliation') return 'operatorAttention';
+
   if (row.phase === 'planned' && (row.action === 'queued' || row.activityState === 'queued')) return 'backlog';
   if (/^queued/.test(row.reason ?? '') || /^queued/.test(row.action ?? '')) return 'backlog';
   if (row.sessionId && WORKING_ACTIONS.has(row.action ?? '') && (row.phase === 'active' || row.phase === 'review')) return 'running';
@@ -241,11 +396,16 @@ const groupByProject = (rows, statusProjects) => {
     if (!group.alias && row.alias) group.alias = row.alias;
     group.items.push({ ...row, lane: laneFor(row) });
   }
-  const laneRank = { needsYou: 0, running: 1, waiting: 2, backlog: 3 };
+  // Operator attention ranks after needsYou but before running, because
+  // operational faults are urgent but not owner decisions.
+  const laneRank = { needsYou: 0, operatorAttention: 1, running: 2, waiting: 3, backlog: 4 };
   return [...order.values()].map((group) => {
-    group.items.sort((a, b) => laneRank[a.lane] - laneRank[b.lane] || String(a.ref).localeCompare(String(b.ref), undefined, { numeric: true }));
-    group.counts = { needsYou: 0, running: 0, waiting: 0, backlog: 0 };
-    for (const item of group.items) group.counts[item.lane] += 1;
+    group.items.sort((a, b) => (laneRank[a.lane] ?? 5) - (laneRank[b.lane] ?? 5) || String(a.ref).localeCompare(String(b.ref), undefined, { numeric: true }));
+    group.counts = { needsYou: 0, operatorAttention: 0, running: 0, waiting: 0, backlog: 0 };
+    for (const item of group.items) {
+      if (group.counts[item.lane] !== undefined) group.counts[item.lane] += 1;
+      else group.counts[item.lane] = 1;
+    }
     return group;
   });
 };
@@ -267,7 +427,9 @@ const rowRank = (row) => {
 };
 
 export const buildSnapshot = ({ activity, status, issueUrls = {}, now = Date.now() }) => {
-  const groups = { needsYou: [], blocked: [], active: [], waiting: [], queued: [] };
+  // operatorAttention is a new group for operational faults requiring
+  // worker/operator inspection, separate from genuine owner decisions.
+  const groups = { needsYou: [], operatorAttention: [], blocked: [], active: [], waiting: [], queued: [] };
   const rows = [];
   const seen = new Set();
   const add = (row) => {
@@ -275,7 +437,13 @@ export const buildSnapshot = ({ activity, status, issueUrls = {}, now = Date.now
     if (seen.has(key)) return;
     seen.add(key);
     rows.push(row);
-    if (row.question || row.kind === 'needs-owner' || row.kind === 'dead-letter') groups.needsYou.push(row);
+    // Genuine owner decisions: structured question OR explicit needs-owner
+    // (protected authorization). Dead-letter is NOT an owner decision; it's
+    // an operational fault that needs operator inspection.
+    if (row.question || row.kind === 'needs-owner') groups.needsYou.push(row);
+    // Operator attention: dead-letter, worker recovery, capability blocked,
+    // evidence reconciliation. These need operator investigation, not owner.
+    else if (row.kind === 'dead-letter' || row.needsOperatorAttention) groups.operatorAttention.push(row);
     else if (row.phase === 'blocked' || row.phase === 'failed' || row.phase === 'paused') groups.blocked.push(row);
     else if (row.phase === 'planned' || row.activityState === 'queued' || /^queued:/.test(row.reason ?? '')) groups.queued.push(row);
     else if (row.phase === 'active' || row.phase === 'review') groups.active.push(row);
@@ -352,6 +520,7 @@ export const buildSnapshot = ({ activity, status, issueUrls = {}, now = Date.now
     paused: status?.paused === true,
     counts: {
       needsYou: groups.needsYou.length,
+      operatorAttention: groups.operatorAttention.length,
       blocked: groups.blocked.length,
       active: groups.active.length,
       waiting: groups.waiting.length,
@@ -383,8 +552,19 @@ export const buildSnapshot = ({ activity, status, issueUrls = {}, now = Date.now
       attention: Array.isArray(status?.attention)
         ? status.attention.map((item) => {
             const identity = projectForAttention(item);
+            // Pass through backend blockerKind/needsOperatorAttention or derive.
+            const blockerKind = item.blockerKind ?? null;
+            const operatorAttention = item.needsOperatorAttention === true
+              || blockerKind === 'worker_recovery'
+              || blockerKind === 'capability_blocked'
+              || blockerKind === 'evidence_reconciliation'
+              // Stalled/dead attention kinds are operator concerns.
+              || item.kind === 'stalled'
+              || item.kind === 'dead_letter';
             return {
               kind: item.kind ?? null,
+              blockerKind,
+              needsOperatorAttention: operatorAttention,
               project: identity.project,
               projectName: identity.projectName,
               ref: item.ref ?? null,
@@ -423,20 +603,47 @@ const collectRows = (snapshot) => {
   return rows;
 };
 
+// Detect placeholder templates like '/agent decide <your decision>'. These are
+// instruction templates, NOT executable commands. Posting the literal placeholder
+// would release a gate without a real owner decision.
+const PLACEHOLDER_TEMPLATE = /<[^>]+>/;
+
 // Never execute arbitrary input: a submitted command must re-derive from the
-// current snapshot. It is allowed when it exactly equals the (project, ref)
-// row's own command, or when it is the literal "/agent resume" for a
-// non-terminal row or for a stalled supervisor attention entry on that ref.
+// current snapshot. A command is allowed ONLY when:
+// 1. It exactly equals the (project, ref) row's own command (evidence-backed), OR
+// 2. It is "/agent resume" for a non-terminal row that has kind='dead-letter'
+//    (explicit dead letter recovery where resume is the documented action).
+//
+// The following are NO LONGER allowed (fixes cfg#179 and cross-project bugs):
+// - Blanket "/agent resume" for any non-terminal row (must be dead-letter kind)
+// - Ref-only attention fallback across projects (must match project AND ref)
+// - Generic restart/resume from operational stalls masquerading as owner decisions
+// - Placeholder templates like '/agent decide <your decision>' (not executable)
 export const isCommandAllowed = (snapshot, { project, ref, command }) => {
   if (!snapshot?.available) return false;
+
+  // Never allow placeholder templates - they are instructions, not commands.
+  if (PLACEHOLDER_TEMPLATE.test(command)) return false;
+
   const rows = collectRows(snapshot)
     .filter((row) => String(row.project) === String(project) && String(row.ref) === String(ref));
   for (const row of rows) {
-    if (row.command && row.command === command) return true;
-    if (command === RESUME_COMMAND && !TERMINAL_PHASES.has(row.phase)) return true;
+    // The row's evidence-backed command must NOT be a placeholder template.
+    // Even if it matches exactly, posting a placeholder releases gates incorrectly.
+    if (row.command && row.command === command && !PLACEHOLDER_TEMPLATE.test(row.command)) return true;
+    // "/agent resume" is allowed ONLY for dead-letter rows (explicit recovery).
+    // This prevents blanket resume for any non-terminal row.
+    if (command === RESUME_COMMAND && row.kind === 'dead-letter' && !TERMINAL_PHASES.has(row.phase)) return true;
   }
-  return command === RESUME_COMMAND
-    && (snapshot.supervisor?.attention ?? []).some((item) => String(item.ref) === String(ref));
+  // Supervisor attention items: require BOTH project AND ref match, not ref-only.
+  // This prevents cross-project command injection where project A's ref 50 accepts
+  // commands meant for project B's ref 50.
+  if (command === RESUME_COMMAND) {
+    const attention = snapshot.supervisor?.attention ?? [];
+    return attention.some((item) =>
+      String(item.project) === String(project) && String(item.ref) === String(ref));
+  }
+  return false;
 };
 
 // Validate that a question decision can be submitted. The question ID must
