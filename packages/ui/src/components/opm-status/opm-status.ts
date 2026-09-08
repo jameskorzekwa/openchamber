@@ -17,6 +17,28 @@ const effectSchema = z.object({
   error: nullableString,
 }).nullable();
 
+// Authorization metadata for protected-head policy approvals. When present,
+// the owner can inspect and choose to authorize the exact SHA. The backend
+// verifies the SHA matches exactly; this does not grant approval.
+const authorizationSchema = z.object({
+  kind: nullableString,
+  sha: nullableString,
+  command: nullableString,
+}).nullable().default(null);
+
+// BlockerKind classifies the nature of a blocker without relying on English
+// text patterns. The UI uses this to render truthful guidance by category.
+// Values are additive; unknown values from newer backends fall through as-is.
+const blockerKindSchema = z.enum([
+  'owner_decision',        // Answerable question or protected approval
+  'worker_recovery',       // Dead letter, operational fault needing operator
+  'capability_blocked',    // Missing capability, rate limited
+  'evidence_reconciliation', // Audit/tracking mismatch
+  'external_dependency',   // Waiting on external system
+  'child_dependency',      // Waiting on child items
+  'paused',                // Owner-paused
+]).nullable().catch(null);
+
 const childSummarySchema = z.object({
   ref: z.union([z.string(), z.number()]),
   title: z.string(),
@@ -42,6 +64,13 @@ const childSummarySchema = z.object({
     }).nullable().optional().default(null),
     url: z.string(),
   }).nullable().default(null),
+  // Additive fields for blocker classification. Old backends omit these;
+  // defaults preserve backward compatibility.
+  decisionCommand: nullableString.default(null),
+  blockerKind: blockerKindSchema.default(null),
+  needsOperatorAttention: z.boolean().default(false),
+  authorization: authorizationSchema,
+  command: nullableString.default(null),
   url: nullableString,
 });
 
@@ -69,20 +98,33 @@ const rowBaseSchema = z.object({
   effect: effectSchema,
   children: z.array(childSummarySchema),
   kind: z.enum(['owner-question', 'needs-owner', 'dead-letter']).nullable(),
+  // Additive fields for blocker classification. Old backends omit these;
+  // defaults preserve backward compatibility.
+  blockerKind: blockerKindSchema.default(null),
+  needsOperatorAttention: z.boolean().default(false),
   command: nullableString,
+  authorization: authorizationSchema,
   owner: ownerSchema,
   url: nullableString,
 });
 
 export type OpmRow = z.infer<typeof rowBaseSchema>;
-export type OpmLane = 'needsYou' | 'running' | 'waiting' | 'backlog';
+export type OpmBlockerKind = z.infer<typeof blockerKindSchema>;
+export type OpmLane = 'needsYou' | 'operatorAttention' | 'running' | 'waiting' | 'backlog';
 
-const laneSchema = z.enum(['needsYou', 'running', 'waiting', 'backlog']);
+const laneSchema = z.enum(['needsYou', 'operatorAttention', 'running', 'waiting', 'backlog']);
 const projectGroupSchema = z.object({
   project: z.string(),
   projectName: nullableString,
   alias: nullableString.default(null),
-  counts: z.object({ needsYou: z.number(), running: z.number(), waiting: z.number(), backlog: z.number() }),
+  // operatorAttention is additive; old backends omit it, default to 0.
+  counts: z.object({
+    needsYou: z.number(),
+    operatorAttention: z.number().default(0),
+    running: z.number(),
+    waiting: z.number(),
+    backlog: z.number(),
+  }),
   items: z.array(rowBaseSchema.extend({ lane: laneSchema })),
 });
 export type OpmProjectGroup = z.infer<typeof projectGroupSchema>;
@@ -106,6 +148,8 @@ const treeRowSchema: z.ZodType<OpmTreeRow> = z.lazy(() => rowBaseSchema.extend({
 }));
 const groupsSchema = z.object({
   needsYou: z.array(rowBaseSchema),
+  // operatorAttention is additive; old backends omit it.
+  operatorAttention: z.array(rowBaseSchema).default([]),
   blocked: z.array(rowBaseSchema),
   active: z.array(rowBaseSchema),
   waiting: z.array(rowBaseSchema),
@@ -121,6 +165,8 @@ const availableSnapshotSchema = z.object({
   paused: z.boolean(),
   counts: z.object({
     needsYou: z.number(),
+    // operatorAttention is additive; old backends omit it.
+    operatorAttention: z.number().default(0),
     blocked: z.number(),
     active: z.number(),
     waiting: z.number(),
@@ -145,6 +191,9 @@ const availableSnapshotSchema = z.object({
     }).passthrough(),
     attention: z.array(z.object({
       kind: nullableString,
+      // Additive fields for blocker classification.
+      blockerKind: blockerKindSchema.default(null),
+      needsOperatorAttention: z.boolean().default(false),
       project: nullableString.default(null),
       projectName: nullableString.default(null),
       ref: z.union([z.string(), z.number()]).nullable(),
@@ -308,9 +357,10 @@ export const postOpmPause = async (paused: boolean): Promise<OpmPauseResult> => 
 
 // Lane counts across every project: the pill and the overview read these.
 export const getLaneCounts = (snapshot: OpmAvailableSnapshot) => {
-  const counts = { needsYou: 0, running: 0, waiting: 0, backlog: 0 };
+  const counts = { needsYou: 0, operatorAttention: 0, running: 0, waiting: 0, backlog: 0 };
   for (const group of snapshot.byProject) {
     counts.needsYou += group.counts.needsYou;
+    counts.operatorAttention += group.counts.operatorAttention ?? 0;
     counts.running += group.counts.running;
     counts.waiting += group.counts.waiting;
     counts.backlog += group.counts.backlog;
@@ -338,6 +388,7 @@ export const formatDuration = (ms: number) => {
 
 export const getOpmCounts = (snapshot: OpmAvailableSnapshot) => ({
   needsYou: snapshot.groups.needsYou.length,
+  operatorAttention: snapshot.groups.operatorAttention?.length ?? 0,
   blocked: snapshot.groups.blocked.length,
   active: snapshot.groups.active.length,
   waiting: snapshot.groups.waiting.length,
@@ -369,4 +420,43 @@ export const ownerGuidanceKind = (row: OpmRow) => {
   if (/worker limit/.test(reason)) return 'worker';
   if (row.phase === 'active' || row.phase === 'review' || row.phase === 'planned') return 'working';
   return row.nextAction ? 'nextAction' : 'none';
+};
+
+// Determine if a row's command should be shown as an actionable primary button.
+// Operational faults (worker_recovery without explicit dead-letter, capability
+// blocked, evidence reconciliation) should NOT have a primary "Run" button
+// because the command is not a genuine owner action - it needs operator
+// inspection first. Returns true if the row has an actionable command.
+export const isCommandActionable = (row: OpmRow): boolean => {
+  if (!row.command) return false;
+
+  // Structured questions have their own submission UI, not a "Run" button.
+  if (row.kind === 'owner-question') return false;
+
+  // Genuine owner decisions (protected approval) are actionable.
+  if (row.kind === 'needs-owner') return true;
+
+  // Dead-letter with explicit "/agent resume" is actionable (operator has
+  // already diagnosed and the resume is the documented recovery).
+  if (row.kind === 'dead-letter') return true;
+
+  // Paused items with "/agent resume" are actionable.
+  if (row.phase === 'paused' && row.command === '/agent resume') return true;
+
+  // Operational faults requiring operator attention are NOT actionable.
+  // The command may be a generic restart/resume that won't help without
+  // first understanding what went wrong.
+  if (row.needsOperatorAttention) return false;
+
+  // blockerKind-based non-actionable categories:
+  // - worker_recovery (without dead-letter kind) needs investigation
+  // - capability_blocked needs operational fix
+  // - evidence_reconciliation needs audit
+  const blockerKind = row.blockerKind;
+  if (blockerKind === 'worker_recovery' && row.kind !== 'dead-letter') return false;
+  if (blockerKind === 'capability_blocked') return false;
+  if (blockerKind === 'evidence_reconciliation') return false;
+
+  // Other commands (if any) are actionable by default.
+  return true;
 };
