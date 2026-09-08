@@ -15,7 +15,8 @@ test('desktop release is a build-only component for an exact candidate', () => {
   assert.match(desktopWorkflow, /workflow_call:/);
   assert.doesNotMatch(desktopWorkflow, /workflow_dispatch:/);
   assert.match(desktopWorkflow, /source_sha must be an exact lowercase 40-character commit/);
-  assert.match(desktopWorkflow, /source_ref must be a candidate branch/);
+  // The workflow accepts both j2k/vX.Y.Z candidate branches and j2k/current.
+  assert.match(desktopWorkflow, /source_ref must be j2k\/vX\.Y\.Z or j2k\/current/);
   assert.match(desktopWorkflow, /source_commit.*INPUT_SOURCE_SHA/);
   assert.doesNotMatch(desktopWorkflow, /^  publish:/m);
   assert.match(releaseWorkflow, /uses: \.\/\.github\/workflows\/desktop-release\.yml/);
@@ -162,4 +163,60 @@ test('every workflow run block is parseable bash, including heredoc terminators'
     }
   }
   assert.deepEqual(failures, []);
+});
+
+// Regression tests for desktop metadata/source-resolution path
+// These verify that desktop-release.yml correctly validates source_ref
+// for both j2k/current and j2k/vX.Y.Z candidate branches.
+
+test('desktop source validation accepts j2k/current as a valid source_ref', () => {
+  // The desktop workflow must accept j2k/current alongside candidate branches.
+  // The outer release.yml already derives base_version from git describe for
+  // j2k/current, so the desktop workflow only needs to validate the format.
+  assert.match(desktopWorkflow, /\$INPUT_SOURCE_REF" == 'j2k\/current'/);
+  // For j2k/current, base_version is validated as SemVer without branch-name check.
+  assert.match(desktopWorkflow, /base_version must be a SemVer triple/);
+  // Both patterns are documented in the error message for invalid refs.
+  assert.match(desktopWorkflow, /source_ref must be j2k\/vX\.Y\.Z or j2k\/current/);
+});
+
+test('desktop source validation accepts j2k/vX.Y.Z candidate branches', () => {
+  // For candidate branches, the branch name must encode the base version.
+  assert.match(desktopWorkflow, /\$INPUT_SOURCE_REF" =~ \^j2k\/v\[0-9\]\+/);
+  assert.match(desktopWorkflow, /Candidate branch and base version differ/);
+});
+
+test('desktop source validation rejects invalid source refs', () => {
+  // Arbitrary branch names are rejected.
+  assert.match(desktopWorkflow, /source_ref must be j2k\/vX\.Y\.Z or j2k\/current/);
+});
+
+test('desktop source validation requires exact 40-character commit SHA', () => {
+  // The source_sha is always validated regardless of source_ref type.
+  assert.match(desktopWorkflow, /source_sha must be an exact lowercase 40-character commit/);
+  assert.match(desktopWorkflow, /\$INPUT_SOURCE_SHA" =~ \^/);
+});
+
+test('desktop source validation detects source movement during workflow', () => {
+  // If the branch moves after the caller captured the SHA, the build fails.
+  assert.match(desktopWorkflow, /moved or does not resolve to requested SHA/);
+  assert.match(desktopWorkflow, /\$source_commit" != "\$INPUT_SOURCE_SHA"/);
+});
+
+test('desktop release identity is consistent across source refs', () => {
+  // Both j2k/current and candidate branches produce identical release identity
+  // structure: base_version-j2k.revision and desktop-vbase_version-j2k.revision.
+  assert.match(desktopWorkflow, /release_tag=desktop-v%s/);
+  assert.match(desktopWorkflow, /version='\$\{\{ inputs\.base_version \}\}-j2k\.\$\{\{ inputs\.revision \}\}'/);
+  // Package versions must match the requested base_version.
+  assert.match(desktopWorkflow, /Electron base version.*differs from requested/);
+});
+
+test('outer release workflow correctly passes source_ref to desktop workflow', () => {
+  // The release.yml passes the actual source_ref to desktop-release.yml.
+  assert.match(releaseWorkflow, /source_ref: \$\{\{ needs\.metadata\.outputs\.source_ref \}\}/);
+  // The outer workflow accepts both patterns.
+  assert.match(releaseWorkflow, /Source ref must be j2k\/vX\.Y\.Z or j2k\/current/);
+  // For j2k/current, base_version is derived from git describe.
+  assert.match(releaseWorkflow, /series_base_tag.*git describe --tags --match/);
 });
