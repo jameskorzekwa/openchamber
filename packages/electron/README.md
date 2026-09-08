@@ -76,7 +76,7 @@ That runs, in order:
 2. `prepare:opencode-cli` to download/cache the pinned OpenCode CLI and copy it into `packages/electron/resources/opencode-cli`.
 3. `bundle:main` to create `packages/electron/dist-bundle/main.mjs`.
 4. `rebuild:native` to rebuild native modules for Electron.
-5. `package.mjs` to run `electron-builder`; its `afterPack` hook stages the compiled macOS icon asset catalog.
+5. `package.mjs` to run `electron-builder`; its `afterPack` hook stages the compiled macOS icon asset catalog and writes `app-update.yml` from the updater contract before signing or prepackaged artifact creation.
 
 Build output goes to `packages/electron/dist`.
 
