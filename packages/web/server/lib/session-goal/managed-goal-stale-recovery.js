@@ -4,6 +4,10 @@ const DEFAULT_DISCOVERY_MS = 5 * 60 * 1_000;
 const SESSION_TREE_LIMIT = 1_000;
 const HELD_STATUS_REASONS = new Set(['worktree-moving', 'worktree-resume-dispatching']);
 
+const MAX_ABORT_ATTEMPTS = 5;
+const INITIAL_BACKOFF_MS = 60 * 1_000;
+const MAX_BACKOFF_MS = 30 * 60 * 1_000;
+
 const goalFrom = (session) => session?.metadata?.openchamber?.goal;
 
 const isActiveManagedGoal = (session) => {
@@ -59,6 +63,10 @@ const sessionList = (payload) => {
   return Array.isArray(payload?.data) ? payload.data : [];
 };
 
+const abortRetryKey = ({ goalId, sessionId, messageId, taskCallId }) => (
+  `${goalId}:${sessionId}:${messageId}:${taskCallId || ''}`
+);
+
 export const createManagedGoalStaleRecovery = ({
   openCodeFetch,
   staleMs = DEFAULT_STALE_MS,
@@ -75,10 +83,32 @@ export const createManagedGoalStaleRecovery = ({
 
   const roots = new Map();
   const pendingResumes = new Map();
+  const abortRetries = new Map();
   let scanTimer = null;
   let discoveryTimer = null;
   let scanning = null;
   let discovering = null;
+
+  const shouldAttemptAbort = ({ goalId, sessionId, messageId, taskCallId }) => {
+    const key = abortRetryKey({ goalId, sessionId, messageId, taskCallId });
+    const state = abortRetries.get(key);
+    if (!state) return true;
+    if (state.attempts >= MAX_ABORT_ATTEMPTS) return false;
+    return now() >= state.nextAttemptAt;
+  };
+
+  const recordAbortAttempt = ({ goalId, sessionId, messageId, taskCallId, settled }) => {
+    const key = abortRetryKey({ goalId, sessionId, messageId, taskCallId });
+    if (settled) {
+      abortRetries.delete(key);
+      return;
+    }
+    const state = abortRetries.get(key) ?? { attempts: 0, nextAttemptAt: 0 };
+    state.attempts += 1;
+    const backoff = Math.min(INITIAL_BACKOFF_MS * 2 ** (state.attempts - 1), MAX_BACKOFF_MS);
+    state.nextAttemptAt = now() + backoff;
+    abortRetries.set(key, state);
+  };
 
   const observe = (update) => {
     if (!update || update.parentID || typeof update.sessionId !== 'string' || !update.sessionId) return;
@@ -162,7 +192,7 @@ export const createManagedGoalStaleRecovery = ({
     return true;
   };
 
-  const recover = async ({ sessionId, rootId, directory, goalId, reason }) => {
+  const recover = async ({ sessionId, rootId, directory, goalId, reason, messageId, taskCallId }) => {
     if (sessionId === rootId) pendingResumes.set(rootId, { directory, goalId });
     try {
       await openCodeFetch(`/session/${encodeURIComponent(sessionId)}/abort`, { directory, method: 'POST' });
@@ -170,6 +200,24 @@ export const createManagedGoalStaleRecovery = ({
       if (sessionId === rootId) pendingResumes.delete(rootId);
       throw error;
     }
+
+    const postAbortMessage = await latestMessage(sessionId, directory);
+    const settled = Boolean(
+      postAbortMessage?.info?.error || postAbortMessage?.info?.time?.completed > 0
+    );
+    recordAbortAttempt({ goalId, sessionId, messageId, taskCallId, settled });
+
+    if (!settled) {
+      if (sessionId === rootId) pendingResumes.delete(rootId);
+      const state = abortRetries.get(abortRetryKey({ goalId, sessionId, messageId, taskCallId }));
+      if (state?.attempts >= MAX_ABORT_ATTEMPTS) {
+        logger.warn(`[session-goal] abort exhausted for ${reason}; skipping until message changes`, { rootId, sessionId, messageId, attempts: state.attempts });
+      } else {
+        logger.warn(`[session-goal] abort did not settle ${reason}; will retry`, { rootId, sessionId, messageId, attempt: state?.attempts });
+      }
+      return;
+    }
+
     if (sessionId === rootId) {
       const resumed = await resumeRoot(rootId, directory, goalId);
       if (resumed !== undefined) pendingResumes.delete(rootId);
@@ -218,12 +266,13 @@ export const createManagedGoalStaleRecovery = ({
       ]);
       if (!incompleteAssistant(message)) continue;
       const pending = pendingTools(message);
-      let orphanedTask = false;
+      let orphanedTask = null;
       if (pending.length > 0) {
-        orphanedTask = sessionId === rootId
+        const isOrphanedTask = sessionId === rootId
           && pending.length === 1
           && await taskPointsToTerminalChild({ part: pending[0], tree, statuses, directory });
-        if (!orphanedTask) continue;
+        if (!isOrphanedTask) continue;
+        orphanedTask = pending[0];
       }
 
       // Session metadata can move when a child aborts even though its parent
@@ -232,12 +281,17 @@ export const createManagedGoalStaleRecovery = ({
       const activity = messageActivity(orphanedTask ? null : session, message);
       if (!activity || now() - activity < staleMs) continue;
 
+      const messageId = message?.info?.id || '';
+      const taskCallId = orphanedTask?.id || '';
+
+      if (!shouldAttemptAbort({ goalId, sessionId, messageId, taskCallId })) continue;
+
       if (orphanedTask) {
-        await recover({ sessionId, rootId, directory, goalId, reason: 'orphaned task' });
+        await recover({ sessionId, rootId, directory, goalId, reason: 'orphaned task', messageId, taskCallId });
         return;
       }
 
-      await recover({ sessionId, rootId, directory, goalId, reason: 'model stream' });
+      await recover({ sessionId, rootId, directory, goalId, reason: 'model stream', messageId, taskCallId });
       if (sessionId === rootId) return;
       recoveredChild = true;
     }
@@ -283,6 +337,7 @@ export const createManagedGoalStaleRecovery = ({
     discoveryTimer = null;
     roots.clear();
     pendingResumes.clear();
+    abortRetries.clear();
   };
 
   return { discoverNow, observe, scanNow, start, stop };
