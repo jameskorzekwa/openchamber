@@ -251,16 +251,6 @@ test('retries a transient goal resume write without aborting twice', async () =>
 
 test('no-op abort does not log recovered and backs off retries', async () => {
   let currentTime = NOW;
-  const fixture = createFixture({
-    rootMessage: assistant({ id: 'msg_stale' }),
-    statuses: {},
-    onAbort: () => {
-      // Abort succeeds but does not settle the message (no-op)
-    },
-  });
-  // Override now to control backoff timing
-  const originalNow = fixture.recovery;
-  // Re-create with controllable time
   const sessions = new Map([['ses_root', managedRoot()]]);
   const messages = new Map([['ses_root', assistant({ id: 'msg_stale' })]]);
   const children = new Map([['ses_root', []]]);
