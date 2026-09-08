@@ -1,0 +1,152 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import test from 'node:test';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const afterPackPath = path.join(__dirname, 'after-pack.cjs');
+
+// Run the after-pack hook in a subprocess with controlled environment
+const runAfterPack = ({ appOutDir, j2kBuild = false }) => {
+  // Create a minimal context that the hook expects
+  const script = `
+    const afterPack = require(${JSON.stringify(afterPackPath)});
+    const context = {
+      electronPlatformName: 'darwin',
+      appOutDir: ${JSON.stringify(appOutDir)},
+      packager: {
+        appInfo: {
+          productFilename: 'OpenChamber',
+        },
+      },
+    };
+    afterPack(context);
+    console.log('success');
+  `;
+  const result = spawnSync('node', ['-e', script], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      OPENCHAMBER_J2K_DESKTOP_BUILD: j2kBuild ? '1' : '',
+    },
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`after-pack failed: ${result.stderr || result.stdout}`);
+  }
+  return result;
+};
+
+// Parse a simple YAML file with key: value pairs
+const parseSimpleYaml = (content) => {
+  const result = {};
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const colonIndex = trimmed.indexOf(':');
+    if (colonIndex === -1) continue;
+    const key = trimmed.slice(0, colonIndex).trim();
+    let value = trimmed.slice(colonIndex + 1).trim();
+    if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) {
+      value = value.slice(1, -1);
+    }
+    result[key] = value;
+  }
+  return result;
+};
+
+test('generates app-update.yml with J2K generic feed for OPENCHAMBER_J2K_DESKTOP_BUILD=1', (t) => {
+  // Check if Assets.car exists (required by after-pack.cjs)
+  const assetsSource = path.join(__dirname, '..', 'resources', 'icons', 'Assets.car');
+  if (!fs.existsSync(assetsSource)) {
+    t.skip('Skipping: Assets.car not found (requires macOS icon generation)');
+    return;
+  }
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-after-pack-'));
+  try {
+    // Create minimal app structure - the hook expects appOutDir/OpenChamber.app/Contents/Resources
+    const appOutDir = path.join(root, 'mac-arm64');
+    const appDir = path.join(appOutDir, 'OpenChamber.app');
+    const contentsDir = path.join(appDir, 'Contents');
+    const resourcesDir = path.join(contentsDir, 'Resources');
+    fs.mkdirSync(resourcesDir, { recursive: true });
+
+    runAfterPack({ appOutDir, j2kBuild: true });
+
+    // Verify app-update.yml was created
+    const appUpdatePath = path.join(resourcesDir, 'app-update.yml');
+    assert.ok(fs.existsSync(appUpdatePath), 'app-update.yml should exist');
+
+    // Parse and validate the content
+    const content = fs.readFileSync(appUpdatePath, 'utf8');
+    const config = parseSimpleYaml(content);
+
+    assert.equal(config.provider, 'generic', 'provider should be generic for J2K build');
+    assert.equal(
+      config.url,
+      'https://raw.githubusercontent.com/jameskorzekwa/openchamber/desktop-channel/',
+      'url should match J2K private feed',
+    );
+    assert.equal(config.updaterCacheDirName, 'openchamber-updater', 'updaterCacheDirName should be set');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('generates app-update.yml with GitHub feed for non-J2K builds', (t) => {
+  // Check if Assets.car exists (required by after-pack.cjs)
+  const assetsSource = path.join(__dirname, '..', 'resources', 'icons', 'Assets.car');
+  if (!fs.existsSync(assetsSource)) {
+    t.skip('Skipping: Assets.car not found (requires macOS icon generation)');
+    return;
+  }
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-after-pack-'));
+  try {
+    // Create minimal app structure - the hook expects appOutDir/OpenChamber.app/Contents/Resources
+    const appOutDir = path.join(root, 'mac-arm64');
+    const appDir = path.join(appOutDir, 'OpenChamber.app');
+    const contentsDir = path.join(appDir, 'Contents');
+    const resourcesDir = path.join(contentsDir, 'Resources');
+    fs.mkdirSync(resourcesDir, { recursive: true });
+
+    runAfterPack({ appOutDir, j2kBuild: false });
+
+    // Verify app-update.yml was created
+    const appUpdatePath = path.join(resourcesDir, 'app-update.yml');
+    assert.ok(fs.existsSync(appUpdatePath), 'app-update.yml should exist');
+
+    // Parse and validate the content
+    const content = fs.readFileSync(appUpdatePath, 'utf8');
+    const config = parseSimpleYaml(content);
+
+    assert.equal(config.provider, 'github', 'provider should be github for non-J2K build');
+    assert.equal(config.owner, 'openchamber', 'owner should be openchamber');
+    assert.equal(config.repo, 'openchamber', 'repo should be openchamber');
+    assert.equal(config.updaterCacheDirName, 'openchamber-updater', 'updaterCacheDirName should be set');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('app-update.yml configuration matches updater-feed.mjs exports', async () => {
+  // This test validates that the after-pack.cjs configuration matches what
+  // updater-feed.mjs would resolve, ensuring consistency between the two modules
+  const { MACOS_PRODUCTION_UPDATER_FEED, DEFAULT_PRODUCTION_UPDATER_FEED } = await import('../updater-feed.mjs');
+
+  // J2K macOS builds should use MACOS_PRODUCTION_UPDATER_FEED
+  assert.equal(MACOS_PRODUCTION_UPDATER_FEED.provider, 'generic');
+  assert.equal(
+    MACOS_PRODUCTION_UPDATER_FEED.url,
+    'https://raw.githubusercontent.com/jameskorzekwa/openchamber/desktop-channel/',
+  );
+
+  // Non-J2K builds should use DEFAULT_PRODUCTION_UPDATER_FEED
+  assert.equal(DEFAULT_PRODUCTION_UPDATER_FEED.provider, 'github');
+  assert.equal(DEFAULT_PRODUCTION_UPDATER_FEED.owner, 'openchamber');
+  assert.equal(DEFAULT_PRODUCTION_UPDATER_FEED.repo, 'openchamber');
+});
