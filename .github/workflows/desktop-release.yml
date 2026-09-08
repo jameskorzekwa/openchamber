@@ -79,13 +79,25 @@ jobs:
             echo 'source_sha must be an exact lowercase 40-character commit.' >&2
             exit 1
           fi
-          if [[ ! "$INPUT_SOURCE_REF" =~ ^j2k/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "source_ref must be a candidate branch; got $INPUT_SOURCE_REF" >&2
-            exit 1
-          fi
-          if [[ ! "$INPUT_BASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
-            || [[ "$INPUT_SOURCE_REF" != "j2k/v$INPUT_BASE_VERSION" ]]; then
-            echo 'Candidate branch and base version differ.' >&2
+          # Two sources release: a j2k/vX.Y.Z candidate branch produced by
+          # upstream sync, and the long-lived j2k/current series. Without the
+          # second, a merged fix sat unreleased until the next upstream tag.
+          if [[ "$INPUT_SOURCE_REF" =~ ^j2k/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            # For candidate branches, verify the branch name encodes the base version.
+            if [[ ! "$INPUT_BASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
+              || [[ "$INPUT_SOURCE_REF" != "j2k/v$INPUT_BASE_VERSION" ]]; then
+              echo 'Candidate branch and base version differ.' >&2
+              exit 1
+            fi
+          elif [[ "$INPUT_SOURCE_REF" == 'j2k/current' ]]; then
+            # For j2k/current, the caller derived base_version from git describe;
+            # verify it is a valid SemVer triple without redundant branch-name check.
+            if [[ ! "$INPUT_BASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              echo "base_version must be a SemVer triple; got $INPUT_BASE_VERSION" >&2
+              exit 1
+            fi
+          else
+            echo "source_ref must be j2k/vX.Y.Z or j2k/current; got $INPUT_SOURCE_REF" >&2
             exit 1
           fi
           if [[ ! "$INPUT_REVISION" =~ ^[1-9][0-9]*$ ]]; then
