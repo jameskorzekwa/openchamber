@@ -80,6 +80,10 @@ That runs, in order:
 
 Build output goes to `packages/electron/dist`.
 
+The investigation record for the missing macOS updater configuration in
+`1.21.0-j2k.22` is in
+[`docs/macos-updater-config-incident.md`](./docs/macos-updater-config-incident.md).
+
 macOS builds produce `dmg` and `zip` artifacts. Windows builds produce an NSIS installer. Linux builds produce an AppImage for the native x64 or arm64 host.
 
 ### J2K macOS release channel
