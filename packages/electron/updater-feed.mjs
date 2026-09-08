@@ -1,14 +1,20 @@
 import fs from 'node:fs';
+import updaterContract from './updater-contract.cjs';
 
-export const DEFAULT_PRODUCTION_UPDATER_FEED = Object.freeze({
-  provider: 'github',
-  owner: 'openchamber',
-  repo: 'openchamber',
-});
+export const {
+  DEFAULT_APP_UPDATE_CONFIG,
+  J2K_MACOS_APP_UPDATE_CONFIG,
+} = updaterContract;
 
 export const MACOS_PRODUCTION_UPDATER_FEED = Object.freeze({
-  provider: 'generic',
-  url: 'https://raw.githubusercontent.com/jameskorzekwa/openchamber/desktop-channel/',
+  provider: J2K_MACOS_APP_UPDATE_CONFIG.provider,
+  url: J2K_MACOS_APP_UPDATE_CONFIG.url,
+});
+
+export const DEFAULT_PRODUCTION_UPDATER_FEED = Object.freeze({
+  provider: DEFAULT_APP_UPDATE_CONFIG.provider,
+  owner: DEFAULT_APP_UPDATE_CONFIG.owner,
+  repo: DEFAULT_APP_UPDATE_CONFIG.repo,
 });
 
 export const resolveProductionUpdaterFeed = ({ platform = process.platform, j2kBuild = false } = {}) => (

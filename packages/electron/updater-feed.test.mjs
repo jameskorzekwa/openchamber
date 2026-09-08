@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  DEFAULT_APP_UPDATE_CONFIG,
   DEFAULT_PRODUCTION_UPDATER_FEED,
+  J2K_MACOS_APP_UPDATE_CONFIG,
   MACOS_PRODUCTION_UPDATER_FEED,
   parseLoopbackUpdaterUrl,
   resolveProductionUpdaterFeed,
@@ -16,17 +18,19 @@ const overrideEnvironment = {
 };
 
 test('production updater feeds have explicit platform ownership', () => {
+  assert.equal(Object.isFrozen(DEFAULT_APP_UPDATE_CONFIG), true);
+  assert.equal(Object.isFrozen(J2K_MACOS_APP_UPDATE_CONFIG), true);
   assert.equal(Object.isFrozen(DEFAULT_PRODUCTION_UPDATER_FEED), true);
   assert.equal(Object.isFrozen(MACOS_PRODUCTION_UPDATER_FEED), true);
   assert.equal(resolveProductionUpdaterFeed({ platform: 'darwin' }), DEFAULT_PRODUCTION_UPDATER_FEED);
   assert.deepEqual(resolveProductionUpdaterFeed({ platform: 'darwin', j2kBuild: true }), {
-    provider: 'generic',
-    url: 'https://raw.githubusercontent.com/jameskorzekwa/openchamber/desktop-channel/',
+    provider: J2K_MACOS_APP_UPDATE_CONFIG.provider,
+    url: J2K_MACOS_APP_UPDATE_CONFIG.url,
   });
   assert.deepEqual(resolveProductionUpdaterFeed({ platform: 'win32' }), {
-    provider: 'github',
-    owner: 'openchamber',
-    repo: 'openchamber',
+    provider: DEFAULT_APP_UPDATE_CONFIG.provider,
+    owner: DEFAULT_APP_UPDATE_CONFIG.owner,
+    repo: DEFAULT_APP_UPDATE_CONFIG.repo,
   });
   assert.equal(resolveProductionUpdaterFeed({ platform: 'linux' }), DEFAULT_PRODUCTION_UPDATER_FEED);
   assert.equal(resolveUpdaterPrereleasePolicy({ platform: 'darwin' }), false);
