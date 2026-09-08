@@ -160,28 +160,44 @@ const deriveBlockerKind = (entry, question, reason) => {
   // Legacy protected-path authorization (text pattern fallback).
   if (entry.phase === 'blocked' && NEEDS_OWNER.test(reason)) return 'owner_decision';
 
-  // Explicit owner decision flag, but WITHOUT a question = usually operational
-  // stall, not a genuine owner decision. The cfg#179 bug: needsOwnerDecision=true
-  // + question=null + decisionCommand='/agent restart' should NOT show as owner
-  // decision. This is a worker recovery needing operator inspection.
+  // Explicit owner decision flag, but WITHOUT a question requires careful
+  // classification. Some are genuine owner gates (changed branch binding,
+  // unreadable review workspace, owner-only evidence), while others are
+  // operational stalls masquerading as owner decisions (cfg#179 bug).
   //
-  // EXCEPTION: Protected-head policy approvals emit needsOwnerDecision=true,
-  // question=null, but include authorization={kind:'protected_change',...} AND
-  // decisionCommand=/agent authorize <exact 40hex>. These ARE genuine owner
-  // decisions where the owner inspects and chooses to authorize.
-  //
-  // Other genuine decisions have specific decisionCommand that is NOT generic
-  // restart/resume (e.g., '/agent decide <your choice>').
+  // Classification rules for needsOwnerDecision=true + question=null:
+  // 1. 'stalled:' prefix without explicit owner request → worker_recovery
+  // 2. Corrupt/malformed question data → evidence_reconciliation
+  // 3. Protected-head: authorization.kind='protected_change' OR
+  //    decisionCommand=/agent authorize <sha> → owner_decision
+  // 4. Explicit owner gate: reason='owner decision required: ...' with
+  //    /agent decide command → owner_decision (NOT protected-path)
+  // 5. Generic restart/resume or missing command → worker_recovery
   if (entry.needsOwnerDecision === true && !question) {
-    // Protected-head authorization: backend provides authorization.kind.
+    // Stalled items without explicit owner request are worker recovery.
+    if (/^stalled:/i.test(reason)) return 'worker_recovery';
+
+    // Corrupt or malformed question data needs evidence reconciliation.
+    // (entry.question exists but failed questionFor() validation)
+    if (entry.question && typeof entry.question === 'object') return 'evidence_reconciliation';
+
+    // Protected-head authorization: identified by authorization metadata.
     if (entry.authorization?.kind === 'protected_change') return 'owner_decision';
+
     const cmd = entry.decisionCommand ?? '';
-    // Protected-head via decisionCommand pattern.
+
+    // Protected-head via decisionCommand pattern (exact 40-hex SHA).
     if (AUTHORIZE_COMMAND.test(cmd)) return 'owner_decision';
-    // Generic decision command ('/agent decide ...') is a real owner decision.
+
+    // Explicit owner gates with /agent decide command: these are real owner
+    // decisions even without a structured question. Examples: changed branch
+    // binding, unreadable review workspace, owner-only evidence. The reason
+    // typically contains 'owner decision required:' diagnostic.
     if (/^\/agent decide\b/.test(cmd)) return 'owner_decision';
+
     // Generic restart/resume or missing command = worker recovery.
-    // These are operational stalls, not genuine owner decisions.
+    // cfg#179: needsOwnerDecision=true + question=null + decisionCommand=
+    // '/agent restart' should NOT show as owner decision.
     return 'worker_recovery';
   }
 

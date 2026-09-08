@@ -857,4 +857,139 @@ describe('Blocker classification and command admission (cfg#179 fix)', () => {
       command: `/agent authorize ${sha}`,
     });
   });
+
+  it('classifies legacy owner gates (changed branch binding) as owner_decision, not worker_recovery', () => {
+    // Changed branch binding: needsOwnerDecision=true, question=null,
+    // reason='owner decision required: changed branch binding',
+    // decisionCommand='/agent decide <instructions>'
+    // This is a REAL owner decision, NOT an operational stall.
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '400',
+          phase: 'waiting_owner',
+          needsOwnerDecision: true,
+          question: null,
+          decisionCommand: '/agent decide <your decision and authorization>',
+          reason: 'owner decision required: changed branch binding from feat/old to feat/new',
+        })],
+      },
+      status: { ok: true },
+    });
+
+    expect(snapshot.groups.needsYou).toHaveLength(1);
+    expect(snapshot.groups.operatorAttention).toHaveLength(0);
+    expect(snapshot.groups.needsYou[0]).toMatchObject({
+      kind: 'needs-owner',
+      blockerKind: 'owner_decision',
+      needsOperatorAttention: false,
+      command: '/agent decide <your decision and authorization>',
+      // No authorization field - this is NOT protected-path authorization
+      authorization: null,
+    });
+  });
+
+  it('classifies stalled: prefix as worker_recovery, not owner_decision', () => {
+    // cfg#179 audit stall: needsOwnerDecision=true but reason starts with
+    // 'stalled:' and has no explicit owner request. This is operational.
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '401',
+          phase: 'waiting_owner',
+          needsOwnerDecision: true,
+          question: null,
+          decisionCommand: '/agent restart',
+          reason: 'stalled: audit reconciliation failed without recovery path',
+        })],
+      },
+      status: { ok: true },
+    });
+
+    expect(snapshot.groups.needsYou).toHaveLength(0);
+    expect(snapshot.groups.operatorAttention).toHaveLength(1);
+    expect(snapshot.groups.operatorAttention[0]).toMatchObject({
+      blockerKind: 'worker_recovery',
+      needsOperatorAttention: true,
+      // Generic restart command is NOT exposed
+      command: null,
+    });
+  });
+
+  it('classifies corrupt recorded question as evidence_reconciliation', () => {
+    // entry.question exists but is malformed (failed questionFor validation).
+    // The question=null in classifyEntry means validation failed.
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '402',
+          phase: 'waiting_owner',
+          needsOwnerDecision: true,
+          // question is an object but invalid (missing required fields)
+          question: { id: 'q1', malformed: true },
+          decisionCommand: '/agent decide <your choice>',
+          reason: 'owner decision required',
+        })],
+      },
+      status: { ok: true },
+    });
+
+    // The malformed question triggers evidence_reconciliation
+    expect(snapshot.groups.operatorAttention).toHaveLength(1);
+    expect(snapshot.groups.operatorAttention[0]).toMatchObject({
+      blockerKind: 'evidence_reconciliation',
+      needsOperatorAttention: true,
+    });
+  });
+
+  it('distinguishes protected-path authorization from other owner gates in UI', () => {
+    // Both are owner_decision but only protected-path has authorization metadata.
+    const sha = 'abc123def456abc123def456abc123def456abc1';
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [
+          // Protected-path authorization
+          entry({
+            ref: '500',
+            phase: 'blocked',
+            needsOwnerDecision: true,
+            question: null,
+            decisionCommand: `/agent authorize ${sha}`,
+            authorization: { kind: 'protected_change', sha, command: `/agent authorize ${sha}` },
+            reason: 'protected-head policy',
+          }),
+          // Legacy owner gate (NOT protected-path)
+          entry({
+            ref: '501',
+            phase: 'waiting_owner',
+            needsOwnerDecision: true,
+            question: null,
+            decisionCommand: '/agent decide proceed with manual merge',
+            reason: 'owner decision required: unreadable review workspace',
+          }),
+        ],
+      },
+      status: { ok: true },
+    });
+
+    expect(snapshot.groups.needsYou).toHaveLength(2);
+
+    // Protected-path has authorization
+    expect(snapshot.groups.needsYou[0]).toMatchObject({
+      ref: '500',
+      kind: 'needs-owner',
+      blockerKind: 'owner_decision',
+      authorization: { kind: 'protected_change', sha },
+      command: `/agent authorize ${sha}`,
+    });
+
+    // Legacy gate has NO authorization but still owner_decision
+    expect(snapshot.groups.needsYou[1]).toMatchObject({
+      ref: '501',
+      kind: 'needs-owner',
+      blockerKind: 'owner_decision',
+      authorization: null,
+      command: '/agent decide proceed with manual merge',
+    });
+  });
 });
