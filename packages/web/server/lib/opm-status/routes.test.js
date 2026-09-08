@@ -858,11 +858,12 @@ describe('Blocker classification and command admission (cfg#179 fix)', () => {
     });
   });
 
-  it('classifies legacy owner gates (changed branch binding) as owner_decision, not worker_recovery', () => {
+  it('classifies legacy owner gates (changed branch binding) as owner_decision but rejects placeholder command', () => {
     // Changed branch binding: needsOwnerDecision=true, question=null,
     // reason='owner decision required: changed branch binding',
     // decisionCommand='/agent decide <instructions>'
     // This is a REAL owner decision, NOT an operational stall.
+    // BUT: the placeholder command is NOT directly executable.
     const snapshot = buildSnapshot({
       activity: {
         blockers: [entry({
@@ -887,6 +888,14 @@ describe('Blocker classification and command admission (cfg#179 fix)', () => {
       // No authorization field - this is NOT protected-path authorization
       authorization: null,
     });
+
+    // CRITICAL: Placeholder template command is NOT allowed to be executed.
+    // The owner must provide a real decision via the issue, not via UI Run button.
+    expect(isCommandAllowed(snapshot, {
+      project: 'openchamber',
+      ref: '400',
+      command: '/agent decide <your decision and authorization>',
+    })).toBe(false);
   });
 
   it('classifies stalled: prefix as worker_recovery, not owner_decision', () => {
@@ -991,5 +1000,122 @@ describe('Blocker classification and command admission (cfg#179 fix)', () => {
       authorization: null,
       command: '/agent decide proceed with manual merge',
     });
+
+    // Protected-head exact command IS allowed
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '500', command: `/agent authorize ${sha}` })).toBe(true);
+
+    // Legacy gate with exact (non-placeholder) command IS allowed
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '501', command: '/agent decide proceed with manual merge' })).toBe(true);
+  });
+
+  it('rejects placeholder template commands even when row.command matches exactly', () => {
+    // Action-safety: '/agent decide <your decision>' is an instruction TEMPLATE.
+    // Posting the literal placeholder would release a gate without a real decision.
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '600',
+          phase: 'waiting_owner',
+          needsOwnerDecision: true,
+          question: null,
+          decisionCommand: '/agent decide <your decision and authorization>',
+          reason: 'owner decision required: owner-only branch binding',
+        })],
+      },
+      status: { ok: true },
+    });
+
+    // The command IS recorded on the row (for display purposes)
+    expect(snapshot.groups.needsYou[0].command).toBe('/agent decide <your decision and authorization>');
+
+    // But it CANNOT be executed via the command endpoint
+    expect(isCommandAllowed(snapshot, {
+      project: 'openchamber',
+      ref: '600',
+      command: '/agent decide <your decision and authorization>',
+    })).toBe(false);
+
+    // Even if someone submits it directly, it's rejected
+    expect(isCommandAllowed(snapshot, {
+      project: 'openchamber',
+      ref: '600',
+      command: '/agent decide <instructions>',
+    })).toBe(false);
+
+    // BUT: a real decision (no placeholders) would be a custom-answer flow,
+    // which goes through validateQuestionDecision, not isCommandAllowed.
+  });
+
+  it('allows exact option commands and exact protected-head commands', () => {
+    const sha = 'fedcba0987654321fedcba0987654321fedcba09';
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [
+          // Question with exact option commands
+          entry({
+            ref: '700',
+            phase: 'waiting_owner',
+            needsOwnerDecision: true,
+            question: {
+              id: 'q1',
+              askedBy: 'worker',
+              text: 'Choose A or B?',
+              options: [
+                { key: 'A', label: 'Option A', detail: '', command: '/agent decide A' },
+                { key: 'B', label: 'Option B', detail: '', command: '/agent decide B' },
+              ],
+              url: 'https://example.com/700#q1',
+            },
+          }),
+          // Protected-head with exact SHA
+          entry({
+            ref: '701',
+            phase: 'blocked',
+            needsOwnerDecision: true,
+            question: null,
+            decisionCommand: `/agent authorize ${sha}`,
+            authorization: { kind: 'protected_change', sha, command: `/agent authorize ${sha}` },
+          }),
+        ],
+      },
+      status: { ok: true },
+    });
+
+    // Exact option commands are NOT validated via isCommandAllowed (they use
+    // validateQuestionDecision), but exact protected-head IS allowed.
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '701', command: `/agent authorize ${sha}` })).toBe(true);
+
+    // Placeholder variants are rejected
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '701', command: '/agent authorize <sha>' })).toBe(false);
+  });
+
+  it('stalled audit has no command at all (generic stall regression)', () => {
+    // cfg#179: Generic stalled audit with restart command should NOT expose any command.
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '800',
+          phase: 'waiting_owner',
+          needsOwnerDecision: true,
+          question: null,
+          decisionCommand: '/agent restart',
+          reason: 'stalled: audit reconciliation failed',
+        })],
+      },
+      status: { ok: true },
+    });
+
+    // Classified as worker_recovery, NOT owner_decision
+    expect(snapshot.groups.operatorAttention).toHaveLength(1);
+    expect(snapshot.groups.needsYou).toHaveLength(0);
+    expect(snapshot.groups.operatorAttention[0]).toMatchObject({
+      blockerKind: 'worker_recovery',
+      // Generic restart command is NOT exposed
+      command: null,
+    });
+
+    // No command can be executed
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '800', command: '/agent restart' })).toBe(false);
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '800', command: '/agent resume' })).toBe(false);
   });
 });

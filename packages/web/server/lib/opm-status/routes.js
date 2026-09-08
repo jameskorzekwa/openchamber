@@ -603,6 +603,11 @@ const collectRows = (snapshot) => {
   return rows;
 };
 
+// Detect placeholder templates like '/agent decide <your decision>'. These are
+// instruction templates, NOT executable commands. Posting the literal placeholder
+// would release a gate without a real owner decision.
+const PLACEHOLDER_TEMPLATE = /<[^>]+>/;
+
 // Never execute arbitrary input: a submitted command must re-derive from the
 // current snapshot. A command is allowed ONLY when:
 // 1. It exactly equals the (project, ref) row's own command (evidence-backed), OR
@@ -613,13 +618,19 @@ const collectRows = (snapshot) => {
 // - Blanket "/agent resume" for any non-terminal row (must be dead-letter kind)
 // - Ref-only attention fallback across projects (must match project AND ref)
 // - Generic restart/resume from operational stalls masquerading as owner decisions
+// - Placeholder templates like '/agent decide <your decision>' (not executable)
 export const isCommandAllowed = (snapshot, { project, ref, command }) => {
   if (!snapshot?.available) return false;
+
+  // Never allow placeholder templates - they are instructions, not commands.
+  if (PLACEHOLDER_TEMPLATE.test(command)) return false;
+
   const rows = collectRows(snapshot)
     .filter((row) => String(row.project) === String(project) && String(row.ref) === String(ref));
   for (const row of rows) {
-    // The row's evidence-backed command always wins.
-    if (row.command && row.command === command) return true;
+    // The row's evidence-backed command must NOT be a placeholder template.
+    // Even if it matches exactly, posting a placeholder releases gates incorrectly.
+    if (row.command && row.command === command && !PLACEHOLDER_TEMPLATE.test(row.command)) return true;
     // "/agent resume" is allowed ONLY for dead-letter rows (explicit recovery).
     // This prevents blanket resume for any non-terminal row.
     if (command === RESUME_COMMAND && row.kind === 'dead-letter' && !TERMINAL_PHASES.has(row.phase)) return true;

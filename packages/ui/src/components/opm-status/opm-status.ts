@@ -422,6 +422,12 @@ export const ownerGuidanceKind = (row: OpmRow) => {
   return row.nextAction ? 'nextAction' : 'none';
 };
 
+// Detect if a command is a placeholder template (e.g., '/agent decide <your
+// decision>') rather than an executable command. Templates contain angle-bracket
+// placeholders that require the owner to fill in their actual decision.
+const isPlaceholderTemplate = (command: string): boolean =>
+  /<[^>]+>/.test(command);
+
 // Determine if a row's command should be shown as an actionable primary button.
 // Operational faults (worker_recovery without explicit dead-letter, capability
 // blocked, evidence reconciliation) should NOT have a primary "Run" button
@@ -433,7 +439,18 @@ export const isCommandActionable = (row: OpmRow): boolean => {
   // Structured questions have their own submission UI, not a "Run" button.
   if (row.kind === 'owner-question') return false;
 
-  // Genuine owner decisions (protected approval) are actionable.
+  // Placeholder templates (e.g., '/agent decide <your decision>') are NOT
+  // directly actionable. The owner must provide a real decision, not post
+  // the literal placeholder. Show copy/open-issue guidance instead.
+  if (isPlaceholderTemplate(row.command)) return false;
+
+  // Protected-head approval with exact SHA is actionable (validated separately).
+  // Identified by authorization metadata or exact /agent authorize <40hex> pattern.
+  if (row.authorization?.kind === 'protected_change') return true;
+  if (/^\/agent authorize [0-9a-f]{40}$/i.test(row.command)) return true;
+
+  // Genuine owner decisions with exact executable commands are actionable.
+  // But NOT if the command contains placeholders (caught above).
   if (row.kind === 'needs-owner') return true;
 
   // Dead-letter with explicit "/agent resume" is actionable (operator has

@@ -137,10 +137,50 @@ describe('OpmStatusOverlay behavior', () => {
     // cfg#179: NOT actionable (no command)
     expect(isCommandActionable(cfg179Row)).toBe(false);
 
-    // True owner decision: IS actionable
+    // True owner decision with exact command: IS actionable
     expect(isCommandActionable(ownerDecisionRow)).toBe(true);
 
     // Worker recovery (not dead-letter): NOT actionable despite having command
     expect(isCommandActionable(workerRecoveryRow)).toBe(false);
+  });
+
+  test('action-safety: placeholder template commands are NOT actionable', async () => {
+    const { isCommandActionable } = await import('./opm-status');
+
+    // Legacy owner gate with placeholder template command
+    const placeholderRow = {
+      project: 'openchamber', projectName: 'OpenChamber', ref: '400', title: 'Branch binding', phase: 'waiting_owner', state: 'implemented', action: 'waiting_owner', activityState: 'stopped',
+      parentRef: null, branch: null, sessionId: null, workspacePath: null, reason: 'owner decision required: changed branch binding', nextAction: null,
+      updatedAt: 100, effect: null, children: [],
+      kind: 'needs-owner' as const, command: '/agent decide <your decision and authorization>', owner: { required: true, instruction: 'Provide your decision.' }, url: null,
+      needsOwnerDecision: true, question: null, alias: null, activeMs: 0, activeSince: null,
+      blockerKind: 'owner_decision' as const, needsOperatorAttention: false, authorization: null,
+    };
+
+    // Placeholder template is NOT actionable - owner must provide real decision
+    expect(isCommandActionable(placeholderRow)).toBe(false);
+
+    // Exact protected-head command IS actionable
+    const protectedHeadRow = {
+      project: 'openchamber', projectName: 'OpenChamber', ref: '401', title: 'Protected change', phase: 'blocked', state: 'implemented', action: 'blocked', activityState: 'stopped',
+      parentRef: null, branch: null, sessionId: null, workspacePath: null, reason: 'protected-head policy', nextAction: null,
+      updatedAt: 100, effect: null, children: [],
+      kind: 'needs-owner' as const, command: '/agent authorize abc123def456abc123def456abc123def456abc1', owner: { required: true, instruction: 'Authorize.' }, url: null,
+      needsOwnerDecision: true, question: null, alias: null, activeMs: 0, activeSince: null,
+      blockerKind: 'owner_decision' as const, needsOperatorAttention: false,
+      authorization: { kind: 'protected_change', sha: 'abc123def456abc123def456abc123def456abc1', command: '/agent authorize abc123def456abc123def456abc123def456abc1' },
+    };
+    expect(isCommandActionable(protectedHeadRow)).toBe(true);
+
+    // Exact decision command (non-placeholder) IS actionable
+    const exactDecisionRow = {
+      project: 'openchamber', projectName: 'OpenChamber', ref: '402', title: 'Manual merge', phase: 'waiting_owner', state: 'implemented', action: 'waiting_owner', activityState: 'stopped',
+      parentRef: null, branch: null, sessionId: null, workspacePath: null, reason: 'owner decision required', nextAction: null,
+      updatedAt: 100, effect: null, children: [],
+      kind: 'needs-owner' as const, command: '/agent decide proceed with manual merge', owner: { required: true, instruction: 'Confirm.' }, url: null,
+      needsOwnerDecision: true, question: null, alias: null, activeMs: 0, activeSince: null,
+      blockerKind: 'owner_decision' as const, needsOperatorAttention: false, authorization: null,
+    };
+    expect(isCommandActionable(exactDecisionRow)).toBe(true);
   });
 });
