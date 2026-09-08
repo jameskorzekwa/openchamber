@@ -5,6 +5,12 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import YAML from 'yaml';
+
+import {
+  DEFAULT_APP_UPDATE_CONFIG,
+  J2K_MACOS_APP_UPDATE_CONFIG,
+} from '../updater-feed.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const afterPackPath = path.join(__dirname, 'after-pack.cjs');
@@ -42,24 +48,6 @@ const runAfterPack = ({ appOutDir, j2kBuild = false }) => {
   return result;
 };
 
-// Parse a simple YAML file with key: value pairs
-const parseSimpleYaml = (content) => {
-  const result = {};
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const colonIndex = trimmed.indexOf(':');
-    if (colonIndex === -1) continue;
-    const key = trimmed.slice(0, colonIndex).trim();
-    let value = trimmed.slice(colonIndex + 1).trim();
-    if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) {
-      value = value.slice(1, -1);
-    }
-    result[key] = value;
-  }
-  return result;
-};
-
 test('generates app-update.yml with J2K generic feed for OPENCHAMBER_J2K_DESKTOP_BUILD=1', (t) => {
   // Check if Assets.car exists (required by after-pack.cjs)
   const assetsSource = path.join(__dirname, '..', 'resources', 'icons', 'Assets.car');
@@ -85,15 +73,9 @@ test('generates app-update.yml with J2K generic feed for OPENCHAMBER_J2K_DESKTOP
 
     // Parse and validate the content
     const content = fs.readFileSync(appUpdatePath, 'utf8');
-    const config = parseSimpleYaml(content);
+    const config = YAML.parse(content);
 
-    assert.equal(config.provider, 'generic', 'provider should be generic for J2K build');
-    assert.equal(
-      config.url,
-      'https://raw.githubusercontent.com/jameskorzekwa/openchamber/desktop-channel/',
-      'url should match J2K private feed',
-    );
-    assert.equal(config.updaterCacheDirName, 'openchamber-updater', 'updaterCacheDirName should be set');
+    assert.deepEqual(config, J2K_MACOS_APP_UPDATE_CONFIG);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -124,12 +106,9 @@ test('generates app-update.yml with GitHub feed for non-J2K builds', (t) => {
 
     // Parse and validate the content
     const content = fs.readFileSync(appUpdatePath, 'utf8');
-    const config = parseSimpleYaml(content);
+    const config = YAML.parse(content);
 
-    assert.equal(config.provider, 'github', 'provider should be github for non-J2K build');
-    assert.equal(config.owner, 'openchamber', 'owner should be openchamber');
-    assert.equal(config.repo, 'openchamber', 'repo should be openchamber');
-    assert.equal(config.updaterCacheDirName, 'openchamber-updater', 'updaterCacheDirName should be set');
+    assert.deepEqual(config, DEFAULT_APP_UPDATE_CONFIG);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -189,29 +168,9 @@ test('package.mjs writes updater configuration to a no-publish unsigned macOS ap
       'Resources',
       'app-update.yml',
     );
-    assert.equal(
-      fs.readFileSync(appUpdatePath, 'utf8'),
-      "provider: generic\nurl: 'https://raw.githubusercontent.com/jameskorzekwa/openchamber/desktop-channel/'\nupdaterCacheDirName: openchamber-updater\n",
-    );
+    const appUpdateConfig = YAML.parse(fs.readFileSync(appUpdatePath, 'utf8'));
+    assert.deepEqual(appUpdateConfig, J2K_MACOS_APP_UPDATE_CONFIG);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
-});
-
-test('app-update.yml configuration matches updater-feed.mjs exports', async () => {
-  // This test validates that the after-pack.cjs configuration matches what
-  // updater-feed.mjs would resolve, ensuring consistency between the two modules
-  const { MACOS_PRODUCTION_UPDATER_FEED, DEFAULT_PRODUCTION_UPDATER_FEED } = await import('../updater-feed.mjs');
-
-  // J2K macOS builds should use MACOS_PRODUCTION_UPDATER_FEED
-  assert.equal(MACOS_PRODUCTION_UPDATER_FEED.provider, 'generic');
-  assert.equal(
-    MACOS_PRODUCTION_UPDATER_FEED.url,
-    'https://raw.githubusercontent.com/jameskorzekwa/openchamber/desktop-channel/',
-  );
-
-  // Non-J2K builds should use DEFAULT_PRODUCTION_UPDATER_FEED
-  assert.equal(DEFAULT_PRODUCTION_UPDATER_FEED.provider, 'github');
-  assert.equal(DEFAULT_PRODUCTION_UPDATER_FEED.owner, 'openchamber');
-  assert.equal(DEFAULT_PRODUCTION_UPDATER_FEED.repo, 'openchamber');
 });
