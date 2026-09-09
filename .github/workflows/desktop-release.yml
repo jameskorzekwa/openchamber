@@ -330,7 +330,8 @@ jobs:
           test "$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).revision' "$app/Contents/Resources/web-dist/build-revision.json")" = '${{ needs.metadata.outputs.source_commit }}'
           test "$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist")" = '${{ needs.metadata.outputs.version }}'
           test "$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).revision' "$smoke_app/Contents/Resources/web-dist/build-revision.json")" = '${{ needs.metadata.outputs.source_commit }}'
-          smoke_revision=$(('${{ needs.metadata.outputs.revision }}' - 1))
+          revision='${{ needs.metadata.outputs.revision }}'
+          smoke_revision=$((revision - 1))
           test "$(plutil -extract CFBundleShortVersionString raw -o - "$smoke_app/Contents/Info.plist")" = '${{ needs.metadata.outputs.base_version }}-j2k.'$smoke_revision
 
       - name: Install pinned private signing certificate
@@ -470,7 +471,8 @@ jobs:
             --certificate-sha256 "$OPENCHAMBER_PRIVATE_CERTIFICATE_SHA256" \
             --release-date '${{ needs.metadata.outputs.release_date }}' \
             --dist-dir "$dist" --output-dir artifacts
-          smoke_revision=$(('${{ needs.metadata.outputs.revision }}' - 1))
+          revision='${{ needs.metadata.outputs.revision }}'
+          smoke_revision=$((revision - 1))
           smoke_version='${{ needs.metadata.outputs.base_version }}-j2k.'$smoke_revision
           node trusted/tools/desktop-release/verify-macos-app.mjs \
             --app smoke-prepackaged/OpenChamber.app --dmg "$RUNNER_TEMP/not-created.dmg" \
@@ -504,7 +506,10 @@ jobs:
           set +e
           rm -f "$RUNNER_TEMP/openchamber-desktop.p12"
           rm -f "$RUNNER_TEMP/openchamber-desktop.pem"
-          security delete-keychain "$RUNNER_TEMP/openchamber-desktop.keychain-db" >/dev/null 2>&1
+          keychain="$RUNNER_TEMP/openchamber-desktop.keychain-db"
+          if [[ -e "$keychain" ]]; then
+            security delete-keychain "$keychain" >/dev/null 2>&1
+          fi
 
   packaged-updater-smoke:
     needs:
@@ -553,7 +558,8 @@ jobs:
           ditto -x -k "$zip" next-app
           certificate_sha256="$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).signature.certificateSha256' smoke-inputs/desktop-release.json)"
           opencode_version="$(node -p 'require(`./trusted/package.json`).dependencies[`@opencode-ai/sdk`]')"
-          smoke_revision=$(('${{ needs.metadata.outputs.revision }}' - 1))
+          revision='${{ needs.metadata.outputs.revision }}'
+          smoke_revision=$((revision - 1))
           smoke_version='${{ needs.metadata.outputs.base_version }}-j2k.'$smoke_revision
           node trusted/tools/desktop-release/verify-macos-app.mjs \
             --app current-app/OpenChamber.app --dmg "$RUNNER_TEMP/not-created.dmg" \

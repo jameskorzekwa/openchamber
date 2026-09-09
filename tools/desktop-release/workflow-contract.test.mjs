@@ -33,6 +33,12 @@ test('private signing is fingerprint-pinned and never requests Apple notarizatio
   assert.doesNotMatch(desktopWorkflow, /APPLE_ID|APPLE_PASSWORD|APPLE_TEAM_ID|notarytool|stapler staple/);
   assert.match(macVerifier, /`--extract-certificates=\$\{prefix\}`/);
   assert.doesNotMatch(macVerifier, /'--extract-certificates', prefix/);
+  const cleanup = desktopWorkflow.slice(
+    desktopWorkflow.indexOf('- name: Remove temporary signing material'),
+    desktopWorkflow.indexOf('  packaged-updater-smoke:'),
+  );
+  assert.match(cleanup, /if \[\[ -e "\$keychain" \]\]; then\n\s+security delete-keychain "\$keychain"/);
+  assert.doesNotMatch(cleanup, /security delete-keychain .*\|\|/);
 });
 
 test('candidate build has no write token and publisher runs trusted verifier only', () => {
@@ -180,6 +186,27 @@ test('every workflow run block is parseable bash, including heredoc terminators'
       });
     }
   }
+  assert.deepEqual(failures, []);
+});
+
+test('rendered desktop smoke revisions execute as arithmetic', () => {
+  const assignments = [];
+  const jobs = YAML.parse(desktopWorkflow).jobs ?? {};
+  for (const job of Object.values(jobs)) {
+    for (const step of job.steps ?? []) {
+      const script = String(step.run ?? '').replaceAll('${{ needs.metadata.outputs.revision }}', '27');
+      for (const line of script.split('\n')) {
+        if (line.trim().startsWith('smoke_revision=')) assignments.push(line.trim());
+      }
+    }
+  }
+
+  assert.equal(assignments.length, 4);
+  const failures = assignments.flatMap((assignment) => {
+    const script = `set -euo pipefail\nrevision=27\n${assignment}\ntest "$smoke_revision" = 26\n`;
+    const result = spawnSync('bash', { input: script, encoding: 'utf8' });
+    return result.status === 0 ? [] : [`${assignment}: ${result.stderr.trim()}`];
+  });
   assert.deepEqual(failures, []);
 });
 
