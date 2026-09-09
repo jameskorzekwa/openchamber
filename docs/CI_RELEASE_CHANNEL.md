@@ -92,6 +92,16 @@ the Darwin arm64 ABI 127 archive on macOS and requires native `.node` and
 `sherpa-onnx-node` smoke. Each job starts its extracted archive with the same
 pinned Node runtime used to package that target.
 
+This isolated smoke sets `OPENCODE_HOST` to its local stub and
+`OPENCODE_SKIP_START=true`. It proves that the packaged server boots in external
+OpenCode mode without spawning OpenCode. It also compares the packaged CLI,
+agent-tool runtime, OPM status routes, and session-goal runtime byte-for-byte
+with the reviewed source. The stub does not emulate the OpenCode API or plugin
+protocol. These gates therefore do not claim compatibility with a separately
+deployed OpenCode process, live plugin registration or execution, OPM
+supervision, or automatic goal/effect processing. Those remain host-activation
+checks and are not part of artifact publication.
+
 Finally, the release smoke proves the configured update channel. It first
 requires an unauthenticated `/api/openchamber/update-check` request to return
 401, logs in through `/auth/session` using a local-only smoke password, and

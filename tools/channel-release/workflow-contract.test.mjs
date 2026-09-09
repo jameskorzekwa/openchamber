@@ -56,6 +56,27 @@ test('release publication is resumable and keeps candidate code outside the toke
   assert.match(validate, /channel-release\.mjs pack-package/);
 });
 
+test('release workflow run expressions stay below GitHub limits', () => {
+  const jobs = YAML.parse(release).jobs ?? {};
+  const publisherSteps = (jobs.publish?.steps ?? []).filter((step) => step.env?.GH_TOKEN);
+  const oversized = [];
+  for (const [jobName, job] of Object.entries(jobs)) {
+    (job.steps ?? []).forEach((step, index) => {
+      const script = String(step.run ?? '');
+      if (script.length >= 20_000) {
+        oversized.push(`${jobName} step ${index} (${step.name ?? 'unnamed'}): ${script.length}`);
+      }
+    });
+  }
+  assert.deepEqual(oversized, []);
+  assert.equal(publisherSteps.length, 2);
+  assert.match(publisherSteps[1].run, /repo="\$RUNNER_TEMP\/release-repository"/);
+  assert.match(publisherSteps[1].run, /gh api --paginate .*releases\?per_page=100.*--slurp/);
+  assert.match(publisherSteps[1].run, /release_json=.*RELEASES_FILE=.*RELEASE_TAG/s);
+  assert.match(publisherSteps[1].run, /GitHub Release source identity differs/);
+  assert.match(publisherSteps[1].run, /release_id=.*RELEASE_JSON/s);
+});
+
 test('release smoke uses the strict channel and stage-version has no misplaced channel option', () => {
   const stage = release.slice(release.indexOf('node tools/channel-release/channel-release.mjs stage-version'), release.indexOf('bun run build'));
   const smokeStep = release.slice(release.indexOf('      - name: Create and verify canonical stable release assets'), release.indexOf('      - name: Upload immutable canonical stable candidate'));
