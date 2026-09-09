@@ -455,8 +455,13 @@ staging paths are removed. Failed verification, download, extraction, service
 migration, restart, attestation, or rollback reports `failed` or `rollback`; a
 surviving journal blocks another update until recovery completes.
 
-This is the compatibility design under implementation. It does not claim a
-deployment or bee2 activation.
+Release CI boots the extracted Linux archive with `OPENCODE_HOST` pointed at a
+local synthetic HTTP stub and `OPENCODE_SKIP_START=true`. It checks native PTY
+and speech bindings and compares the packaged CLI, agent-tool, OPM status, and
+session-goal files with the reviewed source. This proves artifact parity and
+external-mode startup selection. It does not test a real external OpenCode API,
+live plugin registration or execution, OPM supervision, automatic goal/effect
+processing, deployment, or bee2 activation.
 
 ## License
 
