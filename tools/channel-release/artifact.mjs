@@ -444,12 +444,13 @@ function validateNativePackages(files, target) {
     const directories = packages.get('node-pty') || [];
     if (directories.length === 0) fail('Archive is missing the node-pty package');
     for (const directory of directories) {
-      const candidates = [
-        `${directory}/prebuilds/${target.platform}-${target.arch}/pty.node`,
+      const bindingPaths = [
         `${directory}/build/Release/pty.node`,
+        `${directory}/build/Debug/pty.node`,
+        `${directory}/prebuilds/${target.platform}-${target.arch}/pty.node`,
       ].filter((path) => files.has(path));
-      if (candidates.length !== 1) fail(`node-pty must contain exactly one native binding for ${target.platform}/${target.arch}`);
-      verifyNativeBinary(files.get(candidates[0]), target, candidates[0]);
+      if (bindingPaths.length === 0) fail(`node-pty has no native binding for ${target.platform}/${target.arch}`);
+      for (const bindingPath of bindingPaths) verifyNativeBinary(files.get(bindingPath), target, bindingPath);
     }
   }
   if (dependencies.has('sherpa-onnx-node')) {
