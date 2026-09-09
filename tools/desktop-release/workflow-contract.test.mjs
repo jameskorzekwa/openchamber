@@ -59,6 +59,9 @@ test('candidate build has no write token and publisher runs trusted verifier onl
   assert.match(publish, /github\.workflow_ref == format\('\{0\}\/\.github\/workflows\/release\.yml@refs\/heads\/j2k\/current'/);
   assert.match(publish, /node trusted\/tools\/desktop-release\/desktop-release\.mjs verify-release/);
   assert.match(publish, /node trusted\/tools\/channel-release\/channel-release\.mjs verify-release/);
+  assert.match(publish, /node trusted\/tools\/channel-release\/channel-release\.mjs verify-bundle/);
+  assert.ok(publish.indexOf('verify-release') < publish.indexOf('GH_TOKEN:'));
+  assert.ok(publish.indexOf('verify-bundle') < publish.indexOf('GH_TOKEN:'));
   assert.doesNotMatch(publish, /node (?:web|desktop)-artifacts\//);
   assert.match(signer, /require\.resolve\(`electron\/package\.json`, \{ paths: \[`\.\/trusted\/packages\/electron`\] \}\)/);
   assert.doesNotMatch(signer, /require\(`\.\/node_modules\/electron\/package\.json`\)/);
@@ -82,18 +85,23 @@ test('publication waits for strict final-app verification and a real packaged up
   assert.match(releaseWorkflow, /needs\.build-desktop\.result == 'success'/);
 });
 
-test('one publisher gates publication on both immutable artifact sets', () => {
+test('one publisher gates publication on both web bundles and signed desktop assets', () => {
   const publish = releaseWorkflow.slice(releaseWorkflow.indexOf('  publish:'));
   assert.match(releaseWorkflow, /needs\.build-desktop\.result == 'success'/);
   assert.match(publish, /desktop-artifacts/);
-  assert.match(publish, /web-artifacts/);
+  assert.match(publish, /legacy-web-artifacts/);
+  assert.match(publish, /multi-web-artifacts/);
   assert.match(publish, /gh api --paginate .*releases\?per_page=100.*--slurp/);
   assert.match(publish, /-F draft=true -F prerelease=true -f make_latest=false/);
   assert.match(publish, /-F draft=true -F prerelease=false/);
   assert.match(publish, /Existing desktop asset \$asset differs; refusing overwrite/);
   assert.match(publish, /Existing release asset \$asset differs; refusing to overwrite/);
+  assert.match(publish, /Existing multi-target web asset \$asset differs; refusing overwrite/);
   assert.doesNotMatch(publish, /--clobber/);
-  assert.ok(publish.indexOf('-F draft=false -F prerelease=true') < publish.indexOf('-F draft=false -F prerelease=false'));
+  const firstPrerelease = publish.indexOf('-F draft=false -F prerelease=true');
+  const secondPrerelease = publish.indexOf('-F draft=false -F prerelease=true', firstPrerelease + 1);
+  const stable = publish.indexOf('-F draft=false -F prerelease=false');
+  assert.ok(firstPrerelease >= 0 && secondPrerelease > firstPrerelease && stable > secondPrerelease);
 });
 
 test('desktop-channel update uses the captured branch lease and contains one manifest', () => {
@@ -108,7 +116,18 @@ test('unified workflow preserves the web release exact-three stable contract', (
   assert.match(releaseWorkflow, /const expected = new Set\(\[`openchamber-web-\$\{process\.env\.VERSION\}\.tgz`, 'SHA256SUMS', 'channel\.json'\]\)/);
   assert.match(releaseWorkflow, /if \(release\.prerelease\) throw new Error\('Channel release cannot be a prerelease'\)/);
   assert.match(releaseWorkflow, /-F draft=false -F prerelease=false -f make_latest=true/);
+  assert.match(releaseWorkflow, /-f tag_name="\$RELEASE_TAG"[\s\S]*-F draft=true -F prerelease=false -f make_latest=true/);
   assert.match(releaseWorkflow, /desktop-release\.json/);
+});
+
+test('desktop release remains exact-six and publishes before stable web', () => {
+  const publish = releaseWorkflow.slice(releaseWorkflow.indexOf('  publish:'));
+  assert.match(publish, /const expected = \[\s*`OpenChamber-\$\{process\.env\.VERSION\}-mac-arm64\.dmg`,\s*`OpenChamber-\$\{process\.env\.VERSION\}-mac-arm64\.zip`,\s*`OpenChamber-\$\{process\.env\.VERSION\}-mac-arm64\.zip\.blockmap`,\s*'latest-mac\.yml', 'SHA256SUMS', 'desktop-release\.json',/);
+  const desktopPublish = publish.indexOf('releases/$desktop_release_id" \\\n              -F draft=false -F prerelease=true');
+  const stablePublish = publish.indexOf('releases/$release_id" \\\n              -F draft=false -F prerelease=false');
+  assert.ok(desktopPublish >= 0 && stablePublish > desktopPublish);
+  assert.ok(publish.indexOf('refs/heads/desktop-channel:refs/heads/desktop-channel') < stablePublish);
+  assert.match(desktopWorkflow, /run-packaged-macos-updater-smoke\.mjs/);
 });
 
 test('conflicts create OPM recovery without touching release refs', () => {
@@ -143,12 +162,14 @@ test('publication rechecks source leases and refuses branch rewinds', () => {
   const publish = releaseWorkflow.slice(releaseWorkflow.indexOf('  publish:'));
   assert.match(releaseWorkflow, /Refusing to rewind j2k\/current/);
   assert.match(releaseWorkflow, /desktop-v\*-j2k\.\*/);
+  assert.match(releaseWorkflow, /web-v\*-j2k\.\*/);
   assert.match(releaseWorkflow, /same-base commit has no authoritative web or desktop release tag/);
   assert.match(publish, /Refusing to rewind desktop-channel/);
   assert.match(publish, /ls-remote origin "refs\/heads\/\$SOURCE_REF".*= "\$SOURCE_COMMIT"/);
   assert.match(publish, /ls-remote origin refs\/heads\/j2k\/current.*= "\$SOURCE_COMMIT"/);
   assert.match(publish, /permissions:\n      contents: write\n      issues: write/);
   assert.match(publish, /Uploaded web asset \$asset differs from validated bytes/);
+  assert.match(publish, /Uploaded multi-target web asset \$asset differs from validated bytes/);
   assert.match(publish, /Uploaded desktop asset \$asset differs from validated bytes/);
   assert.match(publish, /test "\$final_web_tag" = "\$SOURCE_COMMIT"/);
   assert.match(publish, /test "\$final_desktop_tag" = "\$SOURCE_COMMIT"/);

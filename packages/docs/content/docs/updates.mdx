@@ -11,15 +11,32 @@ How you update OpenChamber depends on how you installed it. In every case you ca
 
 The desktop app checks for updates against GitHub releases. When one is available, OpenChamber tells you, downloads it when you choose, and installs it on the next restart. You're always in control — nothing installs without your say-so.
 
-## Web / CLI
+## Web and CLI
 
-If you installed the CLI, update it from **About** with the check and update buttons, or from the terminal:
+Public upstream installs use the installer or package manager that installed
+OpenChamber. The update controls in **About** can handle that path, or you can
+update with npm, pnpm, yarn, or Bun directly.
+
+Validated J2K web artifacts use a separate GitHub Release channel. They do not
+use npm or another package manager for updates. Target the running server:
 
 ```bash
-openchamber update
+openchamber update --port 3000
 ```
 
-OpenChamber detects how it was installed (npm, pnpm, yarn, or bun) and runs the right update for you.
+For a validated artifact, this command sends an authenticated local request and
+returns once the server accepts the update. A systemd user service or another
+supported restart-on-exit manager handles restart, exact-build attestation, and
+rollback. The supported J2K headless target is Ubuntu x86_64 with Node 22.22.0
+modules ABI 127, not generic Linux. Bun and npm are not required at runtime.
+
+The J2K updater resolves canonical stable identity first, then selects the exact
+target from its companion prerelease. Missing, duplicate, ambiguous, or
+wrong-target artifacts stop before download. Schema 1 fallback is allowed only
+for exact Darwin arm64 ABI 127.
+
+Desktop signed delivery is separate and unchanged. These web channel rules do
+not apply to the Desktop updater.
 
 ## The OpenCode server
 

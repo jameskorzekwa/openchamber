@@ -18,9 +18,13 @@ const OLD_COMMIT = '1111111111111111111111111111111111111111';
 const UPSTREAM_COMMIT = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const NODE_ABI = process.versions.modules;
 const TAG = `v${VERSION}`;
+const COMPANION_TAG = `web-${TAG}`;
 const ARCHIVE_NAME = `openchamber-web-${VERSION}.tgz`;
+const DARWIN_ARCHIVE_NAME = `openchamber-web-${VERSION}-darwin-arm64-abi${NODE_ABI}.tgz`;
+const LINUX_ARCHIVE_NAME = `openchamber-web-${VERSION}-linux-x64-abi${NODE_ABI}.tgz`;
 const DEPENDENCIES = { 'fixture-dependency': '^1.0.0' };
 const RELEASE_ROOT = `https://github.com/jameskorzekwa/openchamber/releases/download/${TAG}`;
+const COMPANION_RELEASE_ROOT = `https://github.com/jameskorzekwa/openchamber/releases/download/${COMPANION_TAG}`;
 const temporaryDirectories = [];
 
 function writeTarString(header, offset, length, value) {
@@ -57,14 +61,14 @@ function paxRecord(key, value) {
   return `${length} ${body}`;
 }
 
-function makeArchive(extraEntries = [], includeDependencies = true) {
+function makeArchive(extraEntries = [], includeDependencies = true, target = { platform: 'darwin', arch: 'arm64', nodeAbi: NODE_ABI }) {
   const entries = [
     tarEntry('package/', Buffer.alloc(0), '5', 0o755),
     tarEntry('package/package.json', JSON.stringify({
       name: '@openchamber/web',
       version: VERSION,
       dependencies: DEPENDENCIES,
-      openchamberArtifact: { platform: 'darwin', arch: 'arm64', nodeAbi: NODE_ABI },
+      openchamberArtifact: target,
     })),
     tarEntry('package/dist/', Buffer.alloc(0), '5', 0o755),
     tarEntry('package/dist/build-revision.json', JSON.stringify({ revision: COMMIT })),
@@ -76,7 +80,7 @@ function makeArchive(extraEntries = [], includeDependencies = true) {
     ...(includeDependencies ? [
       tarEntry('package/node_modules/', Buffer.alloc(0), '5', 0o755),
       tarEntry('package/node_modules/fixture-dependency/', Buffer.alloc(0), '5', 0o755),
-      tarEntry('package/node_modules/fixture-dependency/package.json', JSON.stringify({ name: 'fixture-dependency', version: '1.0.0', os: ['darwin'], cpu: ['arm64'], peerDependencies: { 'fixture-peer': '^1.0.0' } })),
+      tarEntry('package/node_modules/fixture-dependency/package.json', JSON.stringify({ name: 'fixture-dependency', version: '1.0.0', os: [target.platform], cpu: [target.arch], peerDependencies: { 'fixture-peer': '^1.0.0' } })),
       tarEntry('package/node_modules/fixture-peer/', Buffer.alloc(0), '5', 0o755),
       tarEntry('package/node_modules/fixture-peer/package.json', JSON.stringify({ name: 'fixture-peer', version: '1.0.0' })),
     ] : []),
@@ -84,6 +88,29 @@ function makeArchive(extraEntries = [], includeDependencies = true) {
     Buffer.alloc(1024),
   ];
   return zlib.gzipSync(Buffer.concat(entries));
+}
+
+function makeMultiTargetChannel(darwinArchive, linuxArchive, overrides = {}) {
+  const artifacts = [
+    { platform: 'darwin', arch: 'arm64', nodeAbi: NODE_ABI, tarball: DARWIN_ARCHIVE_NAME, sha256: crypto.createHash('sha256').update(darwinArchive).digest('hex') },
+    { platform: 'linux', arch: 'x64', nodeAbi: NODE_ABI, tarball: LINUX_ARCHIVE_NAME, sha256: crypto.createHash('sha256').update(linuxArchive).digest('hex') },
+  ];
+  return {
+    schema: 2,
+    baseVersion: BASE_VERSION,
+    channelRevision: 1,
+    version: VERSION,
+    releaseTag: COMPANION_TAG,
+    checksumAsset: 'SHA256SUMS',
+    manifestAsset: 'channel.json',
+    assets: [DARWIN_ARCHIVE_NAME, LINUX_ARCHIVE_NAME, 'SHA256SUMS', 'channel.json'],
+    artifacts,
+    upstreamTag: `v${BASE_VERSION}`,
+    seriesHead: COMMIT,
+    sourceCommit: COMMIT,
+    minNode: '22',
+    ...overrides,
+  };
 }
 
 function makeChannel(archive, overrides = {}) {
@@ -122,7 +149,7 @@ function makeRelease(channel, archive) {
   };
 }
 
-function makeFetch({ archive, channel, checksum, releaseStatus = 200, overrides = new Map() } = {}) {
+function makeFetch({ archive, channel, checksum, releaseStatus = 200, companion = false, companionOverrides = {}, overrides = new Map() } = {}) {
   const actualArchive = archive || makeArchive();
   const actualChannel = channel || makeChannel(actualArchive);
   const release = makeRelease(actualChannel, actualArchive);
@@ -136,6 +163,28 @@ function makeFetch({ archive, channel, checksum, releaseStatus = 200, overrides 
     [`${RELEASE_ROOT}/SHA256SUMS`, checksumBody],
     [`${RELEASE_ROOT}/${ARCHIVE_NAME}`, actualArchive],
   ]);
+  if (companion) {
+    const darwinArchive = companionOverrides.darwinArchive || makeArchive();
+    const linuxArchive = companionOverrides.linuxArchive || makeArchive([], true, { platform: 'linux', arch: 'x64', nodeAbi: NODE_ABI });
+    const companionChannel = companionOverrides.channel || makeMultiTargetChannel(darwinArchive, linuxArchive);
+    const companionRelease = {
+      tag_name: COMPANION_TAG,
+      target_commitish: COMMIT,
+      assets: [
+        { name: DARWIN_ARCHIVE_NAME, browser_download_url: `${COMPANION_RELEASE_ROOT}/${DARWIN_ARCHIVE_NAME}`, size: darwinArchive.length },
+        { name: LINUX_ARCHIVE_NAME, browser_download_url: `${COMPANION_RELEASE_ROOT}/${LINUX_ARCHIVE_NAME}`, size: linuxArchive.length },
+        { name: 'SHA256SUMS', browser_download_url: `${COMPANION_RELEASE_ROOT}/SHA256SUMS`, size: 200 },
+        { name: 'channel.json', browser_download_url: `${COMPANION_RELEASE_ROOT}/channel.json`, size: 1000 },
+      ],
+    };
+    const companionChecksum = companionOverrides.checksum || `${companionChannel.artifacts.map((artifact) => `${artifact.sha256}  ${artifact.tarball}`).join('\n')}\n`;
+    responses.set(`https://api.github.com/repos/jameskorzekwa/openchamber/releases/tags/${COMPANION_TAG}`, JSON.stringify(companionRelease));
+    responses.set(`https://api.github.com/repos/jameskorzekwa/openchamber/commits/${COMPANION_TAG}`, JSON.stringify({ sha: COMMIT }));
+    responses.set(`${COMPANION_RELEASE_ROOT}/channel.json`, JSON.stringify(companionChannel));
+    responses.set(`${COMPANION_RELEASE_ROOT}/SHA256SUMS`, companionChecksum);
+    responses.set(`${COMPANION_RELEASE_ROOT}/${DARWIN_ARCHIVE_NAME}`, darwinArchive);
+    responses.set(`${COMPANION_RELEASE_ROOT}/${LINUX_ARCHIVE_NAME}`, linuxArchive);
+  }
   for (const [url, response] of overrides) responses.set(url, response);
   return vi.fn(async (url) => {
     const body = responses.get(String(url));
@@ -311,6 +360,64 @@ describe('validated release installation', () => {
     const harness = await makeHarness(makeFetch({ releaseStatus: 404 }));
     await expect(harness.installer.checkForUpdate()).resolves.toMatchObject({ available: false, noValidatedRelease: true });
     expect(harness.installer.getStatus().state).toBe('no-validated-release');
+  });
+
+  it('selects the exact Linux x64 ABI artifact from the schema-2 companion', async () => {
+    const fetchImpl = makeFetch({ companion: true });
+    const harness = await makeHarness(fetchImpl, undefined, { platform: 'linux', arch: 'x64', nodeAbi: NODE_ABI });
+    await expect(harness.installer.checkForUpdate()).resolves.toMatchObject({ available: true, version: VERSION });
+    await expect(harness.installer.install({ targetVersion: VERSION, handoffRestart: vi.fn() })).resolves.toMatchObject({ state: 'restarting' });
+    expect(fetchImpl.mock.calls.some(([url]) => String(url) === `${COMPANION_RELEASE_ROOT}/${LINUX_ARCHIVE_NAME}`)).toBe(true);
+    expect(fetchImpl.mock.calls.some(([url]) => String(url) === `${COMPANION_RELEASE_ROOT}/${DARWIN_ARCHIVE_NAME}`)).toBe(false);
+    const selected = await fsp.realpath(path.join(harness.installRoot, 'current'));
+    expect(JSON.parse(await fsp.readFile(path.join(selected, 'package.json'), 'utf8')).openchamberArtifact).toEqual({ platform: 'linux', arch: 'x64', nodeAbi: NODE_ABI });
+  });
+
+  it('uses the schema-2 Darwin artifact when the companion exists', async () => {
+    const fetchImpl = makeFetch({ companion: true });
+    const harness = await makeHarness(fetchImpl);
+    await harness.installer.install({ targetVersion: VERSION, handoffRestart: vi.fn() });
+    expect(fetchImpl.mock.calls.some(([url]) => String(url) === `${COMPANION_RELEASE_ROOT}/${DARWIN_ARCHIVE_NAME}`)).toBe(true);
+    expect(fetchImpl.mock.calls.some(([url]) => String(url) === `${RELEASE_ROOT}/${ARCHIVE_NAME}`)).toBe(false);
+  });
+
+  it('allows schema-1 fallback only for Darwin arm64 ABI 127', async () => {
+    const linuxFetch = makeFetch();
+    const linux = await makeHarness(linuxFetch, undefined, { platform: 'linux', arch: 'x64', nodeAbi: NODE_ABI });
+    await expect(linux.installer.checkForUpdate()).rejects.toThrow('No validated OpenChamber companion release matches linux/x64');
+    expect(linuxFetch.mock.calls.some(([url]) => String(url).endsWith('/SHA256SUMS'))).toBe(false);
+
+    const wrongAbi = await makeHarness(makeFetch(), undefined, { platform: 'darwin', arch: 'arm64', nodeAbi: '999' });
+    await expect(wrongAbi.installer.checkForUpdate()).rejects.toThrow('No validated OpenChamber companion release matches darwin/arm64/ABI-999');
+
+    const legacy = await makeHarness(makeFetch());
+    await expect(legacy.installer.checkForUpdate()).resolves.toMatchObject({ available: true, version: VERSION });
+  });
+
+  it('rejects companion identity, target ambiguity, and incomplete checksums before download', async () => {
+    const darwinArchive = makeArchive();
+    const linuxArchive = makeArchive([], true, { platform: 'linux', arch: 'x64', nodeAbi: NODE_ABI });
+    const identityChannel = makeMultiTargetChannel(darwinArchive, linuxArchive, { sourceCommit: 'f'.repeat(40) });
+    const identity = await makeHarness(makeFetch({ companion: true, companionOverrides: { darwinArchive, linuxArchive, channel: identityChannel } }), undefined, { platform: 'linux', arch: 'x64', nodeAbi: NODE_ABI });
+    await expect(identity.installer.checkForUpdate()).rejects.toThrow('sourceCommit does not match the stable channel');
+
+    const duplicateArtifacts = makeMultiTargetChannel(darwinArchive, linuxArchive);
+    duplicateArtifacts.artifacts[1] = { ...duplicateArtifacts.artifacts[0], tarball: LINUX_ARCHIVE_NAME };
+    const ambiguous = await makeHarness(makeFetch({ companion: true, companionOverrides: { darwinArchive, linuxArchive, channel: duplicateArtifacts } }), undefined, { platform: 'linux', arch: 'x64', nodeAbi: NODE_ABI });
+    await expect(ambiguous.installer.checkForUpdate()).rejects.toThrow('missing, duplicated, or out of order');
+
+    const checksumFetch = makeFetch({ companion: true, companionOverrides: { checksum: `${'f'.repeat(64)}  ${DARWIN_ARCHIVE_NAME}\n` } });
+    const checksumHarness = await makeHarness(checksumFetch, undefined, { platform: 'linux', arch: 'x64', nodeAbi: NODE_ABI });
+    await expect(checksumHarness.installer.checkForUpdate()).rejects.toThrow('does not match every channel artifact');
+    expect(checksumFetch.mock.calls.some(([url]) => String(url) === `${COMPANION_RELEASE_ROOT}/${LINUX_ARCHIVE_NAME}`)).toBe(false);
+  });
+
+  it('rejects a selected archive whose staged target identity differs', async () => {
+    const wrongTargetArchive = makeArchive();
+    const fetchImpl = makeFetch({ companion: true, companionOverrides: { linuxArchive: wrongTargetArchive } });
+    const harness = await makeHarness(fetchImpl, undefined, { platform: 'linux', arch: 'x64', nodeAbi: NODE_ABI });
+    await expect(harness.installer.install({ targetVersion: VERSION, handoffRestart: vi.fn() })).rejects.toThrow('Extracted package target metadata does not match');
+    expect(await fsp.realpath(path.join(harness.installRoot, 'current'))).toBe(harness.oldInstall);
   });
 
   it('clears stale no-validated-release after validating the exact running channel', async () => {

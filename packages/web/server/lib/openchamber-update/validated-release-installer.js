@@ -7,7 +7,9 @@ import { createGunzip } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import properLockfile from 'proper-lockfile';
 
-const SCHEMA_VERSION = 1;
+const STATE_SCHEMA_VERSION = 1;
+const LEGACY_CHANNEL_SCHEMA_VERSION = 1;
+const MULTI_TARGET_CHANNEL_SCHEMA_VERSION = 2;
 const CHANNEL_ID = 'j2k';
 const REPOSITORY = 'jameskorzekwa/openchamber';
 const INSTALL_ROOT = path.join(os.homedir(), '.local', 'share', 'openchamber');
@@ -18,6 +20,11 @@ const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const PACKAGE_NAME_PATTERN = /^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/i;
 const BASE_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const CHANNEL_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-j2k\.([1-9]\d*)$/;
+const LEGACY_TARGET = Object.freeze({ platform: 'darwin', arch: 'arm64', nodeAbi: '127' });
+const MULTI_TARGETS = Object.freeze([
+  LEGACY_TARGET,
+  Object.freeze({ platform: 'linux', arch: 'x64', nodeAbi: '127' }),
+]);
 const MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES = 512 * 1024 * 1024;
 const MAX_FILE_BYTES = 128 * 1024 * 1024;
@@ -104,7 +111,7 @@ export function validateChannelMetadata(raw, release, tagCommit, target = { plat
   if (!hasExactKeys(raw, keys)) {
     fail('Update channel metadata has an invalid schema');
   }
-  if (raw.schema !== SCHEMA_VERSION) fail('Unsupported update channel schema');
+  if (raw.schema !== LEGACY_CHANNEL_SCHEMA_VERSION) fail('Unsupported update channel schema');
   if (!isString(raw.baseVersion) || !BASE_VERSION_PATTERN.test(raw.baseVersion)) fail('Update channel base version is invalid');
   if (!Number.isSafeInteger(raw.channelRevision) || raw.channelRevision < 1) fail('Update channel revision is invalid');
   if (!isString(raw.version) || !CHANNEL_VERSION_PATTERN.test(raw.version) || raw.version !== `${raw.baseVersion}-j2k.${raw.channelRevision}`) {
@@ -131,7 +138,7 @@ export function validateChannelMetadata(raw, release, tagCommit, target = { plat
     fail(`Update channel target ${raw.platform}/${raw.arch}/ABI-${raw.nodeAbi} does not match ${target.platform}/${target.arch}/ABI-${target.nodeAbi}`);
   }
   return {
-    schema: SCHEMA_VERSION,
+    schema: LEGACY_CHANNEL_SCHEMA_VERSION,
     channel: CHANNEL_ID,
     repository: REPOSITORY,
     baseVersion: raw.baseVersion,
@@ -139,7 +146,9 @@ export function validateChannelMetadata(raw, release, tagCommit, target = { plat
     releaseTag: raw.releaseTag,
     version: raw.version,
     upstreamTag: raw.upstreamTag,
+    seriesHead: raw.seriesHead,
     sourceCommit: raw.sourceCommit,
+    minNode: raw.minNode,
     platform: raw.platform,
     arch: raw.arch,
     nodeAbi: raw.nodeAbi,
@@ -148,6 +157,90 @@ export function validateChannelMetadata(raw, release, tagCommit, target = { plat
       name: raw.tarball,
       checksumName: raw.checksumAsset,
       sha256: raw.sha256,
+    },
+  };
+}
+
+function targetEquals(left, right) {
+  return left.platform === right.platform && left.arch === right.arch && left.nodeAbi === right.nodeAbi;
+}
+
+function targetArchiveName(version, target) {
+  return `openchamber-web-${version}-${target.platform}-${target.arch}-abi${target.nodeAbi}.tgz`;
+}
+
+function validateMultiTargetChannelMetadata(raw, release, tagCommit, stableChannel, target) {
+  const keys = [
+    'schema', 'baseVersion', 'channelRevision', 'version', 'releaseTag',
+    'checksumAsset', 'manifestAsset', 'assets', 'artifacts', 'upstreamTag',
+    'seriesHead', 'sourceCommit', 'minNode',
+  ];
+  if (!hasExactKeys(raw, keys)) fail('Multi-target update channel metadata has an invalid schema');
+  if (raw.schema !== MULTI_TARGET_CHANNEL_SCHEMA_VERSION) fail('Unsupported multi-target update channel schema');
+  const companionTag = `web-${stableChannel.releaseTag}`;
+  if (raw.releaseTag !== companionTag || release.tag !== companionTag) {
+    fail('Multi-target update channel release tag does not match the GitHub release');
+  }
+  for (const key of ['baseVersion', 'channelRevision', 'version', 'upstreamTag', 'seriesHead', 'sourceCommit']) {
+    if (raw[key] !== stableChannel[key]) fail(`Multi-target update channel ${key} does not match the stable channel`);
+  }
+  if (raw.minNode !== '22' || raw.minNode !== stableChannel.minNode) fail('Multi-target update channel minimum Node version is unsupported');
+  if (raw.sourceCommit !== tagCommit) fail('Multi-target update channel source commit does not match the GitHub tag');
+  if (COMMIT_PATTERN.test(release.targetCommitish) && release.targetCommitish !== raw.sourceCommit) {
+    fail('GitHub companion release target commit does not match the update channel');
+  }
+  if (raw.checksumAsset !== 'SHA256SUMS' || raw.manifestAsset !== 'channel.json') {
+    fail('Multi-target update channel asset names are invalid');
+  }
+  if (!Array.isArray(raw.artifacts) || raw.artifacts.length !== MULTI_TARGETS.length) {
+    fail('Multi-target update channel artifact inventory is invalid');
+  }
+  const artifacts = raw.artifacts.map((artifact, index) => {
+    if (!hasExactKeys(artifact, ['platform', 'arch', 'nodeAbi', 'tarball', 'sha256'])) {
+      fail('Multi-target update channel artifact metadata is invalid');
+    }
+    const expectedTarget = MULTI_TARGETS[index];
+    if (!targetEquals(artifact, expectedTarget)) fail('Multi-target update channel artifacts are missing, duplicated, or out of order');
+    const expectedTarball = targetArchiveName(raw.version, expectedTarget);
+    if (artifact.tarball !== expectedTarball) fail('Multi-target update channel archive name does not match its target');
+    if (!isString(artifact.sha256) || !SHA256_PATTERN.test(artifact.sha256)) fail('Multi-target update channel SHA-256 is invalid');
+    return {
+      platform: artifact.platform,
+      arch: artifact.arch,
+      nodeAbi: artifact.nodeAbi,
+      tarball: artifact.tarball,
+      sha256: artifact.sha256,
+    };
+  });
+  const expectedAssets = [...artifacts.map((artifact) => artifact.tarball), 'SHA256SUMS', 'channel.json'];
+  if (!Array.isArray(raw.assets) || JSON.stringify(raw.assets) !== JSON.stringify(expectedAssets)) {
+    fail('Multi-target update channel asset inventory is invalid');
+  }
+  const matches = artifacts.filter((artifact) => targetEquals(artifact, target));
+  if (matches.length !== 1) {
+    fail(`No unique validated OpenChamber artifact matches ${target.platform}/${target.arch}/ABI-${target.nodeAbi}`);
+  }
+  return {
+    schema: MULTI_TARGET_CHANNEL_SCHEMA_VERSION,
+    channel: CHANNEL_ID,
+    repository: REPOSITORY,
+    baseVersion: raw.baseVersion,
+    channelRevision: raw.channelRevision,
+    releaseTag: raw.releaseTag,
+    version: raw.version,
+    upstreamTag: raw.upstreamTag,
+    seriesHead: raw.seriesHead,
+    sourceCommit: raw.sourceCommit,
+    minNode: raw.minNode,
+    platform: matches[0].platform,
+    arch: matches[0].arch,
+    nodeAbi: matches[0].nodeAbi,
+    assets: [...raw.assets],
+    artifacts,
+    archive: {
+      name: matches[0].tarball,
+      checksumName: raw.checksumAsset,
+      sha256: matches[0].sha256,
     },
   };
 }
@@ -254,10 +347,12 @@ async function fetchJson(fetchImpl, url, label, options) {
   }
 }
 
-function parseChecksumFile(bytes, archiveName) {
-  const match = bytes.toString('utf8').match(/^([a-f0-9]{64})  ([A-Za-z0-9._-]+)\n?$/);
-  if (!match || match[2] !== archiveName) fail('Checksum asset is malformed or names a different archive');
-  return match[1];
+function parseChecksumFile(bytes, artifacts) {
+  const lines = bytes.toString('utf8').match(/^([a-f0-9]{64})  ([A-Za-z0-9._-]+)$/gm) || [];
+  const expectedLines = artifacts.map((artifact) => `${artifact.sha256}  ${artifact.tarball}`);
+  if (lines.length !== artifacts.length || bytes.toString('utf8') !== `${expectedLines.join('\n')}\n`) {
+    fail('Checksum asset does not match every channel artifact or is malformed');
+  }
 }
 
 function parseTarString(buffer, start, length) {
@@ -745,7 +840,7 @@ function isPathInside(parent, candidate) {
 
 function statePayload(state, currentVersion, values = {}) {
   return {
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion: STATE_SCHEMA_VERSION,
     state,
     currentVersion,
     targetVersion: values.targetVersion || null,
@@ -757,7 +852,7 @@ function statePayload(state, currentVersion, values = {}) {
 
 function parsePersistedState(raw) {
   if (!hasExactKeys(raw, ['schemaVersion', 'state', 'currentVersion', 'targetVersion', 'previousVersion', 'error', 'updatedAt'])) return null;
-  if (raw.schemaVersion !== SCHEMA_VERSION || !INSTALL_STATES.has(raw.state) || !isString(raw.currentVersion) || !isString(raw.updatedAt)) return null;
+  if (raw.schemaVersion !== STATE_SCHEMA_VERSION || !INSTALL_STATES.has(raw.state) || !isString(raw.currentVersion) || !isString(raw.updatedAt)) return null;
   for (const key of ['targetVersion', 'previousVersion', 'error']) {
     if (raw[key] !== null && !isString(raw[key])) return null;
   }
@@ -898,32 +993,73 @@ export function createValidatedReleaseInstaller(options = {}) {
   }
 
   async function resolveChannel() {
-    const release = parseRelease(await fetchJson(fetchImpl, releaseApiUrl, 'GitHub release metadata', { noReleaseOn404: true, githubToken }));
-    const commitUrl = `https://api.github.com/repos/${repository}/commits/${encodeURIComponent(release.tag)}`;
-    const tagCommit = parseTagCommit(await fetchJson(fetchImpl, commitUrl, 'GitHub tag commit metadata', { githubToken }));
-    const channelAsset = getUniqueAsset(release, 'channel.json');
-    validateAssetUrl(channelAsset, release.tag, repository);
-    const channel = validateChannelMetadata(
-      await fetchJson(fetchImpl, channelAsset.url, 'Update channel metadata', { githubToken }),
-      release,
-      tagCommit,
-      target,
+    const stableRelease = parseRelease(await fetchJson(fetchImpl, releaseApiUrl, 'GitHub release metadata', { noReleaseOn404: true, githubToken }));
+    const stableCommitUrl = `https://api.github.com/repos/${repository}/commits/${encodeURIComponent(stableRelease.tag)}`;
+    const stableTagCommit = parseTagCommit(await fetchJson(fetchImpl, stableCommitUrl, 'GitHub tag commit metadata', { githubToken }));
+    const stableManifestAsset = getUniqueAsset(stableRelease, 'channel.json');
+    validateAssetUrl(stableManifestAsset, stableRelease.tag, repository);
+    const stableChannel = validateChannelMetadata(
+      await fetchJson(fetchImpl, stableManifestAsset.url, 'Update channel metadata', { githubToken }),
+      stableRelease,
+      stableTagCommit,
+      LEGACY_TARGET,
     );
-    const upstreamTagUrl = `https://api.github.com/repos/openchamber/openchamber/commits/${encodeURIComponent(channel.upstreamTag || `v${channel.baseVersion}`)}`;
-    const upstreamCommit = parseTagCommit(await fetchJson(fetchImpl, upstreamTagUrl, 'GitHub upstream tag metadata', { githubToken }));
-    // GitHub includes changed-file patches only on page 1; later pages retain the ancestry fields.
-    const compareUrl = `https://api.github.com/repos/${repository}/compare/${upstreamCommit}...${channel.sourceCommit}?per_page=1&page=2`;
-    parseCompare(await fetchJson(fetchImpl, compareUrl, 'GitHub upstream ancestry metadata', { githubToken }), upstreamCommit, channel.sourceCommit);
-    const releaseAssetNames = release.assets.map((asset) => asset.name).sort();
-    if (JSON.stringify(releaseAssetNames) !== JSON.stringify([...channel.assets].sort())) {
+    const stableAssetNames = stableRelease.assets.map((asset) => asset.name).sort();
+    if (JSON.stringify(stableAssetNames) !== JSON.stringify([...stableChannel.assets].sort())) {
       fail('GitHub Release asset inventory does not match the update channel');
     }
-    const archiveAsset = getUniqueAsset(release, channel.archive.name);
-    const checksumAsset = getUniqueAsset(release, channel.archive.checksumName);
-    validateAssetUrl(archiveAsset, release.tag, repository);
-    validateAssetUrl(checksumAsset, release.tag, repository);
+    for (const assetName of stableChannel.assets) {
+      validateAssetUrl(getUniqueAsset(stableRelease, assetName), stableRelease.tag, repository);
+    }
+
+    const upstreamTagUrl = `https://api.github.com/repos/openchamber/openchamber/commits/${encodeURIComponent(stableChannel.upstreamTag)}`;
+    const upstreamCommit = parseTagCommit(await fetchJson(fetchImpl, upstreamTagUrl, 'GitHub upstream tag metadata', { githubToken }));
+    // GitHub includes changed-file patches only on page 1; later pages retain the ancestry fields.
+    const compareUrl = `https://api.github.com/repos/${repository}/compare/${upstreamCommit}...${stableChannel.sourceCommit}?per_page=1&page=2`;
+    parseCompare(await fetchJson(fetchImpl, compareUrl, 'GitHub upstream ancestry metadata', { githubToken }), upstreamCommit, stableChannel.sourceCommit);
+
+    const companionTag = `web-${stableChannel.releaseTag}`;
+    const companionReleaseUrl = options.companionReleaseApiUrl || `https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(companionTag)}`;
+    let companionRelease;
+    try {
+      companionRelease = parseRelease(await fetchJson(fetchImpl, companionReleaseUrl, 'GitHub companion release metadata', { noReleaseOn404: true, githubToken }));
+    } catch (error) {
+      if (!(error instanceof NoValidatedReleaseError)) throw error;
+      if (!targetEquals(target, LEGACY_TARGET)) {
+        fail(`No validated OpenChamber companion release matches ${target.platform}/${target.arch}/ABI-${target.nodeAbi}`);
+      }
+      const archiveAsset = getUniqueAsset(stableRelease, stableChannel.archive.name);
+      const checksumAsset = getUniqueAsset(stableRelease, stableChannel.archive.checksumName);
+      if (archiveAsset.size > MAX_DOWNLOAD_BYTES) fail('GitHub archive exceeds the download limit');
+      const checksumBytes = await fetchBytes(fetchImpl, checksumAsset.url, 4096, 'Checksum asset', { githubToken });
+      parseChecksumFile(checksumBytes, [{ tarball: stableChannel.archive.name, sha256: stableChannel.archive.sha256 }]);
+      return { channel: stableChannel, archiveAsset };
+    }
+
+    const companionCommitUrl = `https://api.github.com/repos/${repository}/commits/${encodeURIComponent(companionTag)}`;
+    const companionTagCommit = parseTagCommit(await fetchJson(fetchImpl, companionCommitUrl, 'GitHub companion tag commit metadata', { githubToken }));
+    const companionManifestAsset = getUniqueAsset(companionRelease, 'channel.json');
+    validateAssetUrl(companionManifestAsset, companionTag, repository);
+    const channel = validateMultiTargetChannelMetadata(
+      await fetchJson(fetchImpl, companionManifestAsset.url, 'Multi-target update channel metadata', { githubToken }),
+      companionRelease,
+      companionTagCommit,
+      stableChannel,
+      target,
+    );
+    const companionAssetNames = companionRelease.assets.map((asset) => asset.name).sort();
+    if (JSON.stringify(companionAssetNames) !== JSON.stringify([...channel.assets].sort())) {
+      fail('GitHub companion release asset inventory does not match the update channel');
+    }
+    for (const assetName of channel.assets) {
+      validateAssetUrl(getUniqueAsset(companionRelease, assetName), companionTag, repository);
+    }
+    const checksumAsset = getUniqueAsset(companionRelease, channel.archive.checksumName);
+    const checksumBytes = await fetchBytes(fetchImpl, checksumAsset.url, 4096, 'Checksum asset', { githubToken });
+    parseChecksumFile(checksumBytes, channel.artifacts);
+    const archiveAsset = getUniqueAsset(companionRelease, channel.archive.name);
     if (archiveAsset.size > MAX_DOWNLOAD_BYTES) fail('GitHub archive exceeds the download limit');
-    return { channel, archiveAsset, checksumAsset };
+    return { channel, archiveAsset };
   }
 
   function compareChannelVersions(left, right) {
@@ -962,7 +1098,7 @@ export function createValidatedReleaseInstaller(options = {}) {
       available,
       version: channel.version,
       currentVersion,
-      releaseUrl: `https://github.com/${repository}/releases/tag/${channel.releaseTag}`,
+      releaseUrl: `https://github.com/${repository}/releases/tag/${channel.schema === MULTI_TARGET_CHANNEL_SCHEMA_VERSION ? `v${channel.version}` : channel.releaseTag}`,
       packageManager: 'validated-channel',
       updateCommand: 'openchamber update',
       channel: CHANNEL_ID,
@@ -1003,10 +1139,7 @@ export function createValidatedReleaseInstaller(options = {}) {
         const resolved = await resolveChannel();
         channel = resolved.channel;
         if (channel.version !== targetVersion) fail('Validated release version does not match the requested update');
-        const { archiveAsset, checksumAsset } = resolved;
-        const checksumBytes = await fetchBytes(fetchImpl, checksumAsset.url, 4096, 'Checksum asset', { githubToken });
-        const declaredChecksum = parseChecksumFile(checksumBytes, channel.archive.name);
-        if (declaredChecksum !== channel.archive.sha256) fail('Checksum asset does not match the update channel');
+        const { archiveAsset } = resolved;
         await persist(statePayload('installing', currentVersion, { targetVersion: channel.version }));
         stagingDirectory = path.join(canonicalInstallRoot, 'staging', crypto.randomUUID());
         await ensureDirectoryDurable(stagingDirectory);
