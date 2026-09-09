@@ -268,7 +268,7 @@ The install instructions at the top of this README describe public upstream
 OpenChamber. The validated J2K channel is fork-specific and does not change
 public upstream package-manager behavior.
 
-The J2K web channel supports Darwin arm64 and Ubuntu x86_64 on Node 22.22.0
+The J2K web channel supports Darwin arm64 and Ubuntu x86_64 on Node 22 with
 modules ABI 127. Canonical stable `vVERSION` remains the exact three-asset
 schema 1 Darwin release. New consumers resolve that identity first, then select
 the exact target from schema 2 prerelease `web-vVERSION`. It contains the Darwin
@@ -282,9 +282,9 @@ absent.
 This is supported only on Ubuntu x86_64. It is new-install-only and fails when
 `~/.local/share/openchamber/current` exists, including as a broken symlink. It
 uses public GitHub APIs without a token and does not read or start production
-OpenChamber auth or state. Install Node 22.22.0, `curl`, `jq`, `git`, `tar`,
-`sha256sum`, and a working systemd user service first. Bun and npm are not
-runtime requirements.
+OpenChamber auth or state. Install Node 22 with modules ABI 127, `curl`, `jq`,
+`git`, `tar`, `sha256sum`, and a working systemd user service first. Bun and
+npm are not runtime requirements.
 
 Run this exact bootstrap as the service user:
 
@@ -292,6 +292,7 @@ Run this exact bootstrap as the service user:
 set -euo pipefail
 umask 077
 REPOSITORY='jameskorzekwa/openchamber'
+UPSTREAM_REPOSITORY='openchamber/openchamber'
 INSTALL_ROOT="$HOME/.local/share/openchamber"
 CURRENT="$INSTALL_ROOT/current"
 RELEASES="$INSTALL_ROOT/releases"
@@ -299,7 +300,7 @@ RELEASES="$INSTALL_ROOT/releases"
 . /etc/os-release
 test "$ID" = 'ubuntu'
 test "$(uname -m)" = 'x86_64'
-test "$(node --version)" = 'v22.22.0'
+test "$(node -p 'process.versions.node.split(".")[0]')" = '22'
 test "$(node -p 'process.platform')" = 'linux'
 test "$(node -p 'process.arch')" = 'x64'
 test "$(node -p 'process.versions.modules')" = '127'
@@ -349,6 +350,19 @@ curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
 test "$(jq -er '.sha' "$WORK/stable-commit.json")" = "$SOURCE_COMMIT"
 
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+  "https://api.github.com/repos/$UPSTREAM_REPOSITORY/commits/$UPSTREAM_TAG" \
+  --output "$WORK/upstream-commit.json"
+UPSTREAM_COMMIT="$(jq -er '.sha | select(test("^[0-9a-f]{40}$"))' "$WORK/upstream-commit.json")"
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+  "https://api.github.com/repos/$REPOSITORY/compare/$UPSTREAM_COMMIT...$SOURCE_COMMIT?per_page=1&page=2" \
+  --output "$WORK/upstream-compare.json"
+jq -e --arg upstream "$UPSTREAM_COMMIT" --arg source "$SOURCE_COMMIT" '
+  (.status == "ahead" or .status == "identical") and
+  .merge_base_commit.sha == $upstream and
+  (.status != "identical" or $upstream == $source)
+' "$WORK/upstream-compare.json" >/dev/null
+
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
   "https://api.github.com/repos/$REPOSITORY/releases/tags/$COMPANION_TAG" \
   --output "$WORK/companion-release.json"
 DARWIN_ARCHIVE="openchamber-web-$VERSION-darwin-arm64-abi127.tgz"
@@ -393,10 +407,13 @@ test ! -e "$CURRENT" && test ! -L "$CURRENT"
 ln -s "releases/$(basename "$RELEASE_DIRECTORY")" "$CURRENT"
 ```
 
-The standard-library-only verifier comes from the exact checked-out
-`sourceCommit` and runs before extraction. The final `ln -s` atomically creates
-`current` and fails instead of replacing an installation that appeared during
-bootstrap. The release directory contains version and source-commit identity.
+Before any release source executes, the bootstrap independently resolves the
+public upstream tag and requires GitHub's comparison to prove that
+`sourceCommit` descends from it. The standard-library-only verifier then comes
+from that exact checked-out commit and runs before extraction. The final
+`ln -s` atomically creates `current` and fails instead of replacing an
+installation that appeared during bootstrap. The release directory contains
+version and source-commit identity.
 
 Enable the extracted CLI on port 3000:
 
