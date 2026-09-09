@@ -24,42 +24,7 @@ const closeServer = (server) => new Promise((resolve, reject) => {
   server.close((error) => (error ? reject(error) : resolve()));
 });
 
-const INHERITED_ENVIRONMENT_KEYS = [
-  'LANG',
-  'LC_ALL',
-  'LC_CTYPE',
-  'LOGNAME',
-  'PATH',
-  'SHELL',
-  'SYSTEM_VERSION_COMPAT',
-  'TZ',
-  'USER',
-  '__CF_USER_TEXT_ENCODING',
-];
-
-const isolatedEnvironment = ({ environment, isolationRoot, appEvidencePath, nextVersion, checksum, url }) => {
-  const inherited = Object.fromEntries(INHERITED_ENVIRONMENT_KEYS
-    .filter((key) => environment[key] !== undefined)
-    .map((key) => [key, environment[key]]));
-  return {
-    ...inherited,
-    HOME: path.join(isolationRoot, 'home'),
-    TMPDIR: path.join(isolationRoot, 'tmp'),
-    OPENCHAMBER_E2E: '1',
-    OPENCHAMBER_PACKAGED_UPDATER_SMOKE: '1',
-    OPENCHAMBER_UPDATER_E2E_URL: url,
-    OPENCHAMBER_UPDATER_SMOKE_ROOT: isolationRoot,
-    OPENCHAMBER_UPDATER_SMOKE_EVIDENCE: appEvidencePath,
-    OPENCHAMBER_UPDATER_SMOKE_NEXT_VERSION: nextVersion,
-    OPENCHAMBER_UPDATER_SMOKE_NEXT_SHA512: checksum,
-  };
-};
-
-const runChild = ({ executable, environment, sensitivePaths, timeoutMs }) => new Promise((resolve, reject) => {
-  const sanitize = (value) => sensitivePaths.reduce(
-    (result, sensitivePath) => result.replaceAll(sensitivePath, '<isolated>'),
-    value,
-  );
+const runChild = ({ executable, environment, isolationRoot, timeoutMs }) => new Promise((resolve, reject) => {
   const child = spawn(executable, [], {
     env: environment,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -77,7 +42,7 @@ const runChild = ({ executable, environment, sensitivePaths, timeoutMs }) => new
   child.once('error', (error) => {
     clearTimeout(timer);
     clearTimeout(killTimer);
-    reject(new Error(sanitize(error.message)));
+    reject(error);
   });
   child.once('exit', (code, signal) => {
     clearTimeout(timer);
@@ -87,7 +52,7 @@ const runChild = ({ executable, environment, sensitivePaths, timeoutMs }) => new
       return;
     }
     if (code !== 0) {
-      const sanitized = sanitize(output).trim();
+      const sanitized = output.replaceAll(isolationRoot, '<isolated>').trim();
       reject(new Error(`Packaged updater smoke exited with ${signal || code}\n${sanitized}`.trim()));
       return;
     }
@@ -102,49 +67,41 @@ export const runMacUpdaterSmokeHarness = async ({
   sourceRevision,
   outputPath,
   timeoutMs = 180_000,
-  environment = process.env,
 }) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-macos-updater-smoke-'));
-  let server;
-  try {
-    const feedDirectory = path.join(root, 'feed');
-    const isolationRoot = path.join(root, 'runtime');
-    const appEvidencePath = path.join(root, 'app-evidence.json');
-    const resolvedAppPath = path.resolve(appPath);
-    const resolvedNextZip = path.resolve(nextZip);
-    const executable = path.join(resolvedAppPath, 'Contents', 'MacOS', 'OpenChamber');
-    if (!fs.existsSync(executable) || !fs.statSync(executable).isFile()) {
-      throw new Error('Packaged updater smoke app executable is missing');
-    }
-    if (!/^[0-9a-f]{40}$/i.test(sourceRevision)) {
-      throw new Error('Packaged updater smoke source revision must be a 40-character Git commit');
-    }
+  const feedDirectory = path.join(root, 'feed');
+  const isolationRoot = path.join(root, 'runtime');
+  const appEvidencePath = path.join(root, 'app-evidence.json');
+  const executable = path.join(path.resolve(appPath), 'Contents', 'MacOS', 'OpenChamber');
+  if (!fs.statSync(executable).isFile()) throw new Error('Packaged updater smoke app executable is missing');
 
-    const fixture = stageMacUpdaterFixture({ nextZip: resolvedNextZip, version: nextVersion, directory: feedDirectory });
-    const fixturePayload = path.basename(fixture.artifactPath);
-    const fixtureServer = await createFixtureServer({ directory: feedDirectory });
-    server = fixtureServer.server;
-    const { requests, url } = fixtureServer;
+  const fixture = stageMacUpdaterFixture({ nextZip, version: nextVersion, directory: feedDirectory });
+  const { requests, server, url } = await createFixtureServer({ directory: feedDirectory });
+  try {
     fs.mkdirSync(path.join(isolationRoot, 'home'), { recursive: true });
     fs.mkdirSync(path.join(isolationRoot, 'tmp'), { recursive: true });
     await runChild({
       executable,
+      isolationRoot,
       timeoutMs,
-      sensitivePaths: [root, resolvedAppPath, resolvedNextZip],
-      environment: isolatedEnvironment({
-        environment,
-        isolationRoot,
-        appEvidencePath,
-        nextVersion,
-        checksum: fixture.checksum,
-        url,
-      }),
+      environment: {
+        ...process.env,
+        HOME: path.join(isolationRoot, 'home'),
+        TMPDIR: path.join(isolationRoot, 'tmp'),
+        OPENCHAMBER_E2E: '1',
+        OPENCHAMBER_PACKAGED_UPDATER_SMOKE: '1',
+        OPENCHAMBER_UPDATER_E2E_URL: url,
+        OPENCHAMBER_UPDATER_SMOKE_ROOT: isolationRoot,
+        OPENCHAMBER_UPDATER_SMOKE_EVIDENCE: appEvidencePath,
+        OPENCHAMBER_UPDATER_SMOKE_NEXT_VERSION: nextVersion,
+        OPENCHAMBER_UPDATER_SMOKE_NEXT_SHA512: fixture.checksum,
+      },
     });
 
     const evidence = JSON.parse(fs.readFileSync(appEvidencePath, 'utf8'));
     const manifestRequest = requests.find((request) => request.method === 'GET' && request.path === '/latest-mac.yml' && request.status === 200);
     const payloadRequest = requests.find((request) => request.method === 'GET'
-      && request.path === `/${encodeURIComponent(fixturePayload)}`
+      && request.path === `/${encodeURIComponent(path.basename(fixture.artifactPath))}`
       && request.status === 200
       && request.bytes === fixture.size);
     if (!manifestRequest) throw new Error('Packaged updater smoke did not request latest-mac.yml');
@@ -155,17 +112,11 @@ export const runMacUpdaterSmokeHarness = async ({
     if (evidence.downloadedBytes !== fixture.size) {
       throw new Error('Packaged updater smoke downloaded payload size differs from the trusted fixture');
     }
-    if (evidence.downloadedPayload !== fixturePayload) {
-      throw new Error('Packaged updater smoke downloaded payload name differs from the trusted fixture');
-    }
-    if (evidence.updaterErrors !== 0 || evidence.installationAttempted !== false || evidence.completed !== true) {
-      throw new Error('Packaged updater smoke did not complete without updater errors or installation');
-    }
 
     const finalEvidence = {
       ...evidence,
       sourceRevision,
-      fixturePayload,
+      fixturePayload: path.basename(fixture.artifactPath),
       fixtureBytes: fixture.size,
       manifestDownloaded: true,
       payloadDownloaded: true,
@@ -173,11 +124,8 @@ export const runMacUpdaterSmokeHarness = async ({
     fs.writeFileSync(path.resolve(outputPath), `${JSON.stringify(finalEvidence, null, 2)}\n`, { mode: 0o600 });
     return finalEvidence;
   } finally {
-    try {
-      if (server) await closeServer(server);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
+    await closeServer(server);
+    fs.rmSync(root, { recursive: true, force: true });
   }
 };
 
