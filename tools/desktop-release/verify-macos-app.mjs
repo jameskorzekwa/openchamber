@@ -4,6 +4,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { readAndValidateJ2kAppUpdateConfig } from '../../packages/electron/updater-contract-validation.mjs';
 
 const fail = (message) => { throw new Error(message); };
@@ -80,8 +81,11 @@ const verifySignedApp = ({ appPath, certificateSha256 }) => {
   ]) if (!entitlements.includes(`<key>${key}</key>`)) fail(`Required entitlement is missing: ${key}`);
 };
 
-const main = () => {
-  const options = parseArgs(process.argv.slice(2));
+export const verifyMacosApp = (options, {
+  verifyArchitecture = architecture,
+  readPlistValue = plistValue,
+  verifySignature = verifySignedApp,
+} = {}) => {
   const appPath = resolve(required(options, 'app'));
   const dmgPath = resolve(required(options, 'dmg'));
   const version = required(options, 'version');
@@ -93,10 +97,10 @@ const main = () => {
   const contents = join(appPath, 'Contents');
   const resources = join(contents, 'Resources');
   const infoPlist = join(contents, 'Info.plist');
-  const executableName = plistValue(infoPlist, 'CFBundleExecutable');
-  if (plistValue(infoPlist, 'CFBundleShortVersionString') !== version) fail('App bundle version differs from the desktop release version');
-  if (!plistValue(infoPlist, 'CFBundleVersion')) fail('App bundle build version is missing');
-  architecture(join(contents, 'MacOS', executableName));
+  const executableName = readPlistValue(infoPlist, 'CFBundleExecutable');
+  if (readPlistValue(infoPlist, 'CFBundleShortVersionString') !== version) fail('App bundle version differs from the desktop release version');
+  if (!readPlistValue(infoPlist, 'CFBundleVersion')) fail('App bundle build version is missing');
+  verifyArchitecture(join(contents, 'MacOS', executableName));
 
   const revision = JSON.parse(readFileSync(join(resources, 'web-dist', 'build-revision.json'), 'utf8')).revision;
   if (revision !== sourceCommit) fail(`Bundled UI revision ${revision} differs from ${sourceCommit}`);
@@ -105,7 +109,7 @@ const main = () => {
   if (visit(join(resources, 'web-dist'), (path) => /\/assets\/.*\.js$/.test(path)).length === 0) fail('Bundled custom UI JavaScript assets are missing');
 
   const cli = join(resources, 'opencode-cli', 'opencode');
-  architecture(cli);
+  verifyArchitecture(cli);
   if (!skipCliExecution) {
     const cliVersion = run(cli, ['--version']).stdout.trim().split(/\s+/)[0];
     if (cliVersion !== opencodeVersion) fail(`Bundled OpenCode CLI version ${cliVersion} differs from ${opencodeVersion}`);
@@ -122,16 +126,16 @@ const main = () => {
     || bunPtyLibraries.length === 0) {
     fail('Packaged app is missing rebuilt node-pty, bun-pty, or arm64 sherpa-onnx payloads');
   }
-  for (const modulePath of [...nativeModules, ...bunPtyLibraries]) architecture(modulePath);
+  for (const modulePath of [...nativeModules, ...bunPtyLibraries]) verifyArchitecture(modulePath);
 
   // Verify app-update.yml is present and correctly configured for electron-updater
   const appUpdateConfig = verifyAppUpdateYml(resources, artifact);
 
-  if (!unsigned) verifySignedApp({
+  if (!unsigned) verifySignature({
     appPath,
     certificateSha256: required(options, 'certificate-sha256'),
   });
-  process.stdout.write(JSON.stringify({
+  return {
     app: basename(appPath),
     version,
     sourceCommit,
@@ -140,12 +144,15 @@ const main = () => {
     signed: !unsigned,
     artifact,
     updaterFeed: appUpdateConfig.provider,
-  }));
+  };
 };
 
-try {
-  main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : error);
-  process.exit(1);
+if (resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) {
+  try {
+    const evidence = verifyMacosApp(parseArgs(process.argv.slice(2)));
+    process.stdout.write(JSON.stringify(evidence));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  }
 }
