@@ -57,6 +57,7 @@ import { assertUpdaterCapability } from './updater-capability.mjs';
 import { checkForDesktopUpdate } from './updater-check.mjs';
 import { resolveUpdaterChannel } from './updater-channel.mjs';
 import { resolveUpdaterFeed, resolveUpdaterPrereleasePolicy } from './updater-feed.mjs';
+import { runPackagedUpdaterSmoke, shouldRunPackagedUpdaterSmoke } from './packaged-updater-smoke.mjs';
 import { compareSemver } from './semver.mjs';
 import {
   buildLinuxInstalledApps,
@@ -83,6 +84,13 @@ const execFileAsync = promisify(execFile);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const updaterE2eBuild = typeof __OPENCHAMBER_UPDATER_E2E_BUILD__ !== 'undefined'
+  && __OPENCHAMBER_UPDATER_E2E_BUILD__ === true;
+const packagedUpdaterSmokeRequested = shouldRunPackagedUpdaterSmoke({
+  app,
+  environment: process.env,
+  testBuild: updaterE2eBuild,
+});
 // This process runs quota/provider fetches under Node/undici, whose happy-eyeballs
 // default aborts each connect attempt after 250ms — distant provider endpoints
 // routinely need longer handshakes, surfacing as "fetch failed" (#3399). No-op on
@@ -164,7 +172,7 @@ try {
 }
 
 try {
-  if (!app.isDefaultProtocolClient(DEEP_LINK_PROTOCOL)) {
+  if (!packagedUpdaterSmokeRequested && !app.isDefaultProtocolClient(DEEP_LINK_PROTOCOL)) {
     app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL);
   }
 } catch (error) {
@@ -2908,9 +2916,7 @@ const setupAutoUpdater = () => {
   autoUpdater.disableWebInstaller = false;
   autoUpdater.logger = log;
 
-  const testBuild = typeof __OPENCHAMBER_UPDATER_E2E_BUILD__ !== 'undefined'
-    && __OPENCHAMBER_UPDATER_E2E_BUILD__ === true;
-  const feed = resolveUpdaterFeed({ testBuild, j2kBuild });
+  const feed = resolveUpdaterFeed({ testBuild: updaterE2eBuild, j2kBuild });
   const updaterChannel = feed.provider === 'github'
     ? resolveUpdaterChannel({ platform: process.platform, architecture: process.arch })
     : null;
@@ -5358,6 +5364,11 @@ app.on('activate', async () => {
 
 app.whenReady().then(async () => {
   if (wasEarlyWindowClosed()) return;
+  if (packagedUpdaterSmokeRequested) {
+    await runPackagedUpdaterSmoke({ app, autoUpdater });
+    app.exit(0);
+    return;
+  }
   const loginItemSettings = readLoginItemSettings();
   const isBackgroundStart = shouldStartInBackground(loginItemSettings);
   // The window goes up before anything else so the splash renders while the

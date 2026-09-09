@@ -205,7 +205,12 @@ jobs:
           node packages/electron/scripts/package.mjs --mac --arm64 --dir --publish=never \
             --config.mac.identity=null --config.mac.notarize=false
 
-      - name: Verify unsigned candidate identity
+      - name: Verify release candidate and build isolated updater smoke app
+        env:
+          OPENCHAMBER_BUILD_REVISION: ${{ needs.metadata.outputs.source_commit }}
+          OPENCHAMBER_J2K_DESKTOP_BUILD: '1'
+          OPENCHAMBER_TARGET_ARCH: arm64
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
           set -euo pipefail
           version='${{ needs.metadata.outputs.version }}'
@@ -230,15 +235,39 @@ jobs:
           node tools/desktop-release/verify-macos-app.mjs \
             --app "$app" --dmg "$RUNNER_TEMP/not-created.dmg" --version "$version" \
             --source-commit '${{ needs.metadata.outputs.source_commit }}' \
-            --opencode-version "$opencode_version" --unsigned true
+            --opencode-version "$opencode_version" --unsigned true \
+            --artifact-label 'unsigned release candidate'
           mkdir unsigned-candidate
-          ditto -c -k --sequesterRsrc --keepParent "$app" unsigned-candidate/OpenChamber.app.zip
+          ditto -c -k --sequesterRsrc --keepParent "$app" unsigned-candidate/Release.app.zip
+
+          revision='${{ needs.metadata.outputs.revision }}'
+          smoke_revision=$((revision - 1))
+          smoke_version='${{ needs.metadata.outputs.base_version }}-j2k.'$smoke_revision
+          SMOKE_VERSION="$smoke_version" node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const packagePath = 'packages/electron/package.json';
+          const value = JSON.parse(readFileSync(packagePath, 'utf8'));
+          value.version = process.env.SMOKE_VERSION;
+          writeFileSync(packagePath, `${JSON.stringify(value, null, 2)}\n`);
+          NODE
+          OPENCHAMBER_UPDATER_E2E_BUILD=1 bun run --cwd packages/electron bundle:main
+          rm -rf packages/electron/dist/mac packages/electron/dist/mac-arm64
+          node packages/electron/scripts/package.mjs --mac --arm64 --dir --publish=never \
+            --config.mac.identity=null --config.mac.notarize=false
+          smoke_app='packages/electron/dist/mac-arm64/OpenChamber.app'
+          [[ -d "$smoke_app" ]] || smoke_app='packages/electron/dist/mac/OpenChamber.app'
+          node tools/desktop-release/verify-macos-app.mjs \
+            --app "$smoke_app" --dmg "$RUNNER_TEMP/not-created.dmg" --version "$smoke_version" \
+            --source-commit '${{ needs.metadata.outputs.source_commit }}' \
+            --opencode-version "$opencode_version" --unsigned true \
+            --artifact-label 'unsigned packaged updater smoke app'
+          ditto -c -k --sequesterRsrc --keepParent "$smoke_app" unsigned-candidate/UpdaterSmoke.app.zip
 
       - name: Upload unsigned desktop candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: unsigned-desktop-${{ needs.metadata.outputs.source_commit }}
-          path: unsigned-candidate/OpenChamber.app.zip
+          path: unsigned-candidate/
           if-no-files-found: error
           retention-days: 1
 
@@ -277,10 +306,13 @@ jobs:
       - name: Extract and revalidate unsigned candidate
         run: |
           set -euo pipefail
-          mkdir prepackaged
-          ditto -x -k unsigned-candidate/OpenChamber.app.zip prepackaged
+          mkdir prepackaged smoke-prepackaged
+          ditto -x -k unsigned-candidate/Release.app.zip prepackaged
+          ditto -x -k unsigned-candidate/UpdaterSmoke.app.zip smoke-prepackaged
           app="$GITHUB_WORKSPACE/prepackaged/OpenChamber.app"
+          smoke_app="$GITHUB_WORKSPACE/smoke-prepackaged/OpenChamber.app"
           test -d "$app"
+          test -d "$smoke_app"
           # arm64 binaries carry a linker ad-hoc signature; only an identity
           # signature (an Authority line) means the candidate was signed early.
           signature="$(codesign -dvv "$app" 2>&1 || true)"
@@ -289,8 +321,17 @@ jobs:
             printf '%s\n' "$signature" >&2
             exit 1
           fi
+          smoke_signature="$(codesign -dvv "$smoke_app" 2>&1 || true)"
+          if grep -q '^Authority=' <<<"$smoke_signature"; then
+            echo 'Updater smoke app acquired an identity signature before the trusted signing job.' >&2
+            printf '%s\n' "$smoke_signature" >&2
+            exit 1
+          fi
           test "$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).revision' "$app/Contents/Resources/web-dist/build-revision.json")" = '${{ needs.metadata.outputs.source_commit }}'
           test "$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist")" = '${{ needs.metadata.outputs.version }}'
+          test "$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).revision' "$smoke_app/Contents/Resources/web-dist/build-revision.json")" = '${{ needs.metadata.outputs.source_commit }}'
+          smoke_revision=$(('${{ needs.metadata.outputs.revision }}' - 1))
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$smoke_app/Contents/Info.plist")" = '${{ needs.metadata.outputs.base_version }}-j2k.'$smoke_revision
 
       - name: Install pinned private signing certificate
         env:
@@ -336,6 +377,7 @@ jobs:
         working-directory: trusted
         env:
           APP_PATH: ${{ github.workspace }}/prepackaged/OpenChamber.app
+          SMOKE_APP_PATH: ${{ github.workspace }}/smoke-prepackaged/OpenChamber.app
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           set -euo pipefail
@@ -350,20 +392,22 @@ jobs:
           const appBuilderLib = createRequire(electronBuilder).resolve('app-builder-lib/package.json');
           const { signAsync } = createRequire(appBuilderLib)('@electron/osx-sign');
           const entitlements = resolve('packages/electron/resources/entitlements.mac.plist');
-          await signAsync({
-            app: process.env.APP_PATH,
-            platform: 'darwin',
-            identity: process.env.CSC_NAME,
-            keychain: process.env.CSC_KEYCHAIN,
-            // The private certificate is trusted for the codeSign policy only,
-            // so osx-sign's `security find-identity -v` (basic policy) lists
-            // nothing. The install step already proved the SHA-1 is present
-            // under `-p codesigning`; let codesign resolve it directly.
-            identityValidation: false,
-            preAutoEntitlements: false,
-            preEmbedProvisioningProfile: false,
-            optionsForFile: () => ({ entitlements, hardenedRuntime: true, timestamp: 'none' }),
-          });
+          for (const app of [process.env.APP_PATH, process.env.SMOKE_APP_PATH]) {
+            await signAsync({
+              app,
+              platform: 'darwin',
+              identity: process.env.CSC_NAME,
+              keychain: process.env.CSC_KEYCHAIN,
+              // The private certificate is trusted for the codeSign policy only,
+              // so osx-sign's `security find-identity -v` (basic policy) lists
+              // nothing. The install step already proved the SHA-1 is present
+              // under `-p codesigning`; let codesign resolve it directly.
+              identityValidation: false,
+              preAutoEntitlements: false,
+              preEmbedProvisioningProfile: false,
+              optionsForFile: () => ({ entitlements, hardenedRuntime: true, timestamp: 'none' }),
+            });
+          }
           NODE
           node --input-type=module <<'NODE'
           import { readFileSync, writeFileSync } from 'node:fs';
@@ -394,7 +438,7 @@ jobs:
             --source-commit '${{ needs.metadata.outputs.source_commit }}' \
             --opencode-version "$opencode_version" \
             --certificate-sha256 "$OPENCHAMBER_PRIVATE_CERTIFICATE_SHA256" \
-            --skip-cli-execution true
+            --skip-cli-execution true --artifact-label 'final signed app'
           zip="$dist/OpenChamber-$version-mac-arm64.zip"
           extracted="$RUNNER_TEMP/openchamber-desktop-zip"
           mkdir "$extracted"
@@ -404,7 +448,7 @@ jobs:
             --source-commit '${{ needs.metadata.outputs.source_commit }}' \
             --opencode-version "$opencode_version" \
             --certificate-sha256 "$OPENCHAMBER_PRIVATE_CERTIFICATE_SHA256" \
-            --skip-cli-execution true
+            --skip-cli-execution true --artifact-label 'final ZIP app'
           mounted="$RUNNER_TEMP/openchamber-desktop-dmg"
           mkdir "$mounted"
           trap 'hdiutil detach "$mounted" >/dev/null 2>&1 || true' EXIT
@@ -414,7 +458,7 @@ jobs:
             --source-commit '${{ needs.metadata.outputs.source_commit }}' \
             --opencode-version "$opencode_version" \
             --certificate-sha256 "$OPENCHAMBER_PRIVATE_CERTIFICATE_SHA256" \
-            --skip-cli-execution true
+            --skip-cli-execution true --artifact-label 'final DMG app'
           hdiutil detach "$mounted" >/dev/null
           trap - EXIT
           mkdir artifacts
@@ -426,6 +470,17 @@ jobs:
             --certificate-sha256 "$OPENCHAMBER_PRIVATE_CERTIFICATE_SHA256" \
             --release-date '${{ needs.metadata.outputs.release_date }}' \
             --dist-dir "$dist" --output-dir artifacts
+          smoke_revision=$(('${{ needs.metadata.outputs.revision }}' - 1))
+          smoke_version='${{ needs.metadata.outputs.base_version }}-j2k.'$smoke_revision
+          node trusted/tools/desktop-release/verify-macos-app.mjs \
+            --app smoke-prepackaged/OpenChamber.app --dmg "$RUNNER_TEMP/not-created.dmg" \
+            --version "$smoke_version" --source-commit '${{ needs.metadata.outputs.source_commit }}' \
+            --opencode-version "$opencode_version" \
+            --certificate-sha256 "$OPENCHAMBER_PRIVATE_CERTIFICATE_SHA256" \
+            --skip-cli-execution true --artifact-label 'signed packaged updater smoke app'
+          mkdir smoke-inputs
+          ditto -c -k --sequesterRsrc --keepParent smoke-prepackaged/OpenChamber.app smoke-inputs/UpdaterSmoke.app.zip
+          cp "$zip" artifacts/desktop-release.json smoke-inputs/
 
       - name: Upload immutable desktop release candidates
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -435,6 +490,14 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Upload isolated updater smoke inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-updater-smoke-${{ needs.metadata.outputs.source_commit }}
+          path: smoke-inputs/
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Remove temporary signing material
         if: always()
         run: |
@@ -442,3 +505,75 @@ jobs:
           rm -f "$RUNNER_TEMP/openchamber-desktop.p12"
           rm -f "$RUNNER_TEMP/openchamber-desktop.pem"
           security delete-keychain "$RUNNER_TEMP/openchamber-desktop.keychain-db" >/dev/null 2>&1
+
+  packaged-updater-smoke:
+    needs:
+      - metadata
+      - sign-and-verify
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out trusted updater smoke harness
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+
+      - name: Set up exact Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Bun 1.3.14
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install trusted frozen verifier dependencies
+        working-directory: trusted
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Download signed updater smoke inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: desktop-updater-smoke-${{ needs.metadata.outputs.source_commit }}
+          path: smoke-inputs
+
+      - name: Verify signed inputs and complete packaged discovery and download
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          mkdir current-app next-app evidence
+          ditto -x -k smoke-inputs/UpdaterSmoke.app.zip current-app
+          version='${{ needs.metadata.outputs.version }}'
+          zip="smoke-inputs/OpenChamber-$version-mac-arm64.zip"
+          ditto -x -k "$zip" next-app
+          certificate_sha256="$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).signature.certificateSha256' smoke-inputs/desktop-release.json)"
+          opencode_version="$(node -p 'require(`./trusted/package.json`).dependencies[`@opencode-ai/sdk`]')"
+          smoke_revision=$(('${{ needs.metadata.outputs.revision }}' - 1))
+          smoke_version='${{ needs.metadata.outputs.base_version }}-j2k.'$smoke_revision
+          node trusted/tools/desktop-release/verify-macos-app.mjs \
+            --app current-app/OpenChamber.app --dmg "$RUNNER_TEMP/not-created.dmg" \
+            --version "$smoke_version" --source-commit '${{ needs.metadata.outputs.source_commit }}' \
+            --opencode-version "$opencode_version" --certificate-sha256 "$certificate_sha256" \
+            --skip-cli-execution true --artifact-label 'smoke source app'
+          node trusted/tools/desktop-release/verify-macos-app.mjs \
+            --app next-app/OpenChamber.app --dmg "$RUNNER_TEMP/not-created.dmg" \
+            --version "$version" --source-commit '${{ needs.metadata.outputs.source_commit }}' \
+            --opencode-version "$opencode_version" --certificate-sha256 "$certificate_sha256" \
+            --skip-cli-execution true --artifact-label 'smoke downloaded ZIP app'
+          node trusted/packages/electron/scripts/run-packaged-macos-updater-smoke.mjs \
+            --app current-app/OpenChamber.app --next-zip "$zip" --next-version "$version" \
+            --source-revision '${{ needs.metadata.outputs.source_commit }}' \
+            --output evidence/packaged-updater-smoke.json
+
+      - name: Upload packaged updater smoke evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-updater-smoke-evidence-${{ needs.metadata.outputs.source_commit }}
+          path: evidence/packaged-updater-smoke.json
+          if-no-files-found: error
+          retention-days: 7
