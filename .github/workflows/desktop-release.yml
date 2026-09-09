@@ -506,7 +506,10 @@ jobs:
           set +e
           rm -f "$RUNNER_TEMP/openchamber-desktop.p12"
           rm -f "$RUNNER_TEMP/openchamber-desktop.pem"
-          security delete-keychain "$RUNNER_TEMP/openchamber-desktop.keychain-db" >/dev/null 2>&1 || true
+          keychain="$RUNNER_TEMP/openchamber-desktop.keychain-db"
+          if [[ -e "$keychain" ]]; then
+            security delete-keychain "$keychain" >/dev/null 2>&1
+          fi
 
   packaged-updater-smoke:
     needs:

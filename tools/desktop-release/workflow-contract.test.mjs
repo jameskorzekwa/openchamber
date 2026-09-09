@@ -33,7 +33,12 @@ test('private signing is fingerprint-pinned and never requests Apple notarizatio
   assert.doesNotMatch(desktopWorkflow, /APPLE_ID|APPLE_PASSWORD|APPLE_TEAM_ID|notarytool|stapler staple/);
   assert.match(macVerifier, /`--extract-certificates=\$\{prefix\}`/);
   assert.doesNotMatch(macVerifier, /'--extract-certificates', prefix/);
-  assert.match(desktopWorkflow, /security delete-keychain .*openchamber-desktop\.keychain-db.*\|\| true/);
+  const cleanup = desktopWorkflow.slice(
+    desktopWorkflow.indexOf('- name: Remove temporary signing material'),
+    desktopWorkflow.indexOf('  packaged-updater-smoke:'),
+  );
+  assert.match(cleanup, /if \[\[ -e "\$keychain" \]\]; then\n\s+security delete-keychain "\$keychain"/);
+  assert.doesNotMatch(cleanup, /security delete-keychain .*\|\|/);
 });
 
 test('candidate build has no write token and publisher runs trusted verifier only', () => {
