@@ -173,7 +173,7 @@ test('validates Linux x86-64 ELF identity without host tooling', () => {
   assert.throws(() => verifyNativeBinary(elf, linuxTarget, 'binding.node'), /not ELF x86-64/);
 });
 
-test('discovers and validates nested Linux native packages', async () => {
+test('discovers nested native packages and accepts valid node-pty build and prebuild bindings', async () => {
   const root = mkdtempSync(join(tmpdir(), 'channel-linux-native-test-'));
   const packageRoot = join(root, 'package');
   const archive = join(root, 'linux.tgz');
@@ -195,6 +195,8 @@ test('discovers and validates nested Linux native packages', async () => {
     writePackage(nodePty, { name: 'node-pty', version: '1.0.0' });
     mkdirSync(join(nodePty, 'prebuilds', 'linux-x64'), { recursive: true });
     writeFileSync(join(nodePty, 'prebuilds', 'linux-x64', 'pty.node'), elf);
+    mkdirSync(join(nodePty, 'build', 'Release'), { recursive: true });
+    writeFileSync(join(nodePty, 'build', 'Release', 'pty.node'), elf);
     const sherpa = join(packageRoot, 'node_modules', 'sherpa-onnx-node');
     writePackage(sherpa, { name: 'sherpa-onnx-node', version: '1.0.0', dependencies: { 'sherpa-onnx-linux-x64': '1.0.0' } });
     const native = join(sherpa, 'node_modules', 'sherpa-onnx-linux-x64');
@@ -203,6 +205,16 @@ test('discovers and validates nested Linux native packages', async () => {
     writeFileSync(join(native, 'libsherpa.so'), elf);
     await createRelocatableArchive(packageRoot, archive);
     assert.doesNotThrow(() => verifyRelocatableArchive(archive, { expectedVersion: version, sourceCommit, target: linuxTarget }));
+
+    const wrongArchitecture = Buffer.from(elf);
+    wrongArchitecture.writeUInt16LE(183, 18);
+    writeFileSync(join(nodePty, 'build', 'Release', 'pty.node'), wrongArchitecture);
+    rmSync(archive);
+    await createRelocatableArchive(packageRoot, archive);
+    assert.throws(
+      () => verifyRelocatableArchive(archive, { expectedVersion: version, sourceCommit, target: linuxTarget }),
+      /not ELF x86-64/,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
