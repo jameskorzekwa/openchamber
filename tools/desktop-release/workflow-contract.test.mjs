@@ -58,6 +58,24 @@ test('candidate build has no write token and publisher runs trusted verifier onl
   assert.doesNotMatch(signer, /require\(`\.\/node_modules\/electron\/package\.json`\)/);
 });
 
+test('publication waits for strict final-app verification and a real packaged updater download', () => {
+  const signer = desktopWorkflow.slice(
+    desktopWorkflow.indexOf('  sign-and-verify:'),
+    desktopWorkflow.indexOf('  packaged-updater-smoke:'),
+  );
+  const smoke = desktopWorkflow.slice(desktopWorkflow.indexOf('  packaged-updater-smoke:'));
+  assert.match(signer, /--artifact-label 'final signed app'/);
+  assert.match(signer, /--artifact-label 'final ZIP app'/);
+  assert.match(signer, /--artifact-label 'final DMG app'/);
+  assert.match(smoke, /needs:\n      - metadata\n      - sign-and-verify/);
+  assert.match(smoke, /permissions:\n      contents: read/);
+  assert.doesNotMatch(smoke, /environment: j2k-release|MACOS_PRIVATE_CERTIFICATE|contents: write/);
+  assert.match(smoke, /run-packaged-macos-updater-smoke\.mjs/);
+  assert.match(smoke, /--next-zip "\$zip" --next-version "\$version"/);
+  assert.match(smoke, /desktop-updater-smoke-evidence/);
+  assert.match(releaseWorkflow, /needs\.build-desktop\.result == 'success'/);
+});
+
 test('one publisher gates publication on both immutable artifact sets', () => {
   const publish = releaseWorkflow.slice(releaseWorkflow.indexOf('  publish:'));
   assert.match(releaseWorkflow, /needs\.build-desktop\.result == 'success'/);
