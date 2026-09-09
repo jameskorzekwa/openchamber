@@ -105,6 +105,7 @@ async function requestJson(port, endpoint, options = {}) {
   const fetchOptions = { ...options };
   delete fetchOptions.timeoutMs;
   delete fetchOptions.uiPassword;
+  delete fetchOptions.explicitUiPassword;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);

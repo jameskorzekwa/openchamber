@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import YAML from 'yaml';
 
 const release = readFileSync('.github/workflows/release.yml', 'utf8');
 const docsSource = readFileSync('.github/workflows/docs-source.yml', 'utf8');
@@ -31,8 +32,10 @@ test('release triggers from validated candidate branches and j2k/current without
 test('release publication is resumable and keeps candidate code outside the token step', () => {
   const publish = release.slice(release.indexOf('  publish:'));
   const tokenStep = publish.slice(publish.indexOf('GH_TOKEN:'));
+  const trustedStep = publish.slice(0, publish.indexOf('GH_TOKEN:'));
   assert.match(publish, /ref: \$\{\{ github\.workflow_sha \}\}/);
-  assert.match(publish, /node trusted\/tools\/channel-release\/channel-release\.mjs verify-release/);
+  assert.match(trustedStep, /node trusted\/tools\/channel-release\/channel-release\.mjs verify-release[\s\S]*--output-dir legacy-web-artifacts/);
+  assert.match(trustedStep, /node trusted\/tools\/channel-release\/channel-release\.mjs verify-bundle[\s\S]*--output-dir multi-web-artifacts/);
   assert.doesNotMatch(tokenStep, /tools\/channel-release/);
   assert.match(tokenStep, /-F draft=true/);
   assert.match(tokenStep, /cmp -s/);
@@ -55,11 +58,87 @@ test('release publication is resumable and keeps candidate code outside the toke
 
 test('release smoke uses the strict channel and stage-version has no misplaced channel option', () => {
   const stage = release.slice(release.indexOf('node tools/channel-release/channel-release.mjs stage-version'), release.indexOf('bun run build'));
-  const smokeStep = release.slice(release.indexOf('      - name: Create and verify release assets'), release.indexOf('      - name: Upload immutable release candidates'));
-  const smoke = release.slice(release.indexOf('node tools/channel-release/smoke-installed-package.mjs'), release.indexOf('      - name: Upload immutable release candidates'));
+  const smokeStep = release.slice(release.indexOf('      - name: Create and verify canonical stable release assets'), release.indexOf('      - name: Upload immutable canonical stable candidate'));
+  const smoke = release.slice(release.indexOf('node tools/channel-release/smoke-installed-package.mjs'), release.indexOf('      - name: Upload immutable canonical stable candidate'));
   assert.doesNotMatch(stage, /channel-repository/);
   assert.match(smoke, /--channel-repository "jameskorzekwa\/openchamber"/);
   assert.match(smokeStep, /OPENCHAMBER_UPDATE_GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
+});
+
+test('native candidate jobs build and smoke exact Node 22 ABI 127 targets without write credentials', () => {
+  const jobs = YAML.parse(release).jobs;
+  const darwin = JSON.stringify(jobs['validate-release']);
+  const linux = JSON.stringify(jobs['validate-release-linux']);
+  const assembly = JSON.stringify(jobs['assemble-web-bundle']);
+  assert.equal(jobs['validate-release']['runs-on'], 'macos-15');
+  assert.equal(jobs['validate-release-linux']['runs-on'], 'ubuntu-latest');
+  assert.deepEqual(jobs['validate-release'].permissions, { contents: 'read' });
+  assert.deepEqual(jobs['validate-release-linux'].permissions, { contents: 'read' });
+  assert.deepEqual(jobs['assemble-web-bundle'].permissions, { contents: 'read' });
+  for (const candidate of [darwin, linux, assembly]) {
+    assert.doesNotMatch(candidate, /contents:write|GH_TOKEN|--clobber/);
+  }
+  assert.match(darwin, /process\.platform.*darwin/);
+  assert.match(darwin, /process\.arch.*arm64/);
+  assert.match(darwin, /process\.versions\.modules.*127/);
+  assert.match(darwin, /xcrun --find clang/);
+  assert.match(darwin, /bun install --frozen-lockfile/);
+  assert.match(darwin, /pack-package[\s\S]*--archive-name[\s\S]*darwin-arm64-abi127/);
+  assert.equal((darwin.match(/smoke-installed-package\.mjs/g) ?? []).length, 2);
+  assert.match(linux, /process\.platform.*linux/);
+  assert.match(linux, /process\.arch.*x64/);
+  assert.match(linux, /process\.versions\.modules.*127/);
+  assert.match(linux, /command -v gcc/);
+  assert.match(linux, /command -v g\+\+/);
+  assert.match(linux, /bun install --frozen-lockfile/);
+  assert.match(linux, /pack-package[\s\S]*--archive-name[\s\S]*linux-x64-abi127/);
+  assert.equal((linux.match(/smoke-installed-package\.mjs/g) ?? []).length, 1);
+  assert.match(assembly, /assemble-bundle/);
+  assert.match(assembly, /channel-release-target-.*darwin-arm64-abi127/);
+  assert.match(assembly, /channel-release-target-.*linux-x64-abi127/);
+});
+
+test('validation pins its native Linux target and exercises installed native dependencies', () => {
+  const job = YAML.parse(validate).jobs.validate;
+  const source = JSON.stringify(job);
+  assert.equal(job['runs-on'], 'ubuntu-latest');
+  assert.match(source, /process\.platform.*linux/);
+  assert.match(source, /process\.arch.*x64/);
+  assert.match(source, /process\.versions\.modules.*127/);
+  assert.match(source, /smoke-installed-package\.mjs/);
+  assert.match(source, /--platform.*TARGET_PLATFORM/);
+  assert.match(source, /--arch.*TARGET_ARCH/);
+  assert.match(source, /--node-abi.*TARGET_NODE_ABI/);
+});
+
+test('companion release is immutable schema 2 while canonical stable stays exact schema 1', () => {
+  const publish = release.slice(release.indexOf('  publish:'));
+  assert.match(release, /web_release_tag="web-\$release_tag"/);
+  assert.match(release, /git tag --list "web-v\$base_version-j2k\.\*"/);
+  assert.match(release, /refs\+=\("refs\/tags\/\$WEB_RELEASE_TAG:refs\/tags\/\$WEB_RELEASE_TAG"\)/);
+  assert.match(publish, /-f tag_name="\$WEB_RELEASE_TAG"[\s\S]*-F draft=true -F prerelease=true -f make_latest=false/);
+  assert.match(publish, /`openchamber-web-\$\{process\.env\.VERSION\}-darwin-arm64-abi127\.tgz`/);
+  assert.match(publish, /`openchamber-web-\$\{process\.env\.VERSION\}-linux-x64-abi127\.tgz`/);
+  assert.match(publish, /Multi-target web release inventory differs/);
+  assert.match(publish, /Existing multi-target web asset \$asset differs; refusing overwrite/);
+  assert.match(publish, /Uploaded multi-target web asset \$asset differs from validated bytes/);
+  assert.match(publish, /const expected = new Set\(\[`openchamber-web-\$\{process\.env\.VERSION\}\.tgz`, 'SHA256SUMS', 'channel\.json'\]\)/);
+  assert.match(publish, /-f tag_name="\$RELEASE_TAG"[\s\S]*-F draft=true -F prerelease=false -f make_latest=true/);
+  assert.doesNotMatch(publish, /gh release upload "\$RELEASE_TAG" "multi-web-artifacts/);
+});
+
+test('multi-target and desktop releases publish before the canonical stable release', () => {
+  const publish = release.slice(release.indexOf('  publish:'));
+  const multi = publish.indexOf('-F draft=false -F prerelease=true -f make_latest=false');
+  const desktop = publish.indexOf('-F draft=false -F prerelease=true -f make_latest=false', multi + 1);
+  const stable = publish.indexOf('-F draft=false -F prerelease=false -f make_latest=true');
+  assert.ok(multi >= 0 && desktop > multi && stable > desktop);
+  assert.ok(publish.indexOf('Published multi-target web release identity differs') < stable);
+  assert.ok(publish.indexOf('Published desktop release identity differs') < stable);
+  assert.ok(publish.indexOf('refs/heads/desktop-channel:refs/heads/desktop-channel') < stable);
+  assert.match(publish, /needs\.validate-release-linux\.result == 'success'/);
+  assert.match(publish, /needs\.assemble-web-bundle\.result == 'success'/);
+  assert.match(publish, /needs\.build-desktop\.result == 'success'/);
 });
 
 test('docs source cannot append assets to validated j2k channel releases', () => {
@@ -84,6 +163,7 @@ test('publication leases source ref atomically with j2k/current in a single push
   assert.match(publish, /source_refspec="refs\/remotes\/origin\/source:refs\/heads\/\$SOURCE_REF"/);
   assert.match(publish, /push_options=\(--atomic "--force-with-lease=refs\/heads\/\$SOURCE_REF:\$SOURCE_COMMIT"\)/);
   assert.match(publish, /push_options\+=\("--force-with-lease=refs\/heads\/j2k\/current:/);
+  assert.match(publish, /refs\+=\("refs\/tags\/\$WEB_RELEASE_TAG:refs\/tags\/\$WEB_RELEASE_TAG"\)/);
   assert.match(publish, /git -C "\$repo" push "\$\{push_options\[@\]\}" origin "\$\{refs\[@\]\}"/);
 });
 

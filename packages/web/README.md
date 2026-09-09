@@ -264,6 +264,200 @@ new update until its leased helper verifies readiness and completes UUID-fenced
 cleanup. Cancellation restores exact process-manager configuration before the
 journal is removed.
 
+The install instructions at the top of this README describe public upstream
+OpenChamber. The validated J2K channel is fork-specific and does not change
+public upstream package-manager behavior.
+
+The J2K web channel supports Darwin arm64 and Ubuntu x86_64 on Node 22 with
+modules ABI 127. Canonical stable `vVERSION` remains the exact three-asset
+schema 1 Darwin release. New consumers resolve that identity first, then select
+the exact target from schema 2 prerelease `web-vVERSION`. It contains the Darwin
+arm64 and Linux x64 archives plus `SHA256SUMS` and `channel.json`. Missing,
+duplicate, ambiguous, malformed, or wrong-target entries stop before download.
+Only exact Darwin arm64 ABI 127 may fall back to schema 1 when the companion is
+absent.
+
+### New J2K installation on headless Ubuntu x86_64
+
+This is supported only on Ubuntu x86_64. It is new-install-only and fails when
+`~/.local/share/openchamber/current` exists, including as a broken symlink. It
+uses public GitHub APIs without a token and does not read or start production
+OpenChamber auth or state. Install Node 22 with modules ABI 127, `curl`, `jq`,
+`git`, `tar`, `sha256sum`, and a working systemd user service first. Bun and
+npm are not runtime requirements.
+
+Run this exact bootstrap as the service user:
+
+```bash
+set -euo pipefail
+umask 077
+REPOSITORY='jameskorzekwa/openchamber'
+UPSTREAM_REPOSITORY='openchamber/openchamber'
+INSTALL_ROOT="$HOME/.local/share/openchamber"
+CURRENT="$INSTALL_ROOT/current"
+RELEASES="$INSTALL_ROOT/releases"
+
+. /etc/os-release
+test "$ID" = 'ubuntu'
+test "$(uname -m)" = 'x86_64'
+test "$(node -p 'process.versions.node.split(".")[0]')" = '22'
+test "$(node -p 'process.platform')" = 'linux'
+test "$(node -p 'process.arch')" = 'x64'
+test "$(node -p 'process.versions.modules')" = '127'
+for command in curl jq git tar sha256sum systemctl; do command -v "$command" >/dev/null; done
+systemctl --user show-environment >/dev/null
+test ! -e "$CURRENT" && test ! -L "$CURRENT"
+
+WORK="$(mktemp -d)"
+STAGING=''
+trap 'rm -rf "$WORK"; if [ -n "$STAGING" ]; then rm -rf "$STAGING"; fi' EXIT
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+  "https://api.github.com/repos/$REPOSITORY/releases/latest" \
+  --output "$WORK/stable-release.json"
+STABLE_TAG="$(jq -er '.tag_name | select(test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)-j2k\\.[1-9][0-9]*$"))' "$WORK/stable-release.json")"
+VERSION="${STABLE_TAG#v}"
+LEGACY_ARCHIVE="openchamber-web-$VERSION.tgz"
+jq -e --arg tag "$STABLE_TAG" --arg archive "$LEGACY_ARCHIVE" '
+  .draft == false and .prerelease == false and .tag_name == $tag and
+  (.target_commitish | test("^[0-9a-f]{40}$")) and (.assets | length == 3) and
+  ([.assets[].name] | sort == ([$archive, "SHA256SUMS", "channel.json"] | sort)) and
+  ([.assets[] | select(.name == "channel.json")] | length == 1)
+' "$WORK/stable-release.json" >/dev/null
+STABLE_CHANNEL_URL="$(jq -er '.assets[] | select(.name == "channel.json") | .browser_download_url' "$WORK/stable-release.json")"
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+  "$STABLE_CHANNEL_URL" --output "$WORK/stable-channel.json"
+jq -e --arg tag "$STABLE_TAG" --arg version "$VERSION" --arg archive "$LEGACY_ARCHIVE" '
+  (keys | sort) == (["schema","baseVersion","channelRevision","version","releaseTag","tarball","checksumAsset","manifestAsset","assets","sha256","upstreamTag","seriesHead","sourceCommit","minNode","platform","arch","nodeAbi"] | sort) and
+  .schema == 1 and .releaseTag == $tag and .version == $version and
+  (.channelRevision | type == "number" and . > 0 and floor == .) and
+  .version == (.baseVersion + "-j2k." + (.channelRevision | tostring)) and
+  .upstreamTag == ("v" + .baseVersion) and .tarball == $archive and
+  .assets == [$archive, "SHA256SUMS", "channel.json"] and
+  .platform == "darwin" and .arch == "arm64" and .nodeAbi == "127" and
+  .minNode == "22" and .seriesHead == .sourceCommit and
+  (.sourceCommit | test("^[0-9a-f]{40}$"))
+' "$WORK/stable-channel.json" >/dev/null
+
+BASE_VERSION="$(jq -er '.baseVersion' "$WORK/stable-channel.json")"
+REVISION="$(jq -er '.channelRevision | tostring' "$WORK/stable-channel.json")"
+UPSTREAM_TAG="$(jq -er '.upstreamTag' "$WORK/stable-channel.json")"
+SOURCE_COMMIT="$(jq -er '.sourceCommit' "$WORK/stable-channel.json")"
+COMPANION_TAG="web-$STABLE_TAG"
+test "$(jq -er '.target_commitish' "$WORK/stable-release.json")" = "$SOURCE_COMMIT"
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+  "https://api.github.com/repos/$REPOSITORY/commits/$STABLE_TAG" \
+  --output "$WORK/stable-commit.json"
+test "$(jq -er '.sha' "$WORK/stable-commit.json")" = "$SOURCE_COMMIT"
+
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+  "https://api.github.com/repos/$UPSTREAM_REPOSITORY/commits/$UPSTREAM_TAG" \
+  --output "$WORK/upstream-commit.json"
+UPSTREAM_COMMIT="$(jq -er '.sha | select(test("^[0-9a-f]{40}$"))' "$WORK/upstream-commit.json")"
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+  "https://api.github.com/repos/$REPOSITORY/compare/$UPSTREAM_COMMIT...$SOURCE_COMMIT?per_page=1&page=2" \
+  --output "$WORK/upstream-compare.json"
+jq -e --arg upstream "$UPSTREAM_COMMIT" --arg source "$SOURCE_COMMIT" '
+  (.status == "ahead" or .status == "identical") and
+  .merge_base_commit.sha == $upstream and
+  (.status != "identical" or $upstream == $source)
+' "$WORK/upstream-compare.json" >/dev/null
+
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+  "https://api.github.com/repos/$REPOSITORY/releases/tags/$COMPANION_TAG" \
+  --output "$WORK/companion-release.json"
+DARWIN_ARCHIVE="openchamber-web-$VERSION-darwin-arm64-abi127.tgz"
+LINUX_ARCHIVE="openchamber-web-$VERSION-linux-x64-abi127.tgz"
+jq -e --arg tag "$COMPANION_TAG" --arg source "$SOURCE_COMMIT" --arg darwin "$DARWIN_ARCHIVE" --arg linux "$LINUX_ARCHIVE" '
+  .draft == false and .prerelease == true and .tag_name == $tag and
+  .target_commitish == $source and (.assets | length == 4) and
+  ([.assets[].name] | sort == ([$darwin, $linux, "SHA256SUMS", "channel.json"] | sort)) and
+  ([.assets[].name] | unique | length == 4)
+' "$WORK/companion-release.json" >/dev/null
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+  "https://api.github.com/repos/$REPOSITORY/commits/$COMPANION_TAG" \
+  --output "$WORK/companion-commit.json"
+test "$(jq -er '.sha' "$WORK/companion-commit.json")" = "$SOURCE_COMMIT"
+
+mkdir "$WORK/bundle"
+for asset in "$DARWIN_ARCHIVE" "$LINUX_ARCHIVE" SHA256SUMS channel.json; do
+  url="$(jq -er --arg asset "$asset" '[.assets[] | select(.name == $asset)] | select(length == 1) | .[0].browser_download_url' "$WORK/companion-release.json")"
+  curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+    "$url" --output "$WORK/bundle/$asset"
+done
+git clone --filter=blob:none --no-checkout \
+  "https://github.com/$REPOSITORY.git" "$WORK/source"
+git -C "$WORK/source" fetch --depth=1 origin "$SOURCE_COMMIT"
+git -C "$WORK/source" checkout --detach "$SOURCE_COMMIT"
+test "$(git -C "$WORK/source" rev-parse HEAD)" = "$SOURCE_COMMIT"
+node "$WORK/source/tools/channel-release/channel-release.mjs" verify-bundle \
+  --base-version "$BASE_VERSION" --revision "$REVISION" \
+  --upstream-tag "$UPSTREAM_TAG" --source-commit "$SOURCE_COMMIT" \
+  --output-dir "$WORK/bundle"
+
+mkdir -p "$RELEASES"
+RELEASE_DIRECTORY="$RELEASES/$VERSION-${SOURCE_COMMIT:0:12}"
+test ! -e "$RELEASE_DIRECTORY"
+STAGING="$(mktemp -d "$RELEASES/.bootstrap.XXXXXX")"
+tar -xzf "$WORK/bundle/$LINUX_ARCHIVE" -C "$STAGING"
+test -f "$STAGING/package/bin/cli.js"
+mv "$STAGING/package" "$RELEASE_DIRECTORY"
+rmdir "$STAGING"
+STAGING=''
+test ! -e "$CURRENT" && test ! -L "$CURRENT"
+ln -s "releases/$(basename "$RELEASE_DIRECTORY")" "$CURRENT"
+```
+
+Before any release source executes, the bootstrap independently resolves the
+public upstream tag and requires GitHub's comparison to prove that
+`sourceCommit` descends from it. The standard-library-only verifier then comes
+from that exact checked-out commit and runs before extraction. The final
+`ln -s` atomically creates `current` and fails instead of replacing an
+installation that appeared during bootstrap. The release directory contains
+version and source-commit identity.
+
+Enable the extracted CLI on port 3000:
+
+```bash
+OPENCHAMBER_UI_PASSWORD='replace-with-a-strong-password' \
+  node "$HOME/.local/share/openchamber/current/bin/cli.js" startup enable --port 3000
+```
+
+For separately managed OpenCode, persist its URL and skip embedded startup:
+
+```bash
+OPENCODE_HOST='http://127.0.0.1:4096' \
+OPENCODE_SKIP_START=true \
+OPENCHAMBER_UI_PASSWORD='replace-with-a-strong-password' \
+  node "$HOME/.local/share/openchamber/current/bin/cli.js" startup enable --port 3000
+```
+
+`startup enable` writes a systemd user service that runs the stable managed
+launcher in the foreground with `Restart=always`. It snapshots these variables
+into a mode-0600 environment file. The external OpenCode service needs its own
+restart policy. Use `sudo loginctl enable-linger "$USER"` when this user service
+must run while logged out. That host administration step is not part of the
+unprivileged bootstrap.
+
+Later updates use exactly:
+
+```bash
+openchamber update --port 3000
+```
+
+If `openchamber` is not on `PATH`, use `node
+"$HOME/.local/share/openchamber/current/bin/cli.js" update --port 3000`.
+The command authenticates to the running local validated server and returns
+once its install request is accepted. Systemd then handles restart, exact-build
+attestation, and rollback. On failure, the helper atomically restores `current`
+to verified `previous` and restarts. Completed release and rollback archive
+directories are retained without automatic pruning. Temporary downloads and
+staging paths are removed. Failed verification, download, extraction, service
+migration, restart, attestation, or rollback reports `failed` or `rollback`; a
+surviving journal blocks another update until recovery completes.
+
+This is the compatibility design under implementation. It does not claim a
+deployment or bee2 activation.
+
 ## License
 
 MIT

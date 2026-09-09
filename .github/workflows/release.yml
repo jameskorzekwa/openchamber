@@ -48,6 +48,7 @@ jobs:
       revision: ${{ steps.identity.outputs.revision }}
       version: ${{ steps.identity.outputs.version }}
       release_tag: ${{ steps.identity.outputs.release_tag }}
+      web_release_tag: ${{ steps.identity.outputs.web_release_tag }}
       desktop_release_tag: ${{ steps.identity.outputs.desktop_release_tag }}
       desktop_channel_commit: ${{ steps.identity.outputs.desktop_channel_commit }}
       release_date: ${{ steps.identity.outputs.release_date }}
@@ -186,12 +187,35 @@ jobs:
             fi
           done < <(git tag --list "desktop-v$base_version-j2k.*")
 
-          if [[ -n "$matching_tag" || -n "$desktop_matching_tag" ]]; then
+          web_matching_tag=''
+          while IFS= read -r tag; do
+            if [[ "$tag" =~ ^web-v([0-9]+\.[0-9]+\.[0-9]+)-j2k\.([0-9]+)$ ]] \
+              && [[ "${BASH_REMATCH[1]}" == "$base_version" ]]; then
+              tag_revision="${BASH_REMATCH[2]}"
+              (( tag_revision > highest_revision )) && highest_revision="$tag_revision"
+              if [[ "$(git rev-list -n 1 "$tag")" == "$source_commit" ]]; then
+                if [[ -n "$web_matching_tag" ]]; then
+                  echo "Multiple multi-target web tags point to source commit $source_commit." >&2
+                  exit 1
+                fi
+                web_matching_tag="$tag"
+              fi
+            fi
+          done < <(git tag --list "web-v$base_version-j2k.*")
+
+          if [[ -n "$matching_tag" || -n "$web_matching_tag" || -n "$desktop_matching_tag" ]]; then
             web_revision="${matching_tag##*.}"
+            multi_web_revision="${web_matching_tag##*.}"
             desktop_revision="${desktop_matching_tag##*.}"
-            revision="${web_revision:-$desktop_revision}"
-            if [[ -n "$web_revision" && -n "$desktop_revision" && "$web_revision" != "$desktop_revision" ]]; then
-              echo "Web and desktop tags assign different revisions to source $source_commit." >&2
+            revision="${web_revision:-${multi_web_revision:-$desktop_revision}}"
+            for assigned_revision in "$web_revision" "$multi_web_revision" "$desktop_revision"; do
+              if [[ -n "$assigned_revision" && "$assigned_revision" != "$revision" ]]; then
+                echo "Web, multi-target web, and desktop tags assign different revisions to source $source_commit." >&2
+                exit 1
+              fi
+            done
+            if [[ -n "$web_matching_tag" && "$web_matching_tag" != "web-v$base_version-j2k.$revision" ]]; then
+              echo "Multi-target web tag identity differs for source $source_commit." >&2
               exit 1
             fi
             release_tag="v$base_version-j2k.$revision"
@@ -206,6 +230,7 @@ jobs:
             fi
           fi
           version="${release_tag#v}"
+          web_release_tag="web-$release_tag"
           desktop_release_tag="desktop-$release_tag"
           desktop_channel_commit="$(git ls-remote origin refs/heads/desktop-channel | cut -f1)"
           release_date="$(git show -s --format=%cI "$source_commit")"
@@ -220,7 +245,7 @@ jobs:
             done < <(git tag --list 'v*' --sort=-v:refname)
             test -n "$current_upstream_tag"
             CURRENT_BASE="${current_upstream_tag#v}" TARGET_BASE="$base_version" \
-              CURRENT_COMMIT="$expected_j2k" TARGET_REVISION="$revision" TAGS="$(git tag --points-at "$expected_j2k" --list 'v*-j2k.*' 'desktop-v*-j2k.*')" node <<'NODE'
+              CURRENT_COMMIT="$expected_j2k" TARGET_REVISION="$revision" TAGS="$(git tag --points-at "$expected_j2k" --list 'v*-j2k.*' 'web-v*-j2k.*' 'desktop-v*-j2k.*')" node <<'NODE'
             const parseBase = (value) => value.split('.').map(Number);
             const compare = (left, right) => {
               const a = parseBase(left);
@@ -256,6 +281,7 @@ jobs:
             printf 'revision=%s\n' "$revision"
             printf 'version=%s\n' "$version"
             printf 'release_tag=%s\n' "$release_tag"
+            printf 'web_release_tag=%s\n' "$web_release_tag"
             printf 'desktop_release_tag=%s\n' "$desktop_release_tag"
             printf 'desktop_channel_commit=%s\n' "$desktop_channel_commit"
             printf 'release_date=%s\n' "$release_date"
@@ -275,6 +301,8 @@ jobs:
     needs: metadata
     runs-on: macos-15
     timeout-minutes: 60
+    permissions:
+      contents: read
     outputs:
       platform: ${{ steps.target.outputs.platform }}
       arch: ${{ steps.target.outputs.arch }}
@@ -305,7 +333,7 @@ jobs:
           node_abi="$(node -p 'process.versions.modules')"
           test "$platform" = 'darwin'
           test "$arch" = 'arm64'
-          test -n "$node_abi"
+          test "$node_abi" = '127'
           {
             printf 'platform=%s\n' "$platform"
             printf 'arch=%s\n' "$arch"
@@ -317,13 +345,18 @@ jobs:
             printf 'TARGET_NODE_ABI=%s\n' "$node_abi"
           } >> "$GITHUB_ENV"
 
-      - name: Pin npm and install locked dependencies
+      - name: Install exact native production closure
         run: |
           set -euo pipefail
           test "$(uname -m)" = 'arm64'
           test "$(bun --version)" = '1.3.14'
           test "$(node --version)" = "v$NODE_VERSION"
           test "$(node -p 'process.arch')" = 'arm64'
+          test "$(node -p 'process.platform')" = 'darwin'
+          test "$(node -p 'process.versions.modules')" = '127'
+          xcrun --find clang >/dev/null
+          command -v make >/dev/null
+          command -v python3 >/dev/null
           npm install --global "npm@$NPM_VERSION"
           test "$(npm --version)" = "$NPM_VERSION"
           test "$(node -p 'require(`./package.json`).packageManager')" = 'bun@1.3.14'
@@ -349,12 +382,12 @@ jobs:
             --node-abi "$TARGET_NODE_ABI"
           bun run build
 
-      - name: Create and verify release assets
+      - name: Create and verify canonical stable release assets
         env:
           OPENCHAMBER_UPDATE_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir artifacts
+          mkdir legacy-artifacts
           node tools/channel-release/channel-release.mjs pack \
             --base-version "${{ needs.metadata.outputs.base_version }}" \
             --revision "${{ needs.metadata.outputs.revision }}" \
@@ -363,9 +396,9 @@ jobs:
             --platform "$TARGET_PLATFORM" \
             --arch "$TARGET_ARCH" \
             --node-abi "$TARGET_NODE_ABI" \
-            --output-dir artifacts
+            --output-dir legacy-artifacts
           node tools/channel-release/smoke-installed-package.mjs \
-            --tarball "artifacts/openchamber-web-${{ needs.metadata.outputs.version }}.tgz" \
+            --tarball "legacy-artifacts/openchamber-web-${{ needs.metadata.outputs.version }}.tgz" \
             --version "${{ needs.metadata.outputs.version }}" \
             --source-commit "${{ needs.metadata.outputs.source_commit }}" \
             --platform "$TARGET_PLATFORM" \
@@ -373,11 +406,195 @@ jobs:
             --node-abi "$TARGET_NODE_ABI" \
             --channel-repository "jameskorzekwa/openchamber"
 
-      - name: Upload immutable release candidates
+      - name: Package and smoke Darwin arm64 companion artifact
+        run: |
+          set -euo pipefail
+          mkdir darwin-target-artifact
+          archive="openchamber-web-${{ needs.metadata.outputs.version }}-darwin-arm64-abi127.tgz"
+          node tools/channel-release/channel-release.mjs pack-package \
+            --version "${{ needs.metadata.outputs.version }}" \
+            --source-commit "${{ needs.metadata.outputs.source_commit }}" \
+            --platform "$TARGET_PLATFORM" \
+            --arch "$TARGET_ARCH" \
+            --node-abi "$TARGET_NODE_ABI" \
+            --archive-name "$archive" \
+            --output-dir darwin-target-artifact
+          node tools/channel-release/smoke-installed-package.mjs \
+            --tarball "darwin-target-artifact/$archive" \
+            --version "${{ needs.metadata.outputs.version }}" \
+            --source-commit "${{ needs.metadata.outputs.source_commit }}" \
+            --platform "$TARGET_PLATFORM" \
+            --arch "$TARGET_ARCH" \
+            --node-abi "$TARGET_NODE_ABI"
+
+      - name: Upload immutable canonical stable candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: channel-release-${{ needs.metadata.outputs.release_tag }}
-          path: artifacts/
+          name: channel-release-legacy-${{ needs.metadata.outputs.release_tag }}-darwin-arm64-abi127
+          path: legacy-artifacts/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload immutable Darwin arm64 companion candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: channel-release-target-${{ needs.metadata.outputs.release_tag }}-darwin-arm64-abi127
+          path: darwin-target-artifact/
+          if-no-files-found: error
+          retention-days: 7
+
+  validate-release-linux:
+    needs: metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      platform: ${{ steps.target.outputs.platform }}
+      arch: ${{ steps.target.outputs.arch }}
+      node_abi: ${{ steps.target.outputs.node_abi }}
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact validated commit
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ needs.metadata.outputs.source_commit }}
+          persist-credentials: false
+
+      - name: Set up Bun 1.3.14
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
+      - name: Set up exact Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Capture exact Linux x64 production target
+        id: target
+        run: |
+          set -euo pipefail
+          platform="$(node -p 'process.platform')"
+          arch="$(node -p 'process.arch')"
+          node_abi="$(node -p 'process.versions.modules')"
+          test "$platform" = 'linux'
+          test "$arch" = 'x64'
+          test "$node_abi" = '127'
+          test "$(uname -m)" = 'x86_64'
+          command -v gcc >/dev/null
+          command -v g++ >/dev/null
+          command -v make >/dev/null
+          command -v python3 >/dev/null
+          {
+            printf 'platform=%s\n' "$platform"
+            printf 'arch=%s\n' "$arch"
+            printf 'node_abi=%s\n' "$node_abi"
+          } >> "$GITHUB_OUTPUT"
+          {
+            printf 'TARGET_PLATFORM=%s\n' "$platform"
+            printf 'TARGET_ARCH=%s\n' "$arch"
+            printf 'TARGET_NODE_ABI=%s\n' "$node_abi"
+          } >> "$GITHUB_ENV"
+
+      - name: Install exact native production closure
+        run: |
+          set -euo pipefail
+          test "$(bun --version)" = '1.3.14'
+          test "$(node --version)" = "v$NODE_VERSION"
+          npm install --global "npm@$NPM_VERSION"
+          test "$(npm --version)" = "$NPM_VERSION"
+          test "$(node -p 'require(`./package.json`).packageManager')" = 'bun@1.3.14'
+          bun install --frozen-lockfile
+
+      - name: Stage exact channel version and build
+        run: |
+          set -euo pipefail
+          node tools/channel-release/channel-release.mjs stage-version \
+            --base-version "${{ needs.metadata.outputs.base_version }}" \
+            --revision "${{ needs.metadata.outputs.revision }}" \
+            --upstream-tag "${{ needs.metadata.outputs.upstream_tag }}" \
+            --source-commit "${{ needs.metadata.outputs.source_commit }}" \
+            --platform "$TARGET_PLATFORM" \
+            --arch "$TARGET_ARCH" \
+            --node-abi "$TARGET_NODE_ABI"
+          bun run build
+
+      - name: Package and smoke Linux x64 companion artifact
+        run: |
+          set -euo pipefail
+          mkdir linux-target-artifact
+          archive="openchamber-web-${{ needs.metadata.outputs.version }}-linux-x64-abi127.tgz"
+          node tools/channel-release/channel-release.mjs pack-package \
+            --version "${{ needs.metadata.outputs.version }}" \
+            --source-commit "${{ needs.metadata.outputs.source_commit }}" \
+            --platform "$TARGET_PLATFORM" \
+            --arch "$TARGET_ARCH" \
+            --node-abi "$TARGET_NODE_ABI" \
+            --archive-name "$archive" \
+            --output-dir linux-target-artifact
+          node tools/channel-release/smoke-installed-package.mjs \
+            --tarball "linux-target-artifact/$archive" \
+            --version "${{ needs.metadata.outputs.version }}" \
+            --source-commit "${{ needs.metadata.outputs.source_commit }}" \
+            --platform "$TARGET_PLATFORM" \
+            --arch "$TARGET_ARCH" \
+            --node-abi "$TARGET_NODE_ABI"
+
+      - name: Upload immutable Linux x64 companion candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: channel-release-target-${{ needs.metadata.outputs.release_tag }}-linux-x64-abi127
+          path: linux-target-artifact/
+          if-no-files-found: error
+          retention-days: 7
+
+  assemble-web-bundle:
+    needs:
+      - metadata
+      - validate-release
+      - validate-release-linux
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact candidate assembler
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ needs.metadata.outputs.source_commit }}
+          persist-credentials: false
+
+      - name: Set up exact Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Download Darwin arm64 companion candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: channel-release-target-${{ needs.metadata.outputs.release_tag }}-darwin-arm64-abi127
+          path: multi-web-artifacts
+
+      - name: Download Linux x64 companion candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: channel-release-target-${{ needs.metadata.outputs.release_tag }}-linux-x64-abi127
+          path: multi-web-artifacts
+
+      - name: Assemble schema 2 multi-target bundle
+        run: |
+          set -euo pipefail
+          node tools/channel-release/channel-release.mjs assemble-bundle \
+            --base-version "${{ needs.metadata.outputs.base_version }}" \
+            --revision "${{ needs.metadata.outputs.revision }}" \
+            --upstream-tag "${{ needs.metadata.outputs.upstream_tag }}" \
+            --source-commit "${{ needs.metadata.outputs.source_commit }}" \
+            --output-dir multi-web-artifacts
+
+      - name: Upload immutable schema 2 companion bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: channel-release-multi-${{ needs.metadata.outputs.web_release_tag }}
+          path: multi-web-artifacts/
           if-no-files-found: error
           retention-days: 7
 
@@ -398,12 +615,16 @@ jobs:
     if: >-
       needs.metadata.result == 'success' &&
       needs.validate-release.result == 'success' &&
+      needs.validate-release-linux.result == 'success' &&
+      needs.assemble-web-bundle.result == 'success' &&
       needs.build-desktop.result == 'success' &&
       github.workflow_ref == format('{0}/.github/workflows/release.yml@refs/heads/j2k/current', github.repository) &&
       (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/j2k/current')
     needs:
       - metadata
       - validate-release
+      - validate-release-linux
+      - assemble-web-bundle
       - build-desktop
     runs-on: ubuntu-latest
     environment: j2k-release
@@ -418,11 +639,17 @@ jobs:
           path: trusted
           persist-credentials: false
 
-      - name: Download validated release assets
+      - name: Download validated canonical stable assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: channel-release-${{ needs.metadata.outputs.release_tag }}
-          path: web-artifacts
+          name: channel-release-legacy-${{ needs.metadata.outputs.release_tag }}-darwin-arm64-abi127
+          path: legacy-web-artifacts
+
+      - name: Download validated multi-target companion assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: channel-release-multi-${{ needs.metadata.outputs.web_release_tag }}
+          path: multi-web-artifacts
 
       - name: Download validated desktop assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -435,7 +662,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Revalidate candidate output with trusted verifier
+      - name: Revalidate both web schemas and desktop with trusted verifiers
         run: |
           set -euo pipefail
           node trusted/tools/channel-release/channel-release.mjs verify-release \
@@ -446,7 +673,13 @@ jobs:
             --platform "${{ needs.validate-release.outputs.platform }}" \
             --arch "${{ needs.validate-release.outputs.arch }}" \
             --node-abi "${{ needs.validate-release.outputs.node_abi }}" \
-            --output-dir web-artifacts
+            --output-dir legacy-web-artifacts
+          node trusted/tools/channel-release/channel-release.mjs verify-bundle \
+            --base-version "${{ needs.metadata.outputs.base_version }}" \
+            --revision "${{ needs.metadata.outputs.revision }}" \
+            --upstream-tag "${{ needs.metadata.outputs.upstream_tag }}" \
+            --source-commit "${{ needs.metadata.outputs.source_commit }}" \
+            --output-dir multi-web-artifacts
           opencode_version="$(node -p 'require(`./trusted/package.json`).dependencies[`@opencode-ai/sdk`]')"
           electron_version="$(node -p 'require(`./trusted/packages/electron/package.json`).devDependencies.electron.replace(/^\D+/, ``)')"
           node trusted/tools/desktop-release/desktop-release.mjs verify-release \
@@ -468,6 +701,7 @@ jobs:
           REVISION: ${{ needs.metadata.outputs.revision }}
           VERSION: ${{ needs.metadata.outputs.version }}
           RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
+          WEB_RELEASE_TAG: ${{ needs.metadata.outputs.web_release_tag }}
           DESKTOP_RELEASE_TAG: ${{ needs.metadata.outputs.desktop_release_tag }}
           EXPECTED_DESKTOP_CHANNEL: ${{ needs.metadata.outputs.desktop_channel_commit }}
         run: |
@@ -517,6 +751,12 @@ jobs:
             echo "Release tag $RELEASE_TAG points to different commit $tag_commit." >&2
             exit 1
           fi
+          web_tag_commit="$(git -C "$repo" ls-remote origin "refs/tags/$WEB_RELEASE_TAG^{}" | cut -f1)"
+          [[ -n "$web_tag_commit" ]] || web_tag_commit="$(git -C "$repo" ls-remote origin "refs/tags/$WEB_RELEASE_TAG" | cut -f1)"
+          if [[ -n "$web_tag_commit" && "$web_tag_commit" != "$SOURCE_COMMIT" ]]; then
+            echo "Multi-target web tag $WEB_RELEASE_TAG points to different commit $web_tag_commit." >&2
+            exit 1
+          fi
           desktop_tag_commit="$(git -C "$repo" ls-remote origin "refs/tags/$DESKTOP_RELEASE_TAG^{}" | cut -f1)"
           [[ -n "$desktop_tag_commit" ]] || desktop_tag_commit="$(git -C "$repo" ls-remote origin "refs/tags/$DESKTOP_RELEASE_TAG" | cut -f1)"
           if [[ -n "$desktop_tag_commit" && "$desktop_tag_commit" != "$SOURCE_COMMIT" ]]; then
@@ -541,6 +781,10 @@ jobs:
           if [[ -z "$tag_commit" ]]; then
             git -C "$repo" tag --annotate "$RELEASE_TAG" "$SOURCE_COMMIT" --message "OpenChamber validated channel $RELEASE_TAG"
             refs+=("refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG")
+          fi
+          if [[ -z "$web_tag_commit" ]]; then
+            git -C "$repo" tag --annotate "$WEB_RELEASE_TAG" "$SOURCE_COMMIT" --message "OpenChamber multi-target web $WEB_RELEASE_TAG"
+            refs+=("refs/tags/$WEB_RELEASE_TAG:refs/tags/$WEB_RELEASE_TAG")
           fi
           if [[ -z "$desktop_tag_commit" ]]; then
             git -C "$repo" tag --annotate "$DESKTOP_RELEASE_TAG" "$SOURCE_COMMIT" --message "OpenChamber desktop $DESKTOP_RELEASE_TAG"
@@ -570,7 +814,7 @@ jobs:
               release_json="$(gh api --method POST "repos/${{ github.repository }}/releases" \
                 -f tag_name="$RELEASE_TAG" -f target_commitish="$SOURCE_COMMIT" \
                 -f name="OpenChamber $RELEASE_TAG" -f body="$notes" \
-                -F draft=true -F prerelease=false)"
+                -F draft=true -F prerelease=false -f make_latest=true)"
             fi
           fi
 
@@ -593,7 +837,7 @@ jobs:
               existing="$RUNNER_TEMP/existing-$asset"
               gh api "repos/${{ github.repository }}/releases/assets/$asset_id" \
                 -H 'Accept: application/octet-stream' > "$existing"
-              if ! cmp -s "$existing" "web-artifacts/$asset"; then
+              if ! cmp -s "$existing" "legacy-web-artifacts/$asset"; then
                 echo "Existing release asset $asset differs; refusing to overwrite it." >&2
                 exit 1
               fi
@@ -602,7 +846,7 @@ jobs:
                 echo "Published release is missing $asset; refusing to mutate it." >&2
                 exit 1
               fi
-              gh release upload "$RELEASE_TAG" "web-artifacts/$asset" --repo "${{ github.repository }}"
+              gh release upload "$RELEASE_TAG" "legacy-web-artifacts/$asset" --repo "${{ github.repository }}"
             fi
           done
 
@@ -614,10 +858,66 @@ jobs:
           const assets = release.assets.map((asset) => asset.name).sort();
           if (JSON.stringify(assets) !== JSON.stringify(expected)) throw new Error(`Unexpected release assets: ${assets.join(', ')}`);
           for (const asset of release.assets) {
-            const expectedSize = statSync(`web-artifacts/${asset.name}`).size;
+            const expectedSize = statSync(`legacy-web-artifacts/${asset.name}`).size;
             if (!Number.isSafeInteger(asset.size) || asset.size !== expectedSize) {
               throw new Error(`Release asset ${asset.name} size ${asset.size} differs from ${expectedSize}`);
             }
+          }
+          NODE
+
+          multi_releases_file="$RUNNER_TEMP/multi-web-releases.json"
+          gh api --paginate "repos/${{ github.repository }}/releases?per_page=100" --slurp > "$multi_releases_file"
+          web_release_json="$(RELEASES_FILE="$multi_releases_file" RELEASE_TAG="$WEB_RELEASE_TAG" node <<'NODE'
+          const matches = JSON.parse(require('node:fs').readFileSync(process.env.RELEASES_FILE, 'utf8')).flat().filter((release) => release.tag_name === process.env.RELEASE_TAG);
+          if (matches.length > 1) throw new Error(`Multiple releases use ${process.env.RELEASE_TAG}`);
+          if (matches[0]) process.stdout.write(JSON.stringify(matches[0]));
+          NODE
+          )"
+          if [[ -z "$web_release_json" ]]; then
+            web_release_json="$(gh api --method POST "repos/${{ github.repository }}/releases" \
+              -f tag_name="$WEB_RELEASE_TAG" -f target_commitish="$SOURCE_COMMIT" \
+              -f name="OpenChamber Web $VERSION" \
+              -f body="Multi-target OpenChamber web bundle from $SOURCE_COMMIT." \
+              -F draft=true -F prerelease=true -f make_latest=false)"
+          fi
+          WEB_RELEASE_JSON="$web_release_json" WEB_RELEASE_TAG="$WEB_RELEASE_TAG" SOURCE_COMMIT="$SOURCE_COMMIT" VERSION="$VERSION" node <<'NODE'
+          const release = JSON.parse(process.env.WEB_RELEASE_JSON);
+          if (release.tag_name !== process.env.WEB_RELEASE_TAG || release.target_commitish !== process.env.SOURCE_COMMIT) throw new Error('Multi-target web release source identity differs');
+          if (!release.prerelease) throw new Error('Multi-target web release must remain a prerelease');
+          const expected = new Set([
+            `openchamber-web-${process.env.VERSION}-darwin-arm64-abi127.tgz`,
+            `openchamber-web-${process.env.VERSION}-linux-x64-abi127.tgz`,
+            'SHA256SUMS', 'channel.json',
+          ]);
+          for (const asset of release.assets) if (!expected.has(asset.name)) throw new Error(`Unexpected multi-target web release asset ${asset.name}`);
+          NODE
+          web_release_id="$(WEB_RELEASE_JSON="$web_release_json" node -p 'JSON.parse(process.env.WEB_RELEASE_JSON).id')"
+          web_release_draft="$(WEB_RELEASE_JSON="$web_release_json" node -p 'JSON.parse(process.env.WEB_RELEASE_JSON).draft')"
+          for asset in "openchamber-web-$VERSION-darwin-arm64-abi127.tgz" \
+            "openchamber-web-$VERSION-linux-x64-abi127.tgz" SHA256SUMS channel.json; do
+            asset_id="$(WEB_RELEASE_JSON="$web_release_json" ASSET="$asset" node -p 'JSON.parse(process.env.WEB_RELEASE_JSON).assets.find((item) => item.name === process.env.ASSET)?.id || ``')"
+            if [[ -n "$asset_id" ]]; then
+              existing="$RUNNER_TEMP/existing-multi-web-$asset"
+              gh api "repos/${{ github.repository }}/releases/assets/$asset_id" -H 'Accept: application/octet-stream' > "$existing"
+              cmp -s "$existing" "multi-web-artifacts/$asset" || { echo "Existing multi-target web asset $asset differs; refusing overwrite." >&2; exit 1; }
+            else
+              [[ "$web_release_draft" == true ]] || { echo "Published multi-target web release is missing $asset; refusing mutation." >&2; exit 1; }
+              gh release upload "$WEB_RELEASE_TAG" "multi-web-artifacts/$asset" --repo "${{ github.repository }}"
+            fi
+          done
+          web_release_json="$(gh api "repos/${{ github.repository }}/releases/$web_release_id")"
+          WEB_RELEASE_JSON="$web_release_json" VERSION="$VERSION" node <<'NODE'
+          const { statSync } = require('node:fs');
+          const release = JSON.parse(process.env.WEB_RELEASE_JSON);
+          const expected = [
+            `openchamber-web-${process.env.VERSION}-darwin-arm64-abi127.tgz`,
+            `openchamber-web-${process.env.VERSION}-linux-x64-abi127.tgz`,
+            'SHA256SUMS', 'channel.json',
+          ].sort();
+          const actual = release.assets.map((asset) => asset.name).sort();
+          if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Multi-target web release inventory differs: ${actual.join(', ')}`);
+          for (const asset of release.assets) {
+            if (asset.size !== statSync(`multi-web-artifacts/${asset.name}`).size) throw new Error(`${asset.name} size differs after upload`);
           }
           NODE
 
@@ -685,7 +985,14 @@ jobs:
             asset_id="$(RELEASE_JSON="$release_json" ASSET="$asset" node -p 'JSON.parse(process.env.RELEASE_JSON).assets.find((item) => item.name === process.env.ASSET).id')"
             remote="$RUNNER_TEMP/uploaded-web-$asset"
             gh api "repos/${{ github.repository }}/releases/assets/$asset_id" -H 'Accept: application/octet-stream' > "$remote"
-            cmp -s "$remote" "web-artifacts/$asset" || { echo "Uploaded web asset $asset differs from validated bytes." >&2; exit 1; }
+            cmp -s "$remote" "legacy-web-artifacts/$asset" || { echo "Uploaded web asset $asset differs from validated bytes." >&2; exit 1; }
+          done
+          for asset in "openchamber-web-$VERSION-darwin-arm64-abi127.tgz" \
+            "openchamber-web-$VERSION-linux-x64-abi127.tgz" SHA256SUMS channel.json; do
+            asset_id="$(WEB_RELEASE_JSON="$web_release_json" ASSET="$asset" node -p 'JSON.parse(process.env.WEB_RELEASE_JSON).assets.find((item) => item.name === process.env.ASSET).id')"
+            remote="$RUNNER_TEMP/uploaded-multi-web-$asset"
+            gh api "repos/${{ github.repository }}/releases/assets/$asset_id" -H 'Accept: application/octet-stream' > "$remote"
+            cmp -s "$remote" "multi-web-artifacts/$asset" || { echo "Uploaded multi-target web asset $asset differs from validated bytes." >&2; exit 1; }
           done
           for asset in "OpenChamber-$VERSION-mac-arm64.dmg" "OpenChamber-$VERSION-mac-arm64.zip" \
             "OpenChamber-$VERSION-mac-arm64.zip.blockmap" latest-mac.yml SHA256SUMS desktop-release.json; do
@@ -699,19 +1006,33 @@ jobs:
           test "$(git -C "$repo" ls-remote origin refs/heads/j2k/current | cut -f1)" = "$SOURCE_COMMIT"
           final_web_tag="$(git -C "$repo" ls-remote origin "refs/tags/$RELEASE_TAG^{}" | cut -f1)"
           [[ -n "$final_web_tag" ]] || final_web_tag="$(git -C "$repo" ls-remote origin "refs/tags/$RELEASE_TAG" | cut -f1)"
+          final_multi_web_tag="$(git -C "$repo" ls-remote origin "refs/tags/$WEB_RELEASE_TAG^{}" | cut -f1)"
+          [[ -n "$final_multi_web_tag" ]] || final_multi_web_tag="$(git -C "$repo" ls-remote origin "refs/tags/$WEB_RELEASE_TAG" | cut -f1)"
           final_desktop_tag="$(git -C "$repo" ls-remote origin "refs/tags/$DESKTOP_RELEASE_TAG^{}" | cut -f1)"
           [[ -n "$final_desktop_tag" ]] || final_desktop_tag="$(git -C "$repo" ls-remote origin "refs/tags/$DESKTOP_RELEASE_TAG" | cut -f1)"
           test "$final_web_tag" = "$SOURCE_COMMIT"
+          test "$final_multi_web_tag" = "$SOURCE_COMMIT"
           test "$final_desktop_tag" = "$SOURCE_COMMIT"
+
+          if [[ "$web_release_draft" == true ]]; then
+            gh api --method PATCH "repos/${{ github.repository }}/releases/$web_release_id" \
+              -F draft=false -F prerelease=true -f make_latest=false >/dev/null
+          fi
+          multi_web_state="$(gh api "repos/${{ github.repository }}/releases/$web_release_id")"
+          MULTI_WEB_STATE="$multi_web_state" SOURCE_COMMIT="$SOURCE_COMMIT" node <<'NODE'
+          const release = JSON.parse(process.env.MULTI_WEB_STATE);
+          if (release.draft || !release.prerelease || release.target_commitish !== process.env.SOURCE_COMMIT) throw new Error('Published multi-target web release identity differs');
+          NODE
 
           if [[ "$desktop_release_draft" == true ]]; then
             gh api --method PATCH "repos/${{ github.repository }}/releases/$desktop_release_id" \
               -F draft=false -F prerelease=true -f make_latest=false >/dev/null
           fi
-          if [[ "$(RELEASE_JSON="$release_json" node -p 'JSON.parse(process.env.RELEASE_JSON).draft')" == 'true' ]]; then
-            gh api --method PATCH "repos/${{ github.repository }}/releases/$release_id" \
-              -F draft=false -F prerelease=false -f make_latest=true >/dev/null
-          fi
+          desktop_state="$(gh api "repos/${{ github.repository }}/releases/$desktop_release_id")"
+          DESKTOP_STATE="$desktop_state" SOURCE_COMMIT="$SOURCE_COMMIT" node <<'NODE'
+          const release = JSON.parse(process.env.DESKTOP_STATE);
+          if (release.draft || !release.prerelease || release.target_commitish !== process.env.SOURCE_COMMIT) throw new Error('Published desktop release identity differs');
+          NODE
 
           current_channel="$(git -C "$repo" ls-remote origin refs/heads/desktop-channel | cut -f1)"
           test "$current_channel" = "$EXPECTED_DESKTOP_CHANNEL"
@@ -730,12 +1051,20 @@ jobs:
           git -C "$repo" push "--force-with-lease=refs/heads/desktop-channel:$EXPECTED_DESKTOP_CHANNEL" \
             origin refs/heads/desktop-channel:refs/heads/desktop-channel
 
+          if [[ "$(RELEASE_JSON="$release_json" node -p 'JSON.parse(process.env.RELEASE_JSON).draft')" == 'true' ]]; then
+            gh api --method PATCH "repos/${{ github.repository }}/releases/$release_id" \
+              -F draft=false -F prerelease=false -f make_latest=true >/dev/null
+          fi
+
           web_state="$(gh api "repos/${{ github.repository }}/releases/$release_id")"
+          multi_web_state="$(gh api "repos/${{ github.repository }}/releases/$web_release_id")"
           desktop_state="$(gh api "repos/${{ github.repository }}/releases/$desktop_release_id")"
-          WEB_STATE="$web_state" DESKTOP_STATE="$desktop_state" SOURCE_COMMIT="$SOURCE_COMMIT" node <<'NODE'
+          WEB_STATE="$web_state" MULTI_WEB_STATE="$multi_web_state" DESKTOP_STATE="$desktop_state" SOURCE_COMMIT="$SOURCE_COMMIT" node <<'NODE'
           const web = JSON.parse(process.env.WEB_STATE);
+          const multiWeb = JSON.parse(process.env.MULTI_WEB_STATE);
           const desktop = JSON.parse(process.env.DESKTOP_STATE);
           if (web.draft || web.prerelease || web.target_commitish !== process.env.SOURCE_COMMIT) throw new Error('Published web release identity differs');
+          if (multiWeb.draft || !multiWeb.prerelease || multiWeb.target_commitish !== process.env.SOURCE_COMMIT) throw new Error('Published multi-target web release identity differs');
           if (desktop.draft || !desktop.prerelease || desktop.target_commitish !== process.env.SOURCE_COMMIT) throw new Error('Published desktop release identity differs');
           NODE
           recovery_title="OPM recovery: $SOURCE_REF"
@@ -743,5 +1072,5 @@ jobs:
             --json number,title --jq "map(select(.title == \"$recovery_title\")) | first | .number // empty")"
           if [[ -n "$recovery_issue" ]]; then
             gh issue close "$recovery_issue" --repo "${{ github.repository }}" \
-              --comment "Recovery completed at exact source \`$SOURCE_COMMIT\`; both \`$RELEASE_TAG\` and \`$DESKTOP_RELEASE_TAG\` are published."
+              --comment "Recovery completed at exact source \`$SOURCE_COMMIT\`; \`$WEB_RELEASE_TAG\`, \`$DESKTOP_RELEASE_TAG\`, and \`$RELEASE_TAG\` are published."
           fi
