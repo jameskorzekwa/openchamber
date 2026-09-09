@@ -133,14 +133,15 @@ function exerciseNativeModules(installRoot, temporaryRoot, target) {
   const nodePtyRoots = packages.get('node-pty') || [];
   const sherpaRoots = packages.get(`sherpa-onnx-${target.platform}-${target.arch}`) || [];
   if (nodePtyRoots.length !== 1 || sherpaRoots.length !== 1) fail('Installed native package identities are missing or ambiguous');
-  const nodePtyCandidates = [
-    join(nodePtyRoots[0], 'prebuilds', `${target.platform}-${target.arch}`, 'pty.node'),
+  const nodePtyBindingPaths = [
     join(nodePtyRoots[0], 'build', 'Release', 'pty.node'),
+    join(nodePtyRoots[0], 'build', 'Debug', 'pty.node'),
+    join(nodePtyRoots[0], 'prebuilds', `${target.platform}-${target.arch}`, 'pty.node'),
   ].filter((path) => {
     try { return lstatSync(path).isFile(); } catch { return false; }
   });
-  if (nodePtyCandidates.length !== 1) fail('Installed node-pty binding is missing or ambiguous');
-  verifyNativeFile(nodePtyCandidates[0], target);
+  if (nodePtyBindingPaths.length === 0) fail('Installed node-pty binding is missing');
+  for (const bindingPath of nodePtyBindingPaths) verifyNativeFile(bindingPath, target);
   const nativeFiles = [];
   const collectNative = (directory) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
