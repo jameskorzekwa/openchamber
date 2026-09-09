@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { createFixtureServer, stageUpdaterFixture } from './updater-e2e-fixture.mjs';
+import { createFixtureServer, stageMacUpdaterFixture, stageUpdaterFixture } from './updater-e2e-fixture.mjs';
 import { parseUpdateManifest, verifyUpdateManifest } from './verify-update-manifest.mjs';
 
 test('stages architecture-specific generic updater fixtures with valid metadata', () => {
@@ -50,6 +50,31 @@ test('serves only staged fixture files over loopback', async () => {
     assert.equal((await fetch(`${url}../package.json`)).status, 404);
   } finally {
     await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('stages a macOS updater fixture from the exact ZIP payload', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-macos-updater-fixture-'));
+  try {
+    const source = path.join(root, 'OpenChamber-1.21.0-j2k.27-mac-arm64.zip');
+    fs.writeFileSync(source, 'signed zip fixture');
+    const result = stageMacUpdaterFixture({
+      nextZip: source,
+      version: '1.21.0-j2k.27',
+      directory: path.join(root, 'feed'),
+    });
+    assert.equal(result.manifestName, 'latest-mac.yml');
+    assert.deepEqual(verifyUpdateManifest({
+      manifestPath: path.join(root, 'feed', 'latest-mac.yml'),
+      artifactPath: result.artifactPath,
+      expectedVersion: '1.21.0-j2k.27',
+    }), {
+      name: path.basename(source),
+      size: 18,
+      version: '1.21.0-j2k.27',
+    });
+  } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
