@@ -52,4 +52,7 @@ launches the packaged smoke app, and requires both `checkForUpdates()` discovery
 the `update-downloaded` event from `downloadUpdate()`. It compares the downloaded
 payload's SHA-512 and completed HTTP byte count with the final release ZIP. The
 harness isolates and removes its home, temporary, user-data, updater-cache, feed,
-and downloaded payload directories. It exits without calling `quitAndInstall()`.
+and downloaded payload directories. The packaged process receives only the system
+environment values needed to launch, not arbitrary runner credentials. Evidence
+records both zero updater errors and `installationAttempted: false`; the app exits
+without calling `quitAndInstall()`.
