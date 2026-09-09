@@ -58,6 +58,10 @@ jobs:
       - name: Capture exact validation runtime target
         run: |
           set -euo pipefail
+          test "$(node -p 'process.platform')" = 'linux'
+          test "$(node -p 'process.arch')" = 'x64'
+          test "$(node -p 'process.versions.modules')" = '127'
+          test "$(uname -m)" = 'x86_64'
           {
             printf 'TARGET_PLATFORM=%s\n' "$(node -p 'process.platform')"
             printf 'TARGET_ARCH=%s\n' "$(node -p 'process.arch')"

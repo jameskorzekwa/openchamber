@@ -399,6 +399,106 @@ function validateDependencyClosure(files, directories, target) {
   }
 }
 
+function packageDirectoriesByName(files) {
+  const packages = new Map();
+  for (const [packageFile, contents] of files) {
+    if (packageFile !== 'package/package.json' && !/\/node_modules\/(?:@[^/]+\/)?[^/]+\/package\.json$/.test(packageFile)) continue;
+    let packageJson;
+    try {
+      packageJson = JSON.parse(contents.toString('utf8'));
+    } catch {
+      fail(`Malformed bundled package.json: ${packageFile}`);
+    }
+    if (!PACKAGE_NAME_PATTERN.test(packageJson.name || '')) fail(`Bundled package has no valid name: ${packageFile}`);
+    const directory = packageFile.slice(0, -'/package.json'.length);
+    const values = packages.get(packageJson.name) || [];
+    values.push(directory);
+    packages.set(packageJson.name, values);
+  }
+  return packages;
+}
+
+export function verifyNativeBinary(contents, target, path = '<native artifact>') {
+  target = validateArtifactTarget(target);
+  if (target.platform === 'linux' && target.arch === 'x64') {
+    if (contents.length < 20 || !contents.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
+      || contents[4] !== 2 || contents[5] !== 1 || contents.readUInt16LE(18) !== 62) {
+      fail(`Native artifact is not ELF x86-64: ${path}`);
+    }
+    return;
+  }
+  if (target.platform === 'darwin' && target.arch === 'arm64') {
+    if (contents.length < 8 || contents.readUInt32LE(0) !== 0xfeedfacf || contents.readUInt32LE(4) !== 0x0100000c) {
+      fail(`Native artifact is not arm64 Mach-O: ${path}`);
+    }
+    return;
+  }
+  fail(`Native artifact verification does not support ${target.platform}/${target.arch}`);
+}
+
+function validateNativePackages(files, target) {
+  const packages = packageDirectoriesByName(files);
+  const rootPackage = JSON.parse(files.get('package/package.json').toString('utf8'));
+  const dependencies = new Set([...Object.keys(rootPackage.dependencies || {}), ...Object.keys(rootPackage.optionalDependencies || {})]);
+  if (dependencies.has('node-pty')) {
+    const directories = packages.get('node-pty') || [];
+    if (directories.length === 0) fail('Archive is missing the node-pty package');
+    for (const directory of directories) {
+      const candidates = [
+        `${directory}/prebuilds/${target.platform}-${target.arch}/pty.node`,
+        `${directory}/build/Release/pty.node`,
+      ].filter((path) => files.has(path));
+      if (candidates.length !== 1) fail(`node-pty must contain exactly one native binding for ${target.platform}/${target.arch}`);
+      verifyNativeBinary(files.get(candidates[0]), target, candidates[0]);
+    }
+  }
+  if (dependencies.has('sherpa-onnx-node')) {
+    const nativeName = `sherpa-onnx-${target.platform}-${target.arch}`;
+    const directories = packages.get(nativeName) || [];
+    if (directories.length !== 1) fail(`Archive must contain exactly one ${nativeName} package`);
+    const nativeFiles = [...files].filter(([path]) => path.startsWith(`${directories[0]}/`)
+      && (path.endsWith('.node') || path.endsWith('.dylib') || /\.so(?:\.\d+(?:\.\d+)*)?$/.test(path)));
+    if (!nativeFiles.some(([path]) => path.endsWith('.node')) || nativeFiles.length < 2) {
+      fail(`${nativeName} has an incomplete native payload`);
+    }
+    for (const [path, contents] of nativeFiles) verifyNativeBinary(contents, target, path);
+  }
+}
+
+function validateArchiveTree(files, directories) {
+  for (const path of [...directories, ...files.keys()]) {
+    if (path === 'package') continue;
+    const parent = path.slice(0, path.lastIndexOf('/'));
+    if (!directories.has(parent)) fail(`Archive entry has no explicit parent directory: ${path}`);
+    let ancestor = parent;
+    while (ancestor && ancestor !== 'package') {
+      if (files.has(ancestor)) fail(`Archive file is also an entry parent: ${ancestor}`);
+      ancestor = ancestor.slice(0, ancestor.lastIndexOf('/'));
+    }
+  }
+}
+
+function extractArchive(files, fileModes, directories, extractDirectory) {
+  if (existsSync(extractDirectory)) {
+    if (lstatSync(extractDirectory).isSymbolicLink() || !statSync(extractDirectory).isDirectory()) {
+      fail(`Extraction destination is not a regular directory: ${extractDirectory}`);
+    }
+    if (readdirSync(extractDirectory).length !== 0) fail(`Extraction destination is not empty: ${extractDirectory}`);
+  } else {
+    mkdirSync(extractDirectory, { recursive: true, mode: 0o755 });
+  }
+  for (const directory of [...directories].filter((path) => path !== 'package').sort()) {
+    mkdirSync(join(extractDirectory, ...directory.slice('package/'.length).split('/')), { mode: 0o755 });
+  }
+  for (const [path, contents] of files) {
+    const relativePath = path.slice('package/'.length);
+    writeFileSync(join(extractDirectory, ...relativePath.split('/')), contents, {
+      mode: (fileModes.get(path) & 0o111) !== 0 ? 0o755 : 0o644,
+      flag: 'wx',
+    });
+  }
+}
+
 export function verifyRelocatableArchive(archivePath, { expectedVersion, sourceCommit, target, extractDirectory } = {}) {
   target = validateArtifactTarget(target);
   const compressed = readFileSync(archivePath);
@@ -414,6 +514,7 @@ export function verifyRelocatableArchive(archivePath, { expectedVersion, sourceC
   const seen = new Set();
   const directories = new Set();
   const files = new Map();
+  const fileModes = new Map();
   let offset = 0;
   let nextPath = null;
   let entries = 0;
@@ -464,14 +565,9 @@ export function verifyRelocatableArchive(archivePath, { expectedVersion, sourceC
     seen.add(canonical);
     if (type === '5') {
       directories.add(canonical);
-      if (extractDirectory && relativePath) mkdirSync(join(extractDirectory, ...relativePath.split('/')), { recursive: true, mode: 0o755 });
     } else {
       files.set(canonical, Buffer.from(data));
-      if (extractDirectory) {
-        const destination = join(extractDirectory, ...relativePath.split('/'));
-        mkdirSync(dirname(destination), { recursive: true, mode: 0o755 });
-        writeFileSync(destination, data, { mode: (mode & 0o111) !== 0 ? 0o755 : 0o644, flag: 'wx' });
-      }
+      fileModes.set(canonical, mode);
     }
   }
   if (!ended) fail('Archive does not contain two end blocks');
@@ -482,8 +578,14 @@ export function verifyRelocatableArchive(archivePath, { expectedVersion, sourceC
     if (!collection.has(key)) fail(`Archive is missing ${required}`);
   }
   if (!directories.has('package')) fail('Archive has no package/ root directory');
+  validateArchiveTree(files, directories);
 
-  const packageJson = JSON.parse(files.get('package/package.json').toString('utf8'));
+  let packageJson;
+  try {
+    packageJson = JSON.parse(files.get('package/package.json').toString('utf8'));
+  } catch {
+    fail('Archive package.json is malformed');
+  }
   if (packageJson.name !== '@openchamber/web') fail('Archive package name is invalid');
   if (expectedVersion && packageJson.version !== expectedVersion) fail(`Archive version ${packageJson.version} does not match ${expectedVersion}`);
   if (packageJson.bin?.openchamber !== './bin/cli.js') fail('Archive does not expose the OpenChamber CLI');
@@ -495,5 +597,7 @@ export function verifyRelocatableArchive(archivePath, { expectedVersion, sourceC
   if (Object.keys(revision).length !== 1 || !/^[0-9a-f]{40}$/.test(revision.revision)) fail('Archive build revision is invalid');
   if (sourceCommit && revision.revision !== sourceCommit) fail('Archive build revision does not match source commit');
   validateDependencyClosure(files, directories, target);
+  validateNativePackages(files, target);
+  if (extractDirectory) extractArchive(files, fileModes, directories, resolve(extractDirectory));
   return { compressedBytes: compressed.length, expandedBytes: tar.length, entries, files: files.size, revision: revision.revision };
 }

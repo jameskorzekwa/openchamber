@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -7,6 +7,7 @@ import { gzipSync } from 'node:zlib';
 import {
   ARCHIVE_LIMITS,
   createRelocatableArchive,
+  verifyNativeBinary,
   verifyRelocatableArchive,
 } from './artifact.mjs';
 
@@ -157,6 +158,63 @@ test('rejects links, devices, fifos, traversal, duplicates, and oversized entrie
       tarEntry('package/collision/', '', '5'),
     ]);
     assert.throws(() => verifyRelocatableArchive(fileDirectoryCollision, { target }), /duplicate/);
+  } finally {
+    rmSync(value.root, { recursive: true, force: true });
+  }
+});
+
+test('validates Linux x86-64 ELF identity without host tooling', () => {
+  const linuxTarget = { platform: 'linux', arch: 'x64', nodeAbi: '127' };
+  const elf = Buffer.alloc(64);
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]).copy(elf);
+  elf.writeUInt16LE(62, 18);
+  assert.doesNotThrow(() => verifyNativeBinary(elf, linuxTarget, 'binding.node'));
+  elf.writeUInt16LE(183, 18);
+  assert.throws(() => verifyNativeBinary(elf, linuxTarget, 'binding.node'), /not ELF x86-64/);
+});
+
+test('discovers and validates nested Linux native packages', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'channel-linux-native-test-'));
+  const packageRoot = join(root, 'package');
+  const archive = join(root, 'linux.tgz');
+  const linuxTarget = { platform: 'linux', arch: 'x64', nodeAbi: '127' };
+  const elf = Buffer.alloc(64);
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]).copy(elf);
+  elf.writeUInt16LE(62, 18);
+  try {
+    writePackage(packageRoot, {
+      name: '@openchamber/web', version, bin: { openchamber: './bin/cli.js' }, openchamberArtifact: linuxTarget,
+      dependencies: { 'node-pty': '1.0.0', 'sherpa-onnx-node': '1.0.0' },
+    });
+    for (const path of ['bin', 'server', 'dist', 'node_modules']) mkdirSync(join(packageRoot, path), { recursive: true });
+    writeFileSync(join(packageRoot, 'bin/cli.js'), '#!/usr/bin/env node\n');
+    writeFileSync(join(packageRoot, 'server/index.js'), 'export {};\n');
+    writeFileSync(join(packageRoot, 'dist/index.html'), '<!doctype html>\n');
+    writeFileSync(join(packageRoot, 'dist/build-revision.json'), JSON.stringify({ revision: sourceCommit }));
+    const nodePty = join(packageRoot, 'node_modules', 'node-pty');
+    writePackage(nodePty, { name: 'node-pty', version: '1.0.0' });
+    mkdirSync(join(nodePty, 'prebuilds', 'linux-x64'), { recursive: true });
+    writeFileSync(join(nodePty, 'prebuilds', 'linux-x64', 'pty.node'), elf);
+    const sherpa = join(packageRoot, 'node_modules', 'sherpa-onnx-node');
+    writePackage(sherpa, { name: 'sherpa-onnx-node', version: '1.0.0', dependencies: { 'sherpa-onnx-linux-x64': '1.0.0' } });
+    const native = join(sherpa, 'node_modules', 'sherpa-onnx-linux-x64');
+    writePackage(native, { name: 'sherpa-onnx-linux-x64', version: '1.0.0' });
+    writeFileSync(join(native, 'sherpa-onnx.node'), elf);
+    writeFileSync(join(native, 'libsherpa.so'), elf);
+    await createRelocatableArchive(packageRoot, archive);
+    assert.doesNotThrow(() => verifyRelocatableArchive(archive, { expectedVersion: version, sourceCommit, target: linuxTarget }));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('does not extract an archive that fails final identity validation', async () => {
+  const value = fixture();
+  const extraction = join(value.root, 'extracted');
+  try {
+    await createRelocatableArchive(value.packageRoot, value.archive);
+    assert.throws(() => verifyRelocatableArchive(value.archive, { expectedVersion: '9.9.9', sourceCommit, target, extractDirectory: extraction }), /version/);
+    assert.equal(existsSync(extraction), false);
   } finally {
     rmSync(value.root, { recursive: true, force: true });
   }
