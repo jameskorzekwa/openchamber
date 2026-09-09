@@ -203,3 +203,34 @@ investigation did not publish or alter a release, advance `desktop-channel`,
 rerun a workflow, access signing credentials, perform credential-dependent
 signing, or access or modify `j2k-laptop`. It did not independently reproduce
 the private signature, certificate trust, or hardened-runtime signing process.
+
+## Correction and release evidence
+
+Release `1.21.0-j2k.26` was published on 2026-09-08 from source revision
+`872f69edcc2266b48223f1eb8ca75aef3770911b`:
+
+- <https://github.com/jameskorzekwa/openchamber/releases/tag/desktop-v1.21.0-j2k.26>
+- J2K Release run
+  [34289515347](https://github.com/jameskorzekwa/openchamber/actions/runs/34289515347)
+
+The release run's signing job checked the signed staging app, extracted ZIP app,
+and mounted DMG app before publication. A separate read-only inspection downloaded
+all six release assets, passed `SHA256SUMS`, and ran the trusted macOS verifier on
+the ZIP and DMG applications. Both report version `1.21.0-j2k.26`, source revision
+`872f69edcc2266b48223f1eb8ca75aef3770911b`, OpenCode `1.18.23`, arm64 native
+payloads, hardened-runtime signing with the pinned certificate, and the J2K generic
+updater contract. This release predates the mandatory packaged updater-download
+job, so its successful source and artifact checks are not represented as evidence
+that the new download gate ran.
+
+Future J2K desktop publication now fails before channel promotion unless strict YAML
+validation succeeds for the final signed staging app, ZIP app, and DMG app. A
+separate credential-free job must then launch a packaged lower version, discover the
+candidate through an isolated loopback feed, complete the download of the unchanged
+final ZIP with `electron-updater`, and match its checksum and transferred byte count.
+
+An installed `1.21.0-j2k.22` application still needs a one-time manual replacement.
+Its missing bundled updater configuration prevents it from downloading a corrected
+release, and publishing a valid newer bundle cannot repair files inside the already
+installed signed app. No laptop application was quit, replaced, or reinstalled as
+part of this work.

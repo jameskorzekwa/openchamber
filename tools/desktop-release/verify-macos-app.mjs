@@ -1,52 +1,16 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import updaterContract from '../../packages/electron/updater-contract.cjs';
+import { readAndValidateJ2kAppUpdateConfig } from '../../packages/electron/updater-contract-validation.mjs';
 
 const fail = (message) => { throw new Error(message); };
 
-// Release jobs execute this verifier and its contract from the trusted checkout,
-// never from the candidate app or artifact being inspected.
-const { J2K_MACOS_APP_UPDATE_CONFIG: EXPECTED_J2K_APP_UPDATE_CONFIG } = updaterContract;
-
-// Parse a simple YAML file with key: value pairs (no nested structures).
-const parseSimpleYaml = (content) => {
-  const result = {};
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const colonIndex = trimmed.indexOf(':');
-    if (colonIndex === -1) continue;
-    const key = trimmed.slice(0, colonIndex).trim();
-    let value = trimmed.slice(colonIndex + 1).trim();
-    // Remove surrounding quotes if present
-    if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) {
-      value = value.slice(1, -1);
-    }
-    result[key] = value;
-  }
-  return result;
-};
-
 // Verify that app-update.yml exists and contains the expected feed configuration.
-const verifyAppUpdateYml = (resources) => {
-  const appUpdateYmlPath = join(resources, 'app-update.yml');
-  if (!existsSync(appUpdateYmlPath)) {
-    fail('app-update.yml is missing from Contents/Resources; electron-updater cannot download updates');
-  }
-  const content = readFileSync(appUpdateYmlPath, 'utf8');
-  const parsed = parseSimpleYaml(content);
-
-  for (const [key, expected] of Object.entries(EXPECTED_J2K_APP_UPDATE_CONFIG)) {
-    if (parsed[key] !== expected) {
-      fail(`app-update.yml ${key} differs from the J2K package contract: got ${parsed[key] || '(missing)'}`);
-    }
-  }
-
-  return parsed;
+const verifyAppUpdateYml = (resources, artifact) => {
+  return readAndValidateJ2kAppUpdateConfig(resources, { artifact });
 };
 
 const parseArgs = (tokens) => {
@@ -125,6 +89,7 @@ const main = () => {
   const opencodeVersion = required(options, 'opencode-version');
   const unsigned = options.unsigned === 'true';
   const skipCliExecution = options['skip-cli-execution'] === 'true';
+  const artifact = options['artifact-label'] || basename(appPath);
   const contents = join(appPath, 'Contents');
   const resources = join(contents, 'Resources');
   const infoPlist = join(contents, 'Info.plist');
@@ -160,7 +125,7 @@ const main = () => {
   for (const modulePath of [...nativeModules, ...bunPtyLibraries]) architecture(modulePath);
 
   // Verify app-update.yml is present and correctly configured for electron-updater
-  const appUpdateConfig = verifyAppUpdateYml(resources);
+  const appUpdateConfig = verifyAppUpdateYml(resources, artifact);
 
   if (!unsigned) verifySignedApp({
     appPath,
@@ -173,6 +138,7 @@ const main = () => {
     opencodeVersion,
     nativeModules: nativeModules.length + bunPtyLibraries.length,
     signed: !unsigned,
+    artifact,
     updaterFeed: appUpdateConfig.provider,
   }));
 };
