@@ -123,7 +123,6 @@ export const runPackagedUpdaterSmoke = async ({
       downloadedBytes: fs.statSync(downloadedPath).size,
       downloadedSha512: actualSha512,
       updaterErrors: updaterErrors.length,
-      installationAttempted: false,
       completed: true,
     };
     if (updaterErrors.length > 0) throw updaterErrors[0];
