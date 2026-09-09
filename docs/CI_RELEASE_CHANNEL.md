@@ -90,7 +90,9 @@ bounded shell through extracted `node-pty`, and resolves the Linux x64
 the Darwin arm64 ABI 127 archive on macOS and requires native `.node` and
 `.dylib` files to be arm64 Mach-O. It also runs the bounded `node-pty` and
 `sherpa-onnx-node` smoke. Each job starts its extracted archive with the same
-pinned Node runtime used to package that target.
+pinned Node runtime used to package that target. If `node-pty` contains both its
+target prebuild and a source-built `build/Release` binding, the verifier checks
+both binaries before the smoke uses `node-pty`'s normal deterministic loader.
 
 This isolated smoke sets `OPENCODE_HOST` to its local stub and
 `OPENCODE_SKIP_START=true`. It proves that the packaged server boots in external
