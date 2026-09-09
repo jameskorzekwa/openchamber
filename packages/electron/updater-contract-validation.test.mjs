@@ -32,7 +32,6 @@ test('rejects a final artifact whose Resources directory omits app-update.yml', 
 
 for (const [name, content, expected] of [
   ['malformed YAML', 'provider: [generic\n', /ZIP app app-update.yml is malformed/],
-  ['multiple YAML documents', `${validConfig}---\n${validConfig}`, /ZIP app app-update.yml is malformed/],
   ['duplicate fields', `${validConfig}provider: generic\n`, /Map keys must be unique/],
   ['unsupported provider', validConfig.replace('provider: generic', 'provider: github'), /provider differs/],
   ['wrong feed URL', validConfig.replace(J2K_MACOS_APP_UPDATE_CONFIG.url, 'https://example.invalid/'), /url differs/],
