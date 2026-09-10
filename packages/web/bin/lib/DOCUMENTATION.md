@@ -58,7 +58,9 @@ Command modules implement user-facing commands and preserve output contracts acr
 
 - `commands-update.js`
   - Implements `openchamber update`.
-  - Loads the package-manager helper, performs update flow, and coordinates restart behavior after updates.
+  - Public upstream package installs retain the package-manager update path.
+  - A validated J2K artifact never invokes a package manager. `openchamber update --port 3000` sends authenticated local channel-check and install requests to the running validated server. It returns after HTTP 202 acceptance; the external process manager owns restart, attestation, and rollback.
+  - Validated installs require an explicit port when discovery is absent or ambiguous. Authentication failures, target mismatches, rejected requests, and unreachable servers fail in every output mode.
 
 - `commands-tunnel.js`
   - Implements `openchamber tunnel` and its subcommands: `profile`, `providers`, `ready`, `doctor`, `status`, `start`, `stop`, and `completion`.
@@ -113,6 +115,8 @@ These modules hold reusable, non-presentational logic for commands.
 - `cli-startup.js`
   - Native startup service detection, install/uninstall/status helpers, and platform-specific startup command execution.
   - Linux and macOS startup definitions execute the stable user-owned launcher at `~/.local/share/openchamber/bin/openchamber-managed`. The launcher resolves the selected `current/bin/cli.js` each time and uses the enabling package path only while no validated selection exists.
+  - The supported headless Linux validated target is Ubuntu x86_64 on Node 22.22.0 modules ABI 127, not generic Linux. New installation creates `current` only after the exact source verifier accepts the target-qualified bundle and must fail when `current` already exists.
+  - On Linux, `startup enable` writes a systemd user unit with `Restart=always`, runs the managed launcher in the foreground, and stores the selected environment in the mode-0600 startup env file. `OPENCODE_HOST` with `OPENCODE_SKIP_START=true` selects external OpenCode. `OPENCHAMBER_UI_PASSWORD` protects the UI. User lingering is an administrator decision when the service must survive logout.
   - Systemd updater migration accepts only a writable service below `~/.config/systemd/user` with exactly one canonical direct OpenChamber or Node-plus-OpenChamber-CLI `ExecStart`. It rejects every supported systemd executable control prefix (`-`, `@`, `:`, `+`, `!`, `!!`, and `|`), inline environment commands, Node flags, and custom wrappers instead of stripping their semantics. Migration can return a deferred plan so the updater fsyncs the rollback journal and schedules recovery before changing the service. Applying the plan replaces the executable prefix, preserves the complete raw `serve` argument suffix and the rest of the unit byte-for-byte, and bounds every `systemctl` call to 10 seconds.
 
 - `cli-tunnel-profiles.js`
