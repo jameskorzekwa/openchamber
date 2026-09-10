@@ -1,4 +1,4 @@
-import YAML, { isMap } from 'yaml';
+import YAML, { isMap, isScalar } from 'yaml';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -21,16 +21,17 @@ export const parseAndValidateJ2kAppUpdateConfig = (content, { artifact = 'macOS 
     throw new Error(`${artifact} app-update.yml must contain one YAML mapping`);
   }
 
-  let parsed;
-  try {
-    parsed = document.toJS();
-  } catch {
-    throw new Error(`${artifact} app-update.yml is malformed`);
+  const fields = new Map();
+  for (const pair of document.contents.items) {
+    if (!isScalar(pair.key) || !isScalar(pair.value)) {
+      throw new Error(`${artifact} app-update.yml fields must use scalar keys and values`);
+    }
+    fields.set(pair.key.value, pair.value.value);
   }
 
   const expectedKeys = Object.keys(J2K_MACOS_APP_UPDATE_CONFIG).sort();
-  const missingKeys = expectedKeys.filter((key) => !Object.hasOwn(parsed, key));
-  const unexpectedFieldCount = Object.keys(parsed)
+  const missingKeys = expectedKeys.filter((key) => !fields.has(key));
+  const unexpectedFieldCount = [...fields.keys()]
     .filter((key) => !Object.hasOwn(J2K_MACOS_APP_UPDATE_CONFIG, key)).length;
   if (missingKeys.length > 0 || unexpectedFieldCount > 0) {
     const differences = [];
@@ -42,12 +43,12 @@ export const parseAndValidateJ2kAppUpdateConfig = (content, { artifact = 'macOS 
   }
 
   for (const [key, expected] of Object.entries(J2K_MACOS_APP_UPDATE_CONFIG)) {
-    if (parsed[key] !== expected) {
+    if (fields.get(key) !== expected) {
       throw new Error(`${artifact} app-update.yml ${key} differs from the J2K package contract`);
     }
   }
 
-  return parsed;
+  return Object.fromEntries(fields);
 };
 
 export const readAndValidateJ2kAppUpdateConfig = (resourcesPath, { artifact = 'macOS app' } = {}) => {
