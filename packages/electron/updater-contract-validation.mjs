@@ -6,32 +6,44 @@ import updaterContract from './updater-contract.cjs';
 
 const { J2K_MACOS_APP_UPDATE_CONFIG } = updaterContract;
 
-const describeValue = (value) => (value === undefined ? '(missing)' : JSON.stringify(value));
-
 export const parseAndValidateJ2kAppUpdateConfig = (content, { artifact = 'macOS app' } = {}) => {
-  const document = YAML.parseDocument(content, { uniqueKeys: true });
+  let document;
+  try {
+    document = YAML.parseDocument(content, { uniqueKeys: true });
+  } catch {
+    throw new Error(`${artifact} app-update.yml is malformed`);
+  }
   if (document.errors.length > 0) {
-    throw new Error(`${artifact} app-update.yml is malformed: ${document.errors[0].message}`);
+    throw new Error(`${artifact} app-update.yml is malformed`);
   }
 
   if (!isMap(document.contents)) {
     throw new Error(`${artifact} app-update.yml must contain one YAML mapping`);
   }
-  const parsed = document.toJS();
+
+  let parsed;
+  try {
+    parsed = document.toJS();
+  } catch {
+    throw new Error(`${artifact} app-update.yml is malformed`);
+  }
 
   const expectedKeys = Object.keys(J2K_MACOS_APP_UPDATE_CONFIG).sort();
-  const actualKeys = Object.keys(parsed).sort();
-  if (JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys)) {
+  const missingKeys = expectedKeys.filter((key) => !Object.hasOwn(parsed, key));
+  const unexpectedFieldCount = Object.keys(parsed)
+    .filter((key) => !Object.hasOwn(J2K_MACOS_APP_UPDATE_CONFIG, key)).length;
+  if (missingKeys.length > 0 || unexpectedFieldCount > 0) {
+    const differences = [];
+    if (missingKeys.length > 0) differences.push(`missing known fields: ${missingKeys.join(', ')}`);
+    if (unexpectedFieldCount > 0) differences.push(`unexpected field count: ${unexpectedFieldCount}`);
     throw new Error(
-      `${artifact} app-update.yml fields differ from the J2K package contract: expected ${expectedKeys.join(', ')}, got ${actualKeys.join(', ') || '(none)'}`,
+      `${artifact} app-update.yml fields differ from the J2K package contract (${differences.join('; ')})`,
     );
   }
 
   for (const [key, expected] of Object.entries(J2K_MACOS_APP_UPDATE_CONFIG)) {
     if (parsed[key] !== expected) {
-      throw new Error(
-        `${artifact} app-update.yml ${key} differs from the J2K package contract: got ${describeValue(parsed[key])}`,
-      );
+      throw new Error(`${artifact} app-update.yml ${key} differs from the J2K package contract`);
     }
   }
 
