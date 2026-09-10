@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -107,3 +108,62 @@ test('does not expose unexpected field names', () => {
     },
   );
 });
+
+const collectionKeyCases = [
+  ['collection key', (sentinel) => `${validConfig}? [${sentinel}]\n: unexpected\n`],
+  ['nested collection key', (sentinel) => `${validConfig}? [[${sentinel}]]\n: unexpected\n`],
+];
+const collectionCases = [
+  ...collectionKeyCases,
+  ['collection value', (sentinel) => validConfig.replace('provider: generic', `provider: [${sentinel}]`)],
+];
+
+for (const [name, contentForSentinel] of collectionCases) {
+  test(`rejects a ${name} without exposing its source`, () => {
+    const sentinel = `GENERATED_${randomUUID().replaceAll('-', '_')}`;
+    assert.throws(
+      () => parseAndValidateJ2kAppUpdateConfig(contentForSentinel(sentinel), { artifact: 'final signed app' }),
+      (error) => {
+        assert.equal(
+          error.message,
+          'final signed app app-update.yml fields must use scalar keys and values',
+        );
+        assert.equal(error.message.includes(sentinel), false);
+        return true;
+      },
+    );
+  });
+}
+
+for (const [name, contentForSentinel] of collectionKeyCases) {
+  test(`a ${name} emits no warning or stderr in an isolated process`, () => {
+    const sentinel = `GENERATED_${randomUUID().replaceAll('-', '_')}`;
+    const moduleUrl = new URL('./updater-contract-validation.mjs', import.meta.url).href;
+    const script = `
+      import { parseAndValidateJ2kAppUpdateConfig } from ${JSON.stringify(moduleUrl)};
+      const warnings = [];
+      process.on('warning', (warning) => warnings.push(warning.message));
+      let errorMessage = '';
+      try {
+        parseAndValidateJ2kAppUpdateConfig(${JSON.stringify(contentForSentinel(sentinel))}, {
+          artifact: 'final ZIP app',
+        });
+      } catch (error) {
+        errorMessage = error.message;
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+      process.stdout.write(JSON.stringify({ errorMessage, warnings }));
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.signal, null);
+    assert.equal(result.stderr, '');
+    assert.deepEqual(JSON.parse(result.stdout), {
+      errorMessage: 'final ZIP app app-update.yml fields must use scalar keys and values',
+      warnings: [],
+    });
+  });
+}
