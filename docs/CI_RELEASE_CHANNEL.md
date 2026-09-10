@@ -58,7 +58,8 @@ left for manual conflict resolution.
 requests targeting `j2k/current`, and manual dispatches. It has `contents: read` only
 and cancels superseded validation for the same ref.
 
-The Ubuntu job pins Bun 1.3.14 and Node 22, then runs:
+The Ubuntu x86_64 job pins Bun 1.3.14 and Node 22.22.0, requires Node modules
+ABI 127, then runs:
 
 ```bash
 bun install --frozen-lockfile
@@ -81,11 +82,27 @@ The test requires healthy `/health` and `/api/version` identities, the exact
 source commit in `dist/build-revision.json`, a served `index.html`, and HTTP 200
 for every referenced built asset.
 
-The Darwin arm64 release smoke also checks selected `.node` and `.dylib` files
-with both `file` and `lipo`, requiring exactly arm64 Mach-O output. It spawns a
-bounded `/bin/sh` command through extracted `node-pty` and loads
-`sherpa-onnx-node` far enough to resolve its Darwin arm64 binding and linked
-libraries without loading a model.
+Validation and release packaging have native gates for both supported web
+targets. The Ubuntu x86_64 gate builds the Linux x64 ABI 127 archive on Ubuntu,
+checks native `.node` files and helper executables as x86-64 ELF, spawns a
+bounded shell through extracted `node-pty`, and resolves the Linux x64
+`sherpa-onnx-node` binding without loading a model. The Darwin arm64 gate builds
+the Darwin arm64 ABI 127 archive on macOS and requires native `.node` and
+`.dylib` files to be arm64 Mach-O. It also runs the bounded `node-pty` and
+`sherpa-onnx-node` smoke. Each job starts its extracted archive with the same
+pinned Node runtime used to package that target. If `node-pty` contains both its
+target prebuild and a source-built `build/Release` binding, the verifier checks
+both binaries before the smoke uses `node-pty`'s normal deterministic loader.
+
+This isolated smoke sets `OPENCODE_HOST` to its local stub and
+`OPENCODE_SKIP_START=true`. It proves that the packaged server boots in external
+OpenCode mode without spawning OpenCode. It also compares the packaged CLI,
+agent-tool runtime, OPM status routes, and session-goal runtime byte-for-byte
+with the reviewed source. The stub does not emulate the OpenCode API or plugin
+protocol. These gates therefore do not claim compatibility with a separately
+deployed OpenCode process, live plugin registration or execution, OPM
+supervision, or automatic goal/effect processing. Those remain host-activation
+checks and are not part of artifact publication.
 
 Finally, the release smoke proves the configured update channel. It first
 requires an unauthenticated `/api/openchamber/update-check` request to return
@@ -128,24 +145,19 @@ publishing.
 
 The release pipeline resolves the branch tip to one 40-character source commit,
 checks that `vX.Y.Z` is its ancestor, and confirms that the package version is
-`X.Y.Z`. It calculates the next unused `j2k.N` revision. The validation job then
-reruns typechecks, lint, tests, build, packaging, identity validation, and the
-installed-package smoke test for the staged `X.Y.Z-j2k.N` version.
-
-Release packaging runs on a GitHub-hosted arm64 macOS runner so the frozen
-optional native dependency closure matches the arm64 Mac mini runtime. The
-runner fails closed unless the exact pinned production Node reports platform
-`darwin` and architecture `arm64`. It records that Node runtime's
-`process.versions.modules` value as the target ABI and uses the same Node
-executable for extracted-package startup.
+`X.Y.Z`. It calculates the next unused `j2k.N` revision. Native Ubuntu x86_64
+and macOS arm64 jobs build and smoke their own frozen dependency closures for
+the staged version. Both fail closed unless Node 22.22.0 reports modules ABI
+127 and the expected platform and architecture. A package built on one target
+is never relabeled for another target.
 
 Only the downstream publish job receives `contents: write`. It does not check
 out candidate source or execute candidate tooling. It checks out the verifier
 at `github.workflow_sha` into a separate trusted directory with persisted
-credentials disabled. That verifier rechecks the manifest, checksum, compressed
-and expanded sizes, entry and file limits, archive types and paths, dependency
-closure, package identity, version, tag, and source commit before `GH_TOKEN` is
-made available to the publication step.
+credentials disabled. Before `GH_TOKEN` reaches publication, that verifier
+checks the schema 1 stable output, both native archives, the assembled schema 2
+companion, checksums, archive limits and paths, dependency closures, package
+identities, version, tags, and source commit.
 
 Before publishing, the workflow verifies that the source branch and prior
 `j2k/current` head have not moved. It replaces rebased `j2k/current` history only with an exact
@@ -160,49 +172,86 @@ of recreating or rewinding it. The workflow repeats this leased no-op
 immediately before changing a draft release to published, so source movement
 during asset upload leaves the release draft and unpublished.
 
-If the tag already points to the same source commit, a retry resumes that exact
-`vX.Y.Z-j2k.N` identity instead of allocating `N+1`. Publication creates a draft
-release, uploads only absent assets, byte-compares every existing asset, and
-publishes only after the exact three-file inventory is complete. A different
-tag target, release source, unexpected asset, or same-named asset with different
-bytes stops the run. A completed published release is verified and left
-unchanged.
+If a tag already points to the same source commit, a retry resumes that exact
+identity instead of allocating `N+1`. Publication creates drafts, uploads only
+absent assets, byte-compares every existing asset, and publishes only after
+each exact inventory is complete. A different tag target, release source,
+unexpected asset, missing asset on a published release, or same-named asset
+with different bytes stops the run. Published releases are verified and left
+unchanged. Tags and assets are never replaced.
 
-The workflow refuses to replace an existing tag or release. It creates one
-non-draft, non-prerelease GitHub Release with exactly these immutable assets:
+The trusted publisher preserves this order:
+
+1. Publish and re-read the target-qualified `web-vX.Y.Z-j2k.N` companion
+   prerelease.
+2. Publish and re-read the separate signed Desktop prerelease, then advance the
+   separately leased desktop channel.
+3. Publish the canonical, non-prerelease `vX.Y.Z-j2k.N` release and mark it
+   latest only after the companion and Desktop deliveries are complete.
+
+The canonical stable release is the final visibility point. GitHub's latest
+release API cannot expose it before the matching companion exists. Desktop
+signed delivery remains a separate prerelease, signing flow, artifact set,
+channel, and updater even though its successful publication gates the stable
+release.
+
+The canonical stable release remains schema 1 with exactly these three assets:
 
 - `openchamber-web-X.Y.Z-j2k.N.tgz`
 - `SHA256SUMS`
 - `channel.json`
 
-It does not publish to npm and does not use npm, Apple, VS Code, or other
-repository secrets. CI pins Bun 1.3.14, Node 22.22.0, and npm 11.6.2.
+Its archive remains Darwin arm64 ABI 127. The schema 2 companion prerelease has
+exactly these four assets:
+
+- `openchamber-web-X.Y.Z-j2k.N-darwin-arm64-abi127.tgz`
+- `openchamber-web-X.Y.Z-j2k.N-linux-x64-abi127.tgz`
+- `SHA256SUMS`
+- `channel.json`
+
+The web channel does not publish to npm and does not use npm, Apple, VS Code,
+or other repository secrets. CI pins Bun 1.3.14, Node 22.22.0, and npm 11.6.2.
+Web companion assets never enter the Desktop release.
 
 ## Manifest contract
 
-`channel.json` uses schema 1. The release tool rejects missing or extra keys.
-It binds the base version, channel revision, full version, release tag, upstream
-tag, exact source commit, tarball name, checksum, checksum asset name, manifest
-asset name, complete asset list, and minimum Node major version. `seriesHead`
-and `sourceCommit` must be the same 40-character commit. The exact additional
-target fields are string values `platform: "darwin"`, `arch: "arm64"`, and
-`nodeAbi: "127"`, obtained from `process.versions.modules` under the pinned
-Node 22.22.0 production runtime.
+The canonical `vVERSION` `channel.json` continues to use schema 1. The release
+tool rejects missing or extra keys. It binds the base version, channel revision,
+full version, release tag, upstream tag, source commit, tarball, checksum,
+complete asset list, and minimum Node major. `seriesHead` and `sourceCommit`
+must be the same 40-character commit. Its target remains `platform: "darwin"`,
+`arch: "arm64"`, and `nodeAbi: "127"`.
+
+The `web-vVERSION` companion `channel.json` uses schema 2. Its ordered
+`artifacts` array contains exactly one Darwin arm64 ABI 127 entry and one Linux
+x64 ABI 127 entry. Each has exactly `platform`, `arch`, `nodeAbi`, `tarball`,
+and `sha256`; archive names contain the target identity. The top-level `assets`
+array contains both target-qualified tarballs in deterministic order followed
+by `SHA256SUMS` and `channel.json`. `SHA256SUMS` has exactly one ordered line per
+tarball.
+
+New consumers first resolve and validate GitHub's canonical latest stable
+`vVERSION`, including its upstream ancestry and exact three-asset inventory.
+They then resolve exact tag `web-vVERSION`, require its common identity to equal
+the stable release, and select exactly one artifact matching the running
+platform, architecture, and Node ABI. If the companion is absent, a consumer
+may use schema 1 only for an exact Darwin arm64 ABI 127 runtime. Missing,
+duplicate, ambiguous, malformed, or wrong-target companion entries fail closed
+before checksum or archive download. Linux never falls back to Darwin.
 
 The staged `package/package.json` contains an `openchamberArtifact` object with
 exactly the same `platform`, `arch`, and `nodeAbi` strings. The trusted verifier
 rejects missing or extra target keys, manifest/package disagreement, a smoke
 runtime with another target, and bundled dependencies whose `os` or `cpu`
-metadata excludes Darwin arm64.
+metadata excludes the selected native target.
 
 Base versions use canonical `X.Y.Z` decimal components with no leading zero
 unless the component is exactly zero. Channel revisions are normalized positive
 safe integers with no leading zero. The generated version must equal
 `baseVersion + "-j2k." + channelRevision` exactly.
 
-`SHA256SUMS` contains exactly one line for the tarball. The release workflow
-recalculates it before updating refs and verifies the final GitHub Release asset
-names and exact byte sizes.
+The release workflow recalculates every checksum before updating refs and
+verifies each final GitHub Release's exact asset names and byte sizes.
 
 The tarball contract is capped at 256 MiB compressed, 512 MiB expanded, 50,000
 tar entries, and 128 MiB per regular file. PAX and GNU path metadata is capped

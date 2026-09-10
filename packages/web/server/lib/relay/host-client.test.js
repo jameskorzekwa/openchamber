@@ -33,6 +33,10 @@ import {
 const startFakeRelay = () => {
   const server = http.createServer();
   const wss = new WebSocketServer({ server });
+  let resolveControlReady;
+  const controlReady = new Promise((resolve) => {
+    resolveControlReady = resolve;
+  });
   const state = {
     control: null,
     hostData: new Map(), // connectionId -> ws
@@ -48,6 +52,7 @@ const startFakeRelay = () => {
 
     if (role === 'host-control') {
       state.control = ws;
+      resolveControlReady();
       // Announce any already-waiting clients.
       ws.send(JSON.stringify({ type: 'sync', connectionIds: [...state.clients.keys()] }));
       for (const id of state.clients.keys()) {
@@ -97,10 +102,12 @@ const startFakeRelay = () => {
       resolve({
         wsUrl: `ws://127.0.0.1:${port}`,
         state,
-        stop: () => new Promise((r) => {
-          wss.close();
-          server.close(() => r());
-        }),
+        controlReady,
+        stop: async () => {
+          for (const socket of wss.clients) socket.terminate();
+          await new Promise((r) => wss.close(() => r()));
+          await new Promise((r) => server.close(() => r()));
+        },
       });
     });
   });
@@ -178,9 +185,16 @@ const runScriptedClient = async ({ relayUrl, serverId, hostEncPubJwk }) => {
   const responseChunks = [];
   let responseStatus = null;
   let resolveDone;
-  const done = new Promise((resolve) => {
+  let rejectDone;
+  const done = new Promise((resolve, reject) => {
     resolveDone = resolve;
+    rejectDone = reject;
   });
+  const fail = (error) => {
+    rejectDone(error);
+    ws.terminate();
+  };
+  ws.on('error', fail);
 
   ws.on('open', async () => {
     ws.send(JSON.stringify({
@@ -236,7 +250,7 @@ const runScriptedClient = async ({ relayUrl, serverId, hostEncPubJwk }) => {
     }
   };
   ws.on('message', (data, isBinary) => {
-    processing = processing.then(() => handleMessage(data, isBinary));
+    processing = processing.then(() => handleMessage(data, isBinary)).catch(fail);
   });
 
   return done;
@@ -268,8 +282,7 @@ describe('relay host-client integration', () => {
       logger: { warn: () => {} },
     });
 
-    // Give the control socket a moment to connect before the client arrives.
-    await new Promise((r) => setTimeout(r, 200));
+    await relay.controlReady;
 
     const result = await runScriptedClient({
       relayUrl: relay.wsUrl,
