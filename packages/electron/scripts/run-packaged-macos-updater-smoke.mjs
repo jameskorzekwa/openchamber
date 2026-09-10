@@ -67,20 +67,35 @@ export const runMacUpdaterSmokeHarness = async ({
   sourceRevision,
   outputPath,
   timeoutMs = 180_000,
+  operations = {},
 }) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-macos-updater-smoke-'));
-  const feedDirectory = path.join(root, 'feed');
-  const isolationRoot = path.join(root, 'runtime');
-  const appEvidencePath = path.join(root, 'app-evidence.json');
-  const executable = path.join(path.resolve(appPath), 'Contents', 'MacOS', 'OpenChamber');
-  if (!fs.statSync(executable).isFile()) throw new Error('Packaged updater smoke app executable is missing');
+  const createTemporaryRoot = operations.createTemporaryRoot
+    || (() => fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-macos-updater-smoke-')));
+  const stageFixture = operations.stageFixture || stageMacUpdaterFixture;
+  const startFixtureServer = operations.startFixtureServer || createFixtureServer;
+  const executeChild = operations.executeChild || runChild;
+  const stopFixtureServer = operations.stopFixtureServer || closeServer;
+  const removeTemporaryRoot = operations.removeTemporaryRoot
+    || ((rootPath) => fs.rmSync(rootPath, { recursive: true, force: true }));
 
-  const fixture = stageMacUpdaterFixture({ nextZip, version: nextVersion, directory: feedDirectory });
-  const { requests, server, url } = await createFixtureServer({ directory: feedDirectory });
+  const root = createTemporaryRoot();
+  let server;
+  let finalEvidence;
+  let primaryError;
   try {
+    const feedDirectory = path.join(root, 'feed');
+    const isolationRoot = path.join(root, 'runtime');
+    const appEvidencePath = path.join(root, 'app-evidence.json');
+    const executable = path.join(path.resolve(appPath), 'Contents', 'MacOS', 'OpenChamber');
+    if (!fs.statSync(executable).isFile()) throw new Error('Packaged updater smoke app executable is missing');
+
+    const fixture = stageFixture({ nextZip, version: nextVersion, directory: feedDirectory });
+    const fixtureServer = await startFixtureServer({ directory: feedDirectory });
+    server = fixtureServer.server;
+    const { requests, url } = fixtureServer;
     fs.mkdirSync(path.join(isolationRoot, 'home'), { recursive: true });
     fs.mkdirSync(path.join(isolationRoot, 'tmp'), { recursive: true });
-    await runChild({
+    await executeChild({
       executable,
       isolationRoot,
       timeoutMs,
@@ -113,7 +128,7 @@ export const runMacUpdaterSmokeHarness = async ({
       throw new Error('Packaged updater smoke downloaded payload size differs from the trusted fixture');
     }
 
-    const finalEvidence = {
+    finalEvidence = {
       ...evidence,
       sourceRevision,
       fixturePayload: path.basename(fixture.artifactPath),
@@ -122,11 +137,33 @@ export const runMacUpdaterSmokeHarness = async ({
       payloadDownloaded: true,
     };
     fs.writeFileSync(path.resolve(outputPath), `${JSON.stringify(finalEvidence, null, 2)}\n`, { mode: 0o600 });
-    return finalEvidence;
-  } finally {
-    await closeServer(server);
-    fs.rmSync(root, { recursive: true, force: true });
+  } catch (error) {
+    primaryError = error;
   }
+
+  const cleanupErrors = [];
+  if (server) {
+    try {
+      await stopFixtureServer(server);
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  }
+  try {
+    removeTemporaryRoot(root);
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+
+  if (primaryError) {
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError([primaryError, ...cleanupErrors], 'Packaged updater smoke failed and cleanup was incomplete');
+    }
+    throw primaryError;
+  }
+  if (cleanupErrors.length === 1) throw cleanupErrors[0];
+  if (cleanupErrors.length > 1) throw new AggregateError(cleanupErrors, 'Packaged updater smoke cleanup was incomplete');
+  return finalEvidence;
 };
 
 const main = async () => {
