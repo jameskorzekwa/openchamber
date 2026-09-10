@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -32,7 +33,7 @@ test('rejects a final artifact whose Resources directory omits app-update.yml', 
 
 for (const [name, content, expected] of [
   ['malformed YAML', 'provider: [generic\n', /ZIP app app-update.yml is malformed/],
-  ['duplicate fields', `${validConfig}provider: generic\n`, /Map keys must be unique/],
+  ['duplicate fields', `${validConfig}provider: generic\n`, /app-update.yml is malformed/],
   ['unsupported provider', validConfig.replace('provider: generic', 'provider: github'), /provider differs/],
   ['wrong feed URL', validConfig.replace(J2K_MACOS_APP_UPDATE_CONFIG.url, 'https://example.invalid/'), /url differs/],
   ['wrong cache directory', validConfig.replace('openchamber-updater', 'other-updater'), /updaterCacheDirName differs/],
@@ -47,3 +48,62 @@ for (const [name, content, expected] of [
     );
   });
 }
+
+const providerSentinel = randomUUID();
+const urlSentinels = [randomUUID(), randomUUID(), randomUUID()];
+const cacheSentinel = randomUUID();
+for (const [field, rejectedValue, sentinels] of [
+  ['provider', providerSentinel, [providerSentinel]],
+  ['url', `https://${urlSentinels[0]}:${urlSentinels[1]}@example.invalid/feed?token=${urlSentinels[2]}`, urlSentinels],
+  ['updaterCacheDirName', cacheSentinel, [cacheSentinel]],
+]) {
+  test(`does not expose a rejected ${field} value`, () => {
+    const content = validConfig.replace(
+      `${field}: ${J2K_MACOS_APP_UPDATE_CONFIG[field]}`,
+      `${field}: ${rejectedValue}`,
+    );
+    assert.throws(
+      () => parseAndValidateJ2kAppUpdateConfig(content, { artifact: 'final ZIP app' }),
+      (error) => {
+        assert.equal(
+          error.message,
+          `final ZIP app app-update.yml ${field} differs from the J2K package contract`,
+        );
+        for (const sentinel of sentinels) assert.equal(error.message.includes(sentinel), false);
+        return true;
+      },
+    );
+  });
+}
+
+test('does not expose malformed YAML source snippets', () => {
+  const sourceSnippet = randomUUID();
+  for (const malformed of [
+    `provider: generic\nurl: "${sourceSnippet}\n`,
+    `${validConfig}${sourceSnippet}: first\n${sourceSnippet}: second\n`,
+  ]) {
+    assert.throws(
+      () => parseAndValidateJ2kAppUpdateConfig(malformed, { artifact: 'final DMG app' }),
+      (error) => {
+        assert.equal(error.message, 'final DMG app app-update.yml is malformed');
+        assert.equal(error.message.includes(sourceSnippet), false);
+        return true;
+      },
+    );
+  }
+});
+
+test('does not expose unexpected field names', () => {
+  const unexpectedField = `synthetic_${randomUUID().replaceAll('-', '_')}`;
+  assert.throws(
+    () => parseAndValidateJ2kAppUpdateConfig(`${validConfig}${unexpectedField}: true\n`, { artifact: 'final signed app' }),
+    (error) => {
+      assert.equal(
+        error.message,
+        'final signed app app-update.yml fields differ from the J2K package contract (unexpected field count: 1)',
+      );
+      assert.equal(error.message.includes(unexpectedField), false);
+      return true;
+    },
+  );
+});
