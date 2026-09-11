@@ -59,12 +59,30 @@ describe('OPM status parser', () => {
     expect(parseOpmSnapshot({ available: false, fetchedAt: 100, error: 'down' })).toEqual({ available: false, fetchedAt: 100, error: 'down' });
   });
 
-  test('counts every registered hierarchy row for the status pill', () => {
+  test('counts every unfinished hierarchy row for the status pill', () => {
     const child = { ...row({ ref: '2', parentRef: '1' }), childRows: [] };
     const parsed = parseOpmSnapshot({ ...snapshot(), tree: [{ ...row(), childRows: [child] }] });
     expect(getTotalOpmCount(parsed)).toBe(2);
     expect(getTotalOpmCount(parseOpmSnapshot({ ...snapshot(), tree: [] }))).toBe(0);
     expect(getTotalOpmCount({ available: false, fetchedAt: 100, error: 'down' })).toBeNull();
+  });
+
+  test('excludes ended management rows but counts open descendants and unknown phases', () => {
+    const openChild = { ...row({ ref: '2', parentRef: '1' }), childRows: [] };
+    const tree = [
+      { ...row({ ref: '1', phase: 'owner_closed', state: 'planned' }), childRows: [openChild] },
+      ...['completed', 'cancelled', 'verified'].map((phase, index) => ({
+        ...row({ ref: String(index + 3), phase }),
+        childRows: [],
+      })),
+      { ...row({ ref: '6', phase: 'failed' }), childRows: [] },
+      { ...row({ ref: '7', phase: 'future_phase' }), childRows: [] },
+    ];
+
+    expect(getTotalOpmCount(parseOpmSnapshot({ ...snapshot(), tree }))).toBe(3);
+    expect(getTotalOpmCount(parseOpmSnapshot({ ...snapshot(), tree: [tree[0]] }))).toBe(1);
+    expect(getTotalOpmCount(parseOpmSnapshot({ ...snapshot(), tree: tree.slice(1, 4) }))).toBe(0);
+    expect(getTotalOpmCount(parseOpmSnapshot({ ...snapshot(), tree: tree.slice(4) }))).toBe(2);
   });
 
   test('classifies localized owner guidance without trusting English server copy', () => {
