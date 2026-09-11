@@ -4,8 +4,14 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { readAndValidateJ2kAppUpdateConfig } from '../../packages/electron/updater-contract-validation.mjs';
 
 const fail = (message) => { throw new Error(message); };
+
+// Verify that app-update.yml exists and contains the expected feed configuration.
+const verifyAppUpdateYml = (resources, artifact) => {
+  return readAndValidateJ2kAppUpdateConfig(resources, { artifact });
+};
 
 const parseArgs = (tokens) => {
   const options = {};
@@ -82,6 +88,8 @@ const main = () => {
   const sourceCommit = required(options, 'source-commit');
   const opencodeVersion = required(options, 'opencode-version');
   const unsigned = options.unsigned === 'true';
+  const skipCliExecution = options['skip-cli-execution'] === 'true';
+  const artifact = options['artifact-label'] || basename(appPath);
   const contents = join(appPath, 'Contents');
   const resources = join(contents, 'Resources');
   const infoPlist = join(contents, 'Info.plist');
@@ -98,8 +106,10 @@ const main = () => {
 
   const cli = join(resources, 'opencode-cli', 'opencode');
   architecture(cli);
-  const cliVersion = run(cli, ['--version']).stdout.trim().split(/\s+/)[0];
-  if (cliVersion !== opencodeVersion) fail(`Bundled OpenCode CLI version ${cliVersion} differs from ${opencodeVersion}`);
+  if (!skipCliExecution) {
+    const cliVersion = run(cli, ['--version']).stdout.trim().split(/\s+/)[0];
+    if (cliVersion !== opencodeVersion) fail(`Bundled OpenCode CLI version ${cliVersion} differs from ${opencodeVersion}`);
+  }
 
   const nativeModules = visit(resources, (path) => path.endsWith('.node')
     && (!path.includes('/prebuilds/') || path.includes('/prebuilds/darwin-arm64/')));
@@ -114,6 +124,9 @@ const main = () => {
   }
   for (const modulePath of [...nativeModules, ...bunPtyLibraries]) architecture(modulePath);
 
+  // Verify app-update.yml is present and correctly configured for electron-updater
+  const appUpdateConfig = verifyAppUpdateYml(resources, artifact);
+
   if (!unsigned) verifySignedApp({
     appPath,
     certificateSha256: required(options, 'certificate-sha256'),
@@ -125,6 +138,8 @@ const main = () => {
     opencodeVersion,
     nativeModules: nativeModules.length + bunPtyLibraries.length,
     signed: !unsigned,
+    artifact,
+    updaterFeed: appUpdateConfig.provider,
   }));
 };
 

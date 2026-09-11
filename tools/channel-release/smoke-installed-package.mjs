@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process';
-import { lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { validateArtifactTarget, verifyRelocatableArchive } from './artifact.mjs';
+import { validateArtifactTarget, verifyNativeBinary, verifyRelocatableArchive } from './artifact.mjs';
 
 function fail(message) {
   throw new Error(message);
 }
 
 function parseArgs(argv) {
-  const allowed = new Set(['arch', 'channel-repository', 'node-abi', 'platform', 'source-commit', 'tarball', 'version']);
+  const allowed = new Set(['arch', 'channel-repository', 'node-abi', 'platform', 'release-tag', 'source-commit', 'tarball', 'version']);
   const options = {};
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index];
@@ -51,7 +51,7 @@ async function waitFor(url, child, timeoutMs = 45_000) {
   fail(`Timed out waiting for ${url}`);
 }
 
-export function assertChannelResponse(body, { version, repository }) {
+export function assertChannelResponse(body, { version, repository, releaseTag = `v${body.version}` }) {
   const commonKeys = ['available', 'channel', 'channelRepository', 'currentVersion', 'installation', 'version'];
   if (body.channel !== 'j2k' || body.channelRepository !== repository || body.currentVersion !== version || body.available !== Boolean(body.available)) {
     fail(`Update route returned the wrong strict channel identity: ${JSON.stringify(body)}`);
@@ -77,33 +77,82 @@ export function assertChannelResponse(body, { version, repository }) {
   if (JSON.stringify(Object.keys(body).sort()) !== JSON.stringify(expected.sort())) fail('Validated update response has unexpected fields');
   if (!/^\d+\.\d+\.\d+-j2k\.[1-9]\d*$/.test(body.version)) fail('Validated update response has an invalid version');
   if (body.packageManager !== 'validated-channel' || body.updateCommand !== 'openchamber update') fail('Validated update response has the wrong installer contract');
-  if (body.releaseUrl !== `https://github.com/${repository}/releases/tag/v${body.version}`) fail('Validated update response has the wrong release URL');
+  if (body.releaseUrl !== `https://github.com/${repository}/releases/tag/${releaseTag}`) fail('Validated update response has the wrong release URL');
   if (body.installation.state !== (body.available ? 'available' : 'installed')) fail('Validated update installation status is inconsistent');
 }
 
-function verifyMachO(filePath) {
+function verifyNativeFile(filePath, target) {
   const stat = lstatSync(filePath);
   if (!stat.isFile() || stat.isSymbolicLink()) fail(`Native artifact is not a regular file: ${filePath}`);
-  const identified = spawnSync('file', ['-b', filePath], { encoding: 'utf8', timeout: 5_000 });
-  if (identified.status !== 0 || !identified.stdout.includes('Mach-O') || !identified.stdout.includes('arm64')) {
-    fail(`Native artifact is not arm64 Mach-O: ${filePath}: ${identified.stdout || identified.stderr}`);
-  }
-  const architectures = spawnSync('lipo', ['-archs', filePath], { encoding: 'utf8', timeout: 5_000 });
-  if (architectures.status !== 0 || architectures.stdout.trim() !== 'arm64') {
-    fail(`Native artifact has unexpected architectures: ${filePath}: ${architectures.stdout || architectures.stderr}`);
+  verifyNativeBinary(readFileSync(filePath), target, filePath);
+}
+
+function installedPackages(root) {
+  const packages = new Map();
+  const walk = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const child = join(directory, entry.name);
+      if (entry.name.startsWith('@')) {
+        walk(child);
+        continue;
+      }
+      try {
+        const packageJson = JSON.parse(readFileSync(join(child, 'package.json'), 'utf8'));
+        if (/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/i.test(packageJson.name || '')) {
+          const values = packages.get(packageJson.name) || [];
+          values.push(child);
+          packages.set(packageJson.name, values);
+        }
+      } catch {
+        // A node_modules directory can contain non-package directories.
+      }
+      const nested = join(child, 'node_modules');
+      try { walk(nested); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+    }
+  };
+  walk(join(root, 'node_modules'));
+  return packages;
+}
+
+export function assertPackagedForkParity(installRoot, packageRoot = resolve('packages/web')) {
+  for (const relativePath of [
+    'bin/cli.js',
+    'server/lib/agent-tool/runtime.js',
+    'server/lib/opm-status/routes.js',
+    'server/lib/session-goal/runtime.js',
+  ]) {
+    const installed = readFileSync(join(installRoot, relativePath));
+    const source = readFileSync(join(packageRoot, relativePath));
+    if (!installed.equals(source)) fail(`Packaged fork artifact differs from source: ${relativePath}`);
   }
 }
 
-function exerciseNativeModules(installRoot, temporaryRoot) {
-  const sherpaRoot = join(installRoot, 'node_modules', 'sherpa-onnx-darwin-arm64');
-  for (const nativePath of [
-    join(installRoot, 'node_modules', 'node-pty', 'prebuilds', 'darwin-arm64', 'pty.node'),
-    join(sherpaRoot, 'sherpa-onnx.node'),
-    join(sherpaRoot, 'libonnxruntime.1.24.4.dylib'),
-    join(sherpaRoot, 'libonnxruntime.dylib'),
-    join(sherpaRoot, 'libsherpa-onnx-c-api.dylib'),
-    join(sherpaRoot, 'libsherpa-onnx-cxx-api.dylib'),
-  ]) verifyMachO(nativePath);
+function exerciseNativeModules(installRoot, temporaryRoot, target) {
+  const packages = installedPackages(installRoot);
+  const nodePtyRoots = packages.get('node-pty') || [];
+  const sherpaRoots = packages.get(`sherpa-onnx-${target.platform}-${target.arch}`) || [];
+  if (nodePtyRoots.length !== 1 || sherpaRoots.length !== 1) fail('Installed native package identities are missing or ambiguous');
+  const nodePtyBindingPaths = [
+    join(nodePtyRoots[0], 'build', 'Release', 'pty.node'),
+    join(nodePtyRoots[0], 'build', 'Debug', 'pty.node'),
+    join(nodePtyRoots[0], 'prebuilds', `${target.platform}-${target.arch}`, 'pty.node'),
+  ].filter((path) => {
+    try { return lstatSync(path).isFile(); } catch { return false; }
+  });
+  if (nodePtyBindingPaths.length === 0) fail('Installed node-pty binding is missing');
+  for (const bindingPath of nodePtyBindingPaths) verifyNativeFile(bindingPath, target);
+  const nativeFiles = [];
+  const collectNative = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) collectNative(path);
+      else if (entry.name.endsWith('.node') || entry.name.endsWith('.dylib') || /\.so(?:\.\d+(?:\.\d+)*)?$/.test(entry.name)) nativeFiles.push(path);
+    }
+  };
+  collectNative(sherpaRoots[0]);
+  if (!nativeFiles.some((path) => path.endsWith('.node')) || nativeFiles.length < 2) fail('Installed sherpa native payload is incomplete');
+  for (const nativePath of nativeFiles) verifyNativeFile(nativePath, target);
 
   const script = `
     const pty = require('node-pty');
@@ -125,7 +174,7 @@ function exerciseNativeModules(installRoot, temporaryRoot) {
     timeout: 15_000,
     env: {
       ...process.env,
-      DYLD_LIBRARY_PATH: sherpaRoot,
+      ...(target.platform === 'darwin' ? { DYLD_LIBRARY_PATH: sherpaRoots[0] } : { LD_LIBRARY_PATH: sherpaRoots[0] }),
       HOME: temporaryRoot,
       NODE_PATH: '',
     },
@@ -141,6 +190,8 @@ async function main() {
   const version = options.version || fail('Missing --version');
   const sourceCommit = options['source-commit'] || fail('Missing --source-commit');
   const channelRepository = options['channel-repository'] || null;
+  const releaseTag = options['release-tag'] || `v${version}`;
+  if (releaseTag !== `v${version}` && releaseTag !== `web-v${version}`) fail(`Invalid strict release tag: ${releaseTag}`);
   const target = validateArtifactTarget({
     platform: options.platform,
     arch: options.arch,
@@ -159,6 +210,7 @@ async function main() {
 
   try {
     verifyRelocatableArchive(tarball, { expectedVersion: version, sourceCommit, target, extractDirectory: installRoot });
+    assertPackagedForkParity(installRoot);
 
     const cli = join(installRoot, 'bin', 'cli.js');
     const reportedVersion = spawnSync(process.execPath, [cli, '--version'], {
@@ -169,9 +221,7 @@ async function main() {
     if (reportedVersion.status !== 0 || reportedVersion.stdout.trim() !== version) {
       fail(`Installed CLI reported ${reportedVersion.stdout.trim() || '<empty>'}; expected ${version}`);
     }
-    if (target.platform === 'darwin' && target.arch === 'arm64' && target.nodeAbi === '127') {
-      exerciseNativeModules(installRoot, temporaryRoot);
-    }
+    exerciseNativeModules(installRoot, temporaryRoot, target);
 
     const stubPort = await listen(stub);
     const reservation = createServer();
@@ -239,7 +289,7 @@ async function main() {
       });
       const updateBody = await update.json();
       if (!update.ok) fail(`Strict channel update check failed: ${update.status}: ${JSON.stringify(updateBody)}`);
-      assertChannelResponse(updateBody, { version, repository: channelRepository });
+      assertChannelResponse(updateBody, { version, repository: channelRepository, releaseTag });
     }
 
   } catch (error) {

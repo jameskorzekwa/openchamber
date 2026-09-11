@@ -6,6 +6,8 @@ const row = (overrides = {}) => ({
   project: 'openchamber', projectName: 'OpenChamber', ref: '1', title: 'Work', phase: 'active', state: 'implemented', action: 'active', activityState: 'working',
   parentRef: null, branch: null, sessionId: null, workspacePath: null, reason: null, nextAction: null, updatedAt: null,
   effect: null, children: [], kind: null, command: null, owner: { required: false, instruction: 'Nothing needed.' }, url: null,
+  needsOwnerDecision: false, question: null, alias: null, activeMs: 0, activeSince: null,
+  blockerKind: null, needsOperatorAttention: false, authorization: null,
   ...overrides,
 });
 
@@ -16,8 +18,8 @@ const snapshot = (workRow = row()) => ({
   summary: 'Working',
   healthOk: true,
   paused: false,
-  counts: { needsYou: 99, blocked: 99, active: 99, waiting: 99, queued: 99 },
-  groups: { needsYou: [], blocked: [], active: [workRow], waiting: [], queued: [] },
+  counts: { needsYou: 99, operatorAttention: 99, blocked: 99, active: 99, waiting: 99, queued: 99 },
+  groups: { needsYou: [], operatorAttention: [], blocked: [], active: [workRow], waiting: [], queued: [] },
   tree: [{ ...workRow, childRows: [] }],
   supervisor: { running: true, pausedReason: null, startedAt: null, lastPollAt: null, pollIntervalMs: null, counters: {}, attention: [], projects: [] },
 });
@@ -27,7 +29,7 @@ describe('OPM status parser', () => {
     const parsed = parseOpmSnapshot(snapshot());
     expect(parsed.available).toBe(true);
     if (!parsed.available) throw new Error('expected available snapshot');
-    expect(getOpmCounts(parsed)).toEqual({ needsYou: 0, blocked: 0, active: 1, waiting: 0, queued: 0 });
+    expect(getOpmCounts(parsed)).toEqual({ needsYou: 0, operatorAttention: 0, blocked: 0, active: 1, waiting: 0, queued: 0 });
     expect(parsed.tree[0]).toMatchObject({ state: 'implemented', action: 'active' });
   });
 
@@ -50,7 +52,7 @@ describe('OPM status parser', () => {
     Reflect.deleteProperty(legacyRow, 'action');
     const parsed = parseOpmSnapshot(snapshot(legacyRow));
     if (!parsed.available) throw new Error('expected available snapshot');
-    expect(parsed.tree[0]).toMatchObject({ state: null, action: null });
+    expect(parsed.tree[0]).toMatchObject({ state: null, action: null, needsOwnerDecision: false, question: null });
   });
 
   test('keeps unavailable distinct from successful empty work', () => {

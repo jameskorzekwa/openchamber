@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Updates: the Web app no longer reloads itself as soon as the update dialog opens after an earlier update has finished. The dialog offers the new version and only reloads once the update it started is installed.
 - Mobile/OPM: the status dashboard now keeps its title and close button clear of notices, contains long text, shows task-state totals first, and presents parent and child tasks as compact expandable rows.
 
 ## [1.21.0] - 2026-08-26

@@ -4,9 +4,11 @@ import {
   buildSnapshot,
   createOpmStatusPoller,
   isCommandAllowed,
+  laneFor,
   ownerGuidance,
   registerOpmStatusRoutes,
   resolveRepo,
+  validateQuestionDecision,
 } from './routes.js';
 
 const SHA = 'a'.repeat(40);
@@ -52,14 +54,41 @@ describe('OPM owner guidance and classification', () => {
       status: { ok: true },
     });
 
-    expect(snapshot.counts).toEqual({ needsYou: 0, blocked: 1, active: 1, waiting: 1, queued: 1 });
+    // Row 3: phase=blocked with generic reason goes to blocked group (not operatorAttention)
+    // Row 4: phase=active with 'worker limit' reason goes to operatorAttention (capability_blocked)
+    expect(snapshot.counts).toEqual({ needsYou: 0, operatorAttention: 1, blocked: 1, active: 1, waiting: 1, queued: 0 });
     expect(snapshot.groups.active.map((row) => row.ref)).toEqual(['1']);
     expect(snapshot.groups.waiting.map((row) => row.ref)).toEqual(['2']);
-    expect(snapshot.groups.queued.map((row) => row.ref)).toEqual(['4']);
+    expect(snapshot.groups.blocked.map((row) => row.ref)).toEqual(['3']);
+    expect(snapshot.groups.operatorAttention.map((row) => row.ref)).toEqual(['4']);
     expect(snapshot.groups.active[0]).toMatchObject({ state: 'implemented', action: 'active' });
   });
 
-  it('promotes authorization and dead-letter rows into needs-you with exact commands', () => {
+  it('keeps an item whose lifecycle effect is due on the board instead of dropping it between polls', () => {
+    // OPM moves such an item into its fourth bucket, pendingOperations; the
+    // dashboard read three and the row vanished until the effect was deferred
+    // again (heirloom#856 flickered 5 <-> 3 on 2026-09-05).
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({ ref: '820', phase: 'waiting_external', reason: 'waiting on 4/5 chunks' })],
+        pendingOperations: [entry({
+          ref: '856',
+          phase: 'active',
+          action: 'remediating',
+          parentRef: '854',
+          effect: { kind: 'session.wake', status: 'pending', attempts: 0, error: null },
+          nextAction: 'session.wake is queued for the supervisor.',
+        })],
+      },
+      status: { ok: true },
+    });
+
+    expect(snapshot.groups.active.map((row) => row.ref)).toEqual(['856']);
+    expect(snapshot.groups.active[0]).toMatchObject({ activityState: 'pending', action: 'remediating' });
+    expect(snapshot.counts).toEqual({ needsYou: 0, operatorAttention: 0, blocked: 0, active: 1, waiting: 1, queued: 0 });
+  });
+
+  it('promotes authorization rows into needs-you and dead-letter rows into operatorAttention', () => {
     const snapshot = buildSnapshot({
       activity: {
         blockers: [
@@ -70,9 +99,92 @@ describe('OPM owner guidance and classification', () => {
       status: { ok: false },
     });
 
-    expect(snapshot.groups.needsYou).toHaveLength(2);
+    // Authorization goes to needsYou (owner decision), dead-letter goes to operatorAttention
+    expect(snapshot.groups.needsYou).toHaveLength(1);
     expect(snapshot.groups.needsYou[0]).toMatchObject({ kind: 'needs-owner', command: `/agent authorize ${SHA}`, owner: { required: true } });
-    expect(snapshot.groups.needsYou[1]).toMatchObject({ kind: 'dead-letter', command: '/agent resume', owner: { required: true } });
+    expect(snapshot.groups.operatorAttention).toHaveLength(1);
+    expect(snapshot.groups.operatorAttention[0]).toMatchObject({ kind: 'dead-letter', command: '/agent resume', owner: { required: true } });
+  });
+
+  it('preserves owner questions and classifies them only as needs-you', () => {
+    const question = {
+      id: 'question-1',
+      askedBy: 'worker',
+      text: 'Which release path should I use?',
+      options: [
+        { key: 'A', label: 'Stable', detail: 'Use the stable channel', command: '/agent decide A' },
+        { key: 'B', label: 'Preview', detail: 'Use the preview channel', command: '/agent decide B' },
+      ],
+      url: 'https://github.com/owner/openchamber/issues/12#issuecomment-1',
+    };
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '12',
+          phase: 'waiting_external',
+          needsOwnerDecision: true,
+          question,
+        })],
+      },
+      status: { ok: true },
+    });
+
+    expect(snapshot.counts).toEqual({ needsYou: 1, operatorAttention: 0, blocked: 0, active: 0, waiting: 0, queued: 0 });
+    expect(snapshot.groups.needsYou[0]).toMatchObject({
+      kind: 'owner-question',
+      needsOwnerDecision: true,
+      question,
+      command: null,
+      owner: { required: true },
+    });
+  });
+
+  it('classifies waiting_owner decisions as needs-you with the supervisor command, not only legacy authorisation', () => {
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({ ref: '115', phase: 'waiting_owner', action: 'waiting_owner', needsOwnerDecision: true, decisionCommand: '/agent decide <your decision and authorization>', reason: 'owner decision required: review rejected a641a8b8' })],
+      },
+      status: { ok: true, running: true },
+    });
+    expect(snapshot.groups.needsYou.map((row) => row.ref)).toEqual(['115']);
+    expect(snapshot.groups.needsYou[0].kind).toBe('needs-owner');
+    expect(snapshot.groups.needsYou[0].command).toBe('/agent decide <your decision and authorization>');
+    expect(snapshot.groups.blocked).toEqual([]);
+  });
+
+  it('groups rows by project into owner lanes and passes through urls, alias, active time, completed', () => {
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [
+          entry({ project: 'hh', projectName: 'Heirloom', alias: 'hh', ref: '1', phase: 'waiting_owner', action: 'waiting_owner', needsOwnerDecision: true, decisionCommand: '/agent decide A', url: 'https://x/1' }),
+          entry({ project: 'hh', projectName: 'Heirloom', alias: 'hh', ref: '2', phase: 'waiting_external', action: 'waiting_external', reason: 'waiting for checks on abc', activeMs: 5000 }),
+        ],
+        active: [entry({ project: 'hh', projectName: 'Heirloom', alias: 'hh', ref: '3', phase: 'active', action: 'reviewing', sessionId: 'ses_1', activeMs: 100, activeSince: '2026-09-02T00:00:00Z' })],
+        queued: [entry({ project: 'opm', projectName: 'OPM', alias: 'opm', ref: '4', phase: 'planned', action: 'queued', reason: 'queued: project is at its 1-worker limit' })],
+        completed: [{ project: 'hh', projectName: 'Heirloom', alias: 'hh', ref: '9', title: 'Done', url: 'https://x/9', completedAt: '2026-09-02T00:00:00Z', activeMs: 42 }],
+        completedTotal: 7,
+      },
+      status: { ok: true, running: true, projects: [
+        { projectId: 'u1', project: 'hh', projectName: 'Heirloom' },
+        { projectId: 'u2', project: 'opm', projectName: 'OPM' },
+        { projectId: 'u3', project: 'ducks', projectName: 'QuickDucks' },
+      ] },
+      issueUrls: { opm: 'https://map/{ref}' },
+    });
+    // Row 4 is queued due to 'worker limit', which is capability_blocked (operational), not backlog.
+    expect(snapshot.byProject.map((group) => [group.project, group.counts])).toEqual([
+      ['hh', { needsYou: 1, operatorAttention: 0, running: 1, waiting: 1, backlog: 0 }],
+      ['opm', { needsYou: 0, operatorAttention: 1, running: 0, waiting: 0, backlog: 0 }],
+      ['ducks', { needsYou: 0, operatorAttention: 0, running: 0, waiting: 0, backlog: 0 }],
+    ]);
+    expect(snapshot.byProject[0].items.map((item) => [item.ref, item.lane])).toEqual([['1', 'needsYou'], ['3', 'running'], ['2', 'waiting']]);
+    expect(snapshot.byProject[0].items[0].url).toBe('https://x/1');
+    expect(snapshot.byProject[0].items[1].activeSince).toBe('2026-09-02T00:00:00Z');
+    expect(snapshot.byProject[0].items[2].activeMs).toBe(5000);
+    expect(snapshot.byProject[1].items[0].url).toBe('https://map/4');
+    expect(snapshot.completed).toEqual([{ project: 'hh', projectName: 'Heirloom', alias: 'hh', ref: '9', title: 'Done', url: 'https://x/9', completedAt: '2026-09-02T00:00:00Z', activeMs: 42 }]);
+    expect(snapshot.completedTotal).toBe(7);
+    expect(laneFor({ phase: 'active', action: 'active', sessionId: null, reason: null })).toBe('waiting');
   });
 
   it('builds one parent-child tree, synthesizes missing children, and keeps rich rows', () => {
@@ -200,7 +312,8 @@ describe('OPM command endpoint', () => {
       blockers: [entry({ ref: '10', phase: 'blocked', reason: `needs owner authorisation; comment "${AUTHORIZE}"` })],
       active: [entry({ ref: '20', phase: 'active' })],
     },
-    status: { ok: true, attention: [{ kind: 'stalled_dispatch', ref: '77', detail: 'no progress' }] },
+    // NOTE: attention items must have project to allow command admission (cfg#179 fix)
+    status: { ok: true, attention: [{ kind: 'stalled_dispatch', project: 'openchamber', ref: '77', detail: 'no progress' }] },
   });
 
   const register = ({ snapshot = commandSnapshot(), config, execFile } = {}) => {
@@ -258,10 +371,15 @@ describe('OPM command endpoint', () => {
     runtime.close();
   });
 
-  it('allows "/agent resume" for non-terminal rows and stalled attention refs, not for terminal rows', async () => {
+  it('allows "/agent resume" only for dead-letter rows and matching attention refs, not blanket non-terminal', async () => {
+    // NOTE: The old behavior allowed blanket /agent resume for any non-terminal row.
+    // The new behavior (cfg#179 fix) requires dead-letter kind OR matching attention entry.
     const snapshot = commandSnapshot();
-    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '20', command: '/agent resume' })).toBe(true);
+    // Row 20 is active (not dead-letter), so /agent resume is NOT allowed
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '20', command: '/agent resume' })).toBe(false);
+    // Row 77 is in attention with matching project, so /agent resume IS allowed
     expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '77', command: '/agent resume' })).toBe(true);
+    // Unknown ref is not allowed
     expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '999', command: '/agent resume' })).toBe(false);
     const terminal = buildSnapshot({
       activity: { active: [entry({ ref: '30', phase: 'completed' })] },
@@ -270,14 +388,23 @@ describe('OPM command endpoint', () => {
     expect(isCommandAllowed(terminal, { project: 'openchamber', ref: '30', command: '/agent resume' })).toBe(false);
     expect(isCommandAllowed({ available: false }, { project: 'openchamber', ref: '20', command: '/agent resume' })).toBe(false);
 
+    // Create a snapshot with a dead-letter row to test valid resume
+    const deadLetterSnapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({ ref: '25', phase: 'blocked', reason: 'effect session.create exhausted its retries' })],
+      },
+      status: { ok: true },
+    });
+    expect(isCommandAllowed(deadLetterSnapshot, { project: 'openchamber', ref: '25', command: '/agent resume' })).toBe(true);
+
     const execFile = vi.fn((_command, _args, _options, callback) => callback(null, '', ''));
-    const { handler, runtime } = register({ execFile });
+    const { handler, runtime } = register({ snapshot: deadLetterSnapshot, execFile });
     const res = createRes();
-    await handler({ body: { project: 'openchamber', ref: '20', command: '/agent resume' } }, res);
+    await handler({ body: { project: 'openchamber', ref: '25', command: '/agent resume' } }, res);
     expect(res.body).toEqual({ ok: true });
     expect(execFile).toHaveBeenCalledWith(
       'gh',
-      ['issue', 'comment', '20', '--repo', 'owner/name', '--body', '/agent resume'],
+      ['issue', 'comment', '25', '--repo', 'owner/name', '--body', '/agent resume'],
       expect.objectContaining({ timeout: 15_000 }),
       expect.any(Function),
     );
@@ -327,5 +454,668 @@ describe('OPM command endpoint', () => {
     expect(failRes.body).toMatchObject({ ok: false, error: expect.stringContaining('ENOENT') });
     expect(failing.poller.poll).not.toHaveBeenCalled();
     failing.runtime.close();
+  });
+});
+
+describe('OPM owner questions', () => {
+  const options = [
+    { key: 'A', label: 'Stable', detail: 'Use the stable channel', command: '/agent decide A' },
+    { key: 'B', label: 'Preview', detail: 'Use the preview channel', command: '/agent decide B' },
+  ];
+  const question = (overrides = {}) => ({
+    id: 'q1',
+    askedBy: 'controller',
+    text: 'Which release channel?',
+    options,
+    url: 'https://github.com/owner/name/issues/50#issuecomment-1',
+    ...overrides,
+  });
+  const questionSnapshot = (q = question()) => buildSnapshot({
+    activity: { active: [entry({ ref: '50', phase: 'waiting_owner', question: q })] },
+    status: { ok: true },
+  });
+
+  it('carries OPM structured recommendation through the snapshot and drops one naming an unknown option', () => {
+    const recommended = questionSnapshot(question({ recommendation: { key: 'B', reason: 'Preview carries the fix already' } }));
+    expect(recommended.groups.needsYou[0].question).toMatchObject({
+      id: 'q1',
+      recommendation: { key: 'B', reason: 'Preview carries the fix already' },
+    });
+
+    const legacy = questionSnapshot(question());
+    expect(legacy.groups.needsYou[0].question.recommendation).toBeNull();
+
+    const unknown = questionSnapshot(question({ recommendation: { key: 'Z', reason: 'not an option' } }));
+    expect(unknown.groups.needsYou[0].question.recommendation).toBeNull();
+  });
+
+  it('validates a decision against the live question: exact id, known option, or custom text', () => {
+    const snapshot = questionSnapshot();
+    const base = { project: 'openchamber', ref: '50', questionId: 'q1' };
+    expect(validateQuestionDecision(snapshot, { ...base, optionKey: 'B' })).toBe('/agent decide B');
+    expect(validateQuestionDecision(snapshot, { ...base, optionKey: 'Z' })).toBeNull();
+    expect(validateQuestionDecision(snapshot, { ...base, customText: '  ship it on Monday ' })).toBe('/agent decide ship it on Monday');
+    expect(validateQuestionDecision(snapshot, { ...base, customText: '   ' })).toBeNull();
+    expect(validateQuestionDecision(snapshot, { ...base, questionId: 'stale', optionKey: 'A' })).toBeNull();
+    expect(validateQuestionDecision(snapshot, { ...base, ref: '51', optionKey: 'A' })).toBeNull();
+    expect(validateQuestionDecision({ available: false }, { ...base, optionKey: 'A' })).toBeNull();
+  });
+
+  it('posts the exact option command as an issue comment and fails closed on a stale question', async () => {
+    const posted = new Map();
+    const calls = [];
+    const poller = { poll: vi.fn(), current: () => questionSnapshot() };
+    const runtime = registerOpmStatusRoutes({
+      get: () => {},
+      post: (route, ...handlers) => posted.set(route, handlers.at(-1)),
+    }, {
+      poller,
+      config: { controlUrl: 'http://127.0.0.1:47651', issueUrls: {}, repos: { openchamber: 'owner/name' } },
+      execFile: vi.fn((command, args, _options, callback) => { calls.push([command, args]); callback(null, '', ''); }),
+    });
+    poller.poll.mockClear();
+    const handler = posted.get('/api/opm/question/decide');
+    const createRes = () => {
+      const res = { statusCode: 200, body: null };
+      res.status = (code) => { res.statusCode = code; return res; };
+      res.json = (payload) => { res.body = payload; return res; };
+      return res;
+    };
+
+    try {
+      const ok = createRes();
+      await handler({ body: { project: 'openchamber', ref: '50', questionId: 'q1', optionKey: 'B' } }, ok);
+      expect(ok.statusCode).toBe(200);
+      expect(ok.body).toEqual({ ok: true });
+      expect(calls).toEqual([['gh', ['issue', 'comment', '50', '--repo', 'owner/name', '--body', '/agent decide B']]]);
+      expect(poller.poll).toHaveBeenCalledTimes(1);
+
+      const custom = createRes();
+      await handler({ body: { project: 'openchamber', ref: 50, questionId: 'q1', customText: 'ship it' } }, custom);
+      expect(custom.statusCode).toBe(200);
+      expect(calls.at(-1)[1].at(-1)).toBe('/agent decide ship it');
+
+      const stale = createRes();
+      await handler({ body: { project: 'openchamber', ref: '50', questionId: 'old', optionKey: 'A' } }, stale);
+      expect(stale.statusCode).toBe(400);
+      expect(stale.body).toMatchObject({ ok: false, error: expect.stringContaining('stale') });
+      expect(calls).toHaveLength(2);
+
+      const missing = createRes();
+      await handler({ body: { project: 'openchamber', ref: '50', questionId: 'q1' } }, missing);
+      expect(missing.statusCode).toBe(400);
+      expect(calls).toHaveLength(2);
+    } finally {
+      runtime.close();
+    }
+  });
+});
+
+describe('Blocker classification and command admission (cfg#179 fix)', () => {
+  it('classifies cfg#179 null-question stall as worker_recovery, not owner decision', () => {
+    // cfg#179: needsOwnerDecision=true + question=null + decisionCommand='/agent restart'
+    // should NOT be classified as owner decision because there is no answerable question.
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '179',
+          phase: 'waiting_owner',
+          action: 'waiting_owner',
+          needsOwnerDecision: true,
+          decisionCommand: '/agent restart',
+          question: null,
+          reason: 'unsupported PR-oriented handoff',
+        })],
+      },
+      status: { ok: true },
+    });
+
+    // Should NOT be in needsYou (owner decision) lane
+    expect(snapshot.groups.needsYou).toHaveLength(0);
+    // Should be in operatorAttention (operational fault needing investigation)
+    expect(snapshot.groups.operatorAttention).toHaveLength(1);
+    expect(snapshot.groups.operatorAttention[0]).toMatchObject({
+      ref: '179',
+      blockerKind: 'worker_recovery',
+      needsOperatorAttention: true,
+      kind: null, // Not 'needs-owner' because there is no answerable question
+      command: null, // The generic restart command is NOT exposed
+    });
+  });
+
+  it('does NOT allow blanket /agent resume for non-terminal rows without dead-letter kind', () => {
+    // Before the fix, any non-terminal row accepted /agent resume.
+    // After the fix, only dead-letter rows accept /agent resume.
+    const snapshot = buildSnapshot({
+      activity: {
+        active: [entry({ ref: '20', phase: 'active' })],
+        blockers: [entry({ ref: '21', phase: 'blocked', reason: 'dependency unavailable' })],
+      },
+      status: { ok: true },
+    });
+
+    // Active row without dead-letter should NOT accept /agent resume
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '20', command: '/agent resume' })).toBe(false);
+    // Blocked row without dead-letter should NOT accept /agent resume
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '21', command: '/agent resume' })).toBe(false);
+  });
+
+  it('allows /agent resume ONLY for dead-letter rows', () => {
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '11',
+          phase: 'blocked',
+          reason: 'effect session.create exhausted its retries',
+        })],
+      },
+      status: { ok: true },
+    });
+
+    // Dead-letter row should accept /agent resume
+    expect(snapshot.groups.operatorAttention[0]).toMatchObject({ kind: 'dead-letter', command: '/agent resume' });
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '11', command: '/agent resume' })).toBe(true);
+  });
+
+  it('rejects cross-project command injection (same ref, different project)', () => {
+    // A command for project A ref 50 must NOT be accepted when the snapshot
+    // shows project B ref 50.
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          project: 'project-b',
+          projectName: 'Project B',
+          ref: '50',
+          phase: 'blocked',
+          reason: 'effect session.create exhausted its retries',
+        })],
+      },
+      status: { ok: true, attention: [{ kind: 'stalled', project: 'project-b', ref: '50' }] },
+    });
+
+    // Project A ref 50 should NOT be allowed (wrong project)
+    expect(isCommandAllowed(snapshot, { project: 'project-a', ref: '50', command: '/agent resume' })).toBe(false);
+    // Project B ref 50 should be allowed (correct project)
+    expect(isCommandAllowed(snapshot, { project: 'project-b', ref: '50', command: '/agent resume' })).toBe(true);
+  });
+
+  it('requires project match in supervisor attention, not just ref-only fallback', () => {
+    const snapshot = buildSnapshot({
+      activity: { active: [] },
+      status: {
+        ok: true,
+        attention: [{ kind: 'stalled', project: 'hh', ref: '77', detail: 'no progress' }],
+      },
+    });
+
+    // Correct project should be allowed
+    expect(isCommandAllowed(snapshot, { project: 'hh', ref: '77', command: '/agent resume' })).toBe(true);
+    // Wrong project should NOT be allowed (ref-only fallback is removed)
+    expect(isCommandAllowed(snapshot, { project: 'opm', ref: '77', command: '/agent resume' })).toBe(false);
+  });
+
+  it('classifies genuine owner decision with explicit non-generic command', () => {
+    // A real waiting_owner with a specific decision command (not restart/resume)
+    // should still be classified as owner decision.
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '115',
+          phase: 'waiting_owner',
+          action: 'waiting_owner',
+          needsOwnerDecision: true,
+          decisionCommand: '/agent decide <your decision and authorization>',
+          question: null,
+          reason: 'owner decision required: review rejected a641a8b8',
+        })],
+      },
+      status: { ok: true },
+    });
+
+    expect(snapshot.groups.needsYou).toHaveLength(1);
+    expect(snapshot.groups.needsYou[0]).toMatchObject({
+      kind: 'needs-owner',
+      blockerKind: 'owner_decision',
+      command: '/agent decide <your decision and authorization>',
+    });
+  });
+
+  it('passes through blockerKind and needsOperatorAttention in children and attention', () => {
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '20',
+          phase: 'waiting_external',
+          reason: 'waiting on 2/3 chunks',
+          children: [
+            {
+              ref: '21',
+              title: 'Dead letter child',
+              phase: 'blocked',
+              state: 'implemented',
+              action: 'blocked',
+              activityState: 'stopped',
+              reason: 'effect session.create exhausted its retries',
+            },
+          ],
+        })],
+      },
+      status: {
+        ok: true,
+        attention: [{ kind: 'stalled', project: 'openchamber', ref: '21', detail: 'no progress' }],
+      },
+    });
+
+    // Child should have blockerKind and needsOperatorAttention
+    expect(snapshot.tree[0].childRows[0]).toMatchObject({
+      blockerKind: 'worker_recovery',
+      needsOperatorAttention: true,
+    });
+    // Attention item should have blockerKind and needsOperatorAttention
+    expect(snapshot.supervisor.attention[0]).toMatchObject({
+      needsOperatorAttention: true,
+    });
+  });
+
+  it('groups operator attention items separate from owner decisions in lanes', () => {
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [
+          // True owner question
+          entry({
+            ref: '10',
+            phase: 'waiting_owner',
+            needsOwnerDecision: true,
+            question: {
+              id: 'q1',
+              askedBy: 'worker',
+              text: 'Which path?',
+              options: [{ key: 'A', label: 'Path A', detail: '', command: '/agent decide A' }],
+              url: 'https://example.com/10#q1',
+            },
+          }),
+          // Dead letter (operator attention)
+          entry({
+            ref: '11',
+            phase: 'blocked',
+            reason: 'effect session.create exhausted its retries',
+          }),
+          // cfg#179-style stall (operator attention)
+          entry({
+            ref: '12',
+            phase: 'waiting_owner',
+            needsOwnerDecision: true,
+            decisionCommand: '/agent restart',
+            question: null,
+          }),
+        ],
+      },
+      status: { ok: true, projects: [{ project: 'openchamber', projectName: 'OpenChamber' }] },
+    });
+
+    expect(snapshot.counts.needsYou).toBe(1); // Only the true question
+    expect(snapshot.counts.operatorAttention).toBe(2); // Dead letter + cfg#179 stall
+
+    const project = snapshot.byProject.find((p) => p.project === 'openchamber');
+    expect(project.counts.needsYou).toBe(1);
+    expect(project.counts.operatorAttention).toBe(2);
+
+    const needsYouItems = project.items.filter((i) => i.lane === 'needsYou');
+    const operatorItems = project.items.filter((i) => i.lane === 'operatorAttention');
+    expect(needsYouItems.map((i) => i.ref)).toEqual(['10']);
+    expect(operatorItems.map((i) => i.ref)).toEqual(['11', '12']);
+  });
+
+  it('classifies protected-head policy approval as owner_decision via authorization field', () => {
+    const sha = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '200',
+          phase: 'blocked',
+          needsOwnerDecision: true,
+          question: null,
+          decisionCommand: `/agent authorize ${sha}`,
+          authorization: { kind: 'protected_change', sha, command: `/agent authorize ${sha}` },
+          reason: 'protected-head policy blocked: protected branch requires authorization',
+        })],
+      },
+      status: { ok: true },
+    });
+
+    expect(snapshot.groups.needsYou).toHaveLength(1);
+    expect(snapshot.groups.operatorAttention).toHaveLength(0);
+    expect(snapshot.groups.needsYou[0]).toMatchObject({
+      kind: 'needs-owner',
+      blockerKind: 'owner_decision',
+      needsOperatorAttention: false,
+      command: `/agent authorize ${sha}`,
+      authorization: { kind: 'protected_change', sha, command: `/agent authorize ${sha}` },
+    });
+    // Command should be allowed for protected-head approval
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '200', command: `/agent authorize ${sha}` })).toBe(true);
+  });
+
+  it('classifies protected-head via decisionCommand pattern even without authorization object', () => {
+    // Legacy or partial backend that sends authorize command but not authorization object
+    const sha = '1234567890abcdef1234567890abcdef12345678';
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '201',
+          phase: 'blocked',
+          needsOwnerDecision: true,
+          question: null,
+          decisionCommand: `/agent authorize ${sha}`,
+          reason: `needs owner authorisation; comment "/agent authorize ${sha}"`,
+        })],
+      },
+      status: { ok: true },
+    });
+
+    expect(snapshot.groups.needsYou).toHaveLength(1);
+    expect(snapshot.groups.needsYou[0]).toMatchObject({
+      kind: 'needs-owner',
+      blockerKind: 'owner_decision',
+      command: `/agent authorize ${sha}`,
+    });
+  });
+
+  it('passes authorization field through to inline children', () => {
+    const sha = 'deadbeef1234567890abcdef1234567890abcdef';
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '300',
+          phase: 'waiting_external',
+          reason: 'waiting on 1/2 chunks',
+          children: [
+            {
+              ref: '301',
+              title: 'Protected child',
+              phase: 'blocked',
+              state: 'implemented',
+              action: 'blocked',
+              activityState: 'stopped',
+              needsOwnerDecision: true,
+              question: null,
+              decisionCommand: `/agent authorize ${sha}`,
+              authorization: { kind: 'protected_change', sha, command: `/agent authorize ${sha}` },
+              reason: 'protected-head policy',
+            },
+          ],
+        })],
+      },
+      status: { ok: true },
+    });
+
+    const child = snapshot.tree[0].childRows[0];
+    expect(child).toMatchObject({
+      blockerKind: 'owner_decision',
+      needsOperatorAttention: false,
+      authorization: { kind: 'protected_change', sha, command: `/agent authorize ${sha}` },
+      command: `/agent authorize ${sha}`,
+    });
+  });
+
+  it('classifies legacy owner gates (changed branch binding) as owner_decision but rejects placeholder command', () => {
+    // Changed branch binding: needsOwnerDecision=true, question=null,
+    // reason='owner decision required: changed branch binding',
+    // decisionCommand='/agent decide <instructions>'
+    // This is a REAL owner decision, NOT an operational stall.
+    // BUT: the placeholder command is NOT directly executable.
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '400',
+          phase: 'waiting_owner',
+          needsOwnerDecision: true,
+          question: null,
+          decisionCommand: '/agent decide <your decision and authorization>',
+          reason: 'owner decision required: changed branch binding from feat/old to feat/new',
+        })],
+      },
+      status: { ok: true },
+    });
+
+    expect(snapshot.groups.needsYou).toHaveLength(1);
+    expect(snapshot.groups.operatorAttention).toHaveLength(0);
+    expect(snapshot.groups.needsYou[0]).toMatchObject({
+      kind: 'needs-owner',
+      blockerKind: 'owner_decision',
+      needsOperatorAttention: false,
+      command: '/agent decide <your decision and authorization>',
+      // No authorization field - this is NOT protected-path authorization
+      authorization: null,
+    });
+
+    // CRITICAL: Placeholder template command is NOT allowed to be executed.
+    // The owner must provide a real decision via the issue, not via UI Run button.
+    expect(isCommandAllowed(snapshot, {
+      project: 'openchamber',
+      ref: '400',
+      command: '/agent decide <your decision and authorization>',
+    })).toBe(false);
+  });
+
+  it('classifies stalled: prefix as worker_recovery, not owner_decision', () => {
+    // cfg#179 audit stall: needsOwnerDecision=true but reason starts with
+    // 'stalled:' and has no explicit owner request. This is operational.
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '401',
+          phase: 'waiting_owner',
+          needsOwnerDecision: true,
+          question: null,
+          decisionCommand: '/agent restart',
+          reason: 'stalled: audit reconciliation failed without recovery path',
+        })],
+      },
+      status: { ok: true },
+    });
+
+    expect(snapshot.groups.needsYou).toHaveLength(0);
+    expect(snapshot.groups.operatorAttention).toHaveLength(1);
+    expect(snapshot.groups.operatorAttention[0]).toMatchObject({
+      blockerKind: 'worker_recovery',
+      needsOperatorAttention: true,
+      // Generic restart command is NOT exposed
+      command: null,
+    });
+  });
+
+  it('classifies corrupt recorded question as evidence_reconciliation', () => {
+    // entry.question exists but is malformed (failed questionFor validation).
+    // The question=null in classifyEntry means validation failed.
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '402',
+          phase: 'waiting_owner',
+          needsOwnerDecision: true,
+          // question is an object but invalid (missing required fields)
+          question: { id: 'q1', malformed: true },
+          decisionCommand: '/agent decide <your choice>',
+          reason: 'owner decision required',
+        })],
+      },
+      status: { ok: true },
+    });
+
+    // The malformed question triggers evidence_reconciliation
+    expect(snapshot.groups.operatorAttention).toHaveLength(1);
+    expect(snapshot.groups.operatorAttention[0]).toMatchObject({
+      blockerKind: 'evidence_reconciliation',
+      needsOperatorAttention: true,
+    });
+  });
+
+  it('distinguishes protected-path authorization from other owner gates in UI', () => {
+    // Both are owner_decision but only protected-path has authorization metadata.
+    const sha = 'abc123def456abc123def456abc123def456abc1';
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [
+          // Protected-path authorization
+          entry({
+            ref: '500',
+            phase: 'blocked',
+            needsOwnerDecision: true,
+            question: null,
+            decisionCommand: `/agent authorize ${sha}`,
+            authorization: { kind: 'protected_change', sha, command: `/agent authorize ${sha}` },
+            reason: 'protected-head policy',
+          }),
+          // Legacy owner gate (NOT protected-path)
+          entry({
+            ref: '501',
+            phase: 'waiting_owner',
+            needsOwnerDecision: true,
+            question: null,
+            decisionCommand: '/agent decide proceed with manual merge',
+            reason: 'owner decision required: unreadable review workspace',
+          }),
+        ],
+      },
+      status: { ok: true },
+    });
+
+    expect(snapshot.groups.needsYou).toHaveLength(2);
+
+    // Protected-path has authorization
+    expect(snapshot.groups.needsYou[0]).toMatchObject({
+      ref: '500',
+      kind: 'needs-owner',
+      blockerKind: 'owner_decision',
+      authorization: { kind: 'protected_change', sha },
+      command: `/agent authorize ${sha}`,
+    });
+
+    // Legacy gate has NO authorization but still owner_decision
+    expect(snapshot.groups.needsYou[1]).toMatchObject({
+      ref: '501',
+      kind: 'needs-owner',
+      blockerKind: 'owner_decision',
+      authorization: null,
+      command: '/agent decide proceed with manual merge',
+    });
+
+    // Protected-head exact command IS allowed
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '500', command: `/agent authorize ${sha}` })).toBe(true);
+
+    // Legacy gate with exact (non-placeholder) command IS allowed
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '501', command: '/agent decide proceed with manual merge' })).toBe(true);
+  });
+
+  it('rejects placeholder template commands even when row.command matches exactly', () => {
+    // Action-safety: '/agent decide <your decision>' is an instruction TEMPLATE.
+    // Posting the literal placeholder would release a gate without a real decision.
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '600',
+          phase: 'waiting_owner',
+          needsOwnerDecision: true,
+          question: null,
+          decisionCommand: '/agent decide <your decision and authorization>',
+          reason: 'owner decision required: owner-only branch binding',
+        })],
+      },
+      status: { ok: true },
+    });
+
+    // The command IS recorded on the row (for display purposes)
+    expect(snapshot.groups.needsYou[0].command).toBe('/agent decide <your decision and authorization>');
+
+    // But it CANNOT be executed via the command endpoint
+    expect(isCommandAllowed(snapshot, {
+      project: 'openchamber',
+      ref: '600',
+      command: '/agent decide <your decision and authorization>',
+    })).toBe(false);
+
+    // Even if someone submits it directly, it's rejected
+    expect(isCommandAllowed(snapshot, {
+      project: 'openchamber',
+      ref: '600',
+      command: '/agent decide <instructions>',
+    })).toBe(false);
+
+    // BUT: a real decision (no placeholders) would be a custom-answer flow,
+    // which goes through validateQuestionDecision, not isCommandAllowed.
+  });
+
+  it('allows exact option commands and exact protected-head commands', () => {
+    const sha = 'fedcba0987654321fedcba0987654321fedcba09';
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [
+          // Question with exact option commands
+          entry({
+            ref: '700',
+            phase: 'waiting_owner',
+            needsOwnerDecision: true,
+            question: {
+              id: 'q1',
+              askedBy: 'worker',
+              text: 'Choose A or B?',
+              options: [
+                { key: 'A', label: 'Option A', detail: '', command: '/agent decide A' },
+                { key: 'B', label: 'Option B', detail: '', command: '/agent decide B' },
+              ],
+              url: 'https://example.com/700#q1',
+            },
+          }),
+          // Protected-head with exact SHA
+          entry({
+            ref: '701',
+            phase: 'blocked',
+            needsOwnerDecision: true,
+            question: null,
+            decisionCommand: `/agent authorize ${sha}`,
+            authorization: { kind: 'protected_change', sha, command: `/agent authorize ${sha}` },
+          }),
+        ],
+      },
+      status: { ok: true },
+    });
+
+    // Exact option commands are NOT validated via isCommandAllowed (they use
+    // validateQuestionDecision), but exact protected-head IS allowed.
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '701', command: `/agent authorize ${sha}` })).toBe(true);
+
+    // Placeholder variants are rejected
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '701', command: '/agent authorize <sha>' })).toBe(false);
+  });
+
+  it('stalled audit has no command at all (generic stall regression)', () => {
+    // cfg#179: Generic stalled audit with restart command should NOT expose any command.
+    const snapshot = buildSnapshot({
+      activity: {
+        blockers: [entry({
+          ref: '800',
+          phase: 'waiting_owner',
+          needsOwnerDecision: true,
+          question: null,
+          decisionCommand: '/agent restart',
+          reason: 'stalled: audit reconciliation failed',
+        })],
+      },
+      status: { ok: true },
+    });
+
+    // Classified as worker_recovery, NOT owner_decision
+    expect(snapshot.groups.operatorAttention).toHaveLength(1);
+    expect(snapshot.groups.needsYou).toHaveLength(0);
+    expect(snapshot.groups.operatorAttention[0]).toMatchObject({
+      blockerKind: 'worker_recovery',
+      // Generic restart command is NOT exposed
+      command: null,
+    });
+
+    // No command can be executed
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '800', command: '/agent restart' })).toBe(false);
+    expect(isCommandAllowed(snapshot, { project: 'openchamber', ref: '800', command: '/agent resume' })).toBe(false);
   });
 });

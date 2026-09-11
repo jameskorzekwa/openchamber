@@ -29,6 +29,10 @@ type UpdateState = {
   lastChecked: number | null;
   nextCheckInSec: number | null;
   installation: WebUpdateInstallationStatus | null;
+  // True only after this page watched a web install run to `installed`.
+  // The server keeps `installed` on disk after every update, so the state
+  // alone cannot distinguish "just finished" from "finished last week".
+  installationCompleted: boolean;
 };
 
 interface UpdateStore extends UpdateState {
@@ -221,6 +225,7 @@ const initialState: UpdateState = {
   lastChecked: null,
   nextCheckInSec: null,
   installation: null,
+  installationCompleted: false,
 };
 
 export const useUpdateStore = create<UpdateStore>()((set, get) => ({
@@ -351,8 +356,11 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
   },
 
   reconcileInstallation: (installation) => {
+    const previous = get();
     set({
       installation,
+      installationCompleted: installation?.state === 'installed'
+        && (previous.installationCompleted || isInstallationActive(previous.installation)),
       error: installation?.state === 'failed' || installation?.state === 'rollback' ? installation.error : null,
     });
     if (installationPollTimer) {

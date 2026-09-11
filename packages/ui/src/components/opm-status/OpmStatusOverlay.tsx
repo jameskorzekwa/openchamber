@@ -15,15 +15,26 @@ import { cn } from '@/lib/utils';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 
 import {
+  activeDurationMs,
+  formatDuration,
+  getLaneCounts,
+  isCommandActionable,
+  postOpmPause,
   fetchOpmStatus,
   getOpmCounts,
   getTotalOpmCount,
   openOpmRowSession,
   ownerGuidanceKind,
   postOpmCommand,
+  postQuestionDecision,
   type OpmAttention,
+  type OpmCompletedItem,
+  type OpmLane,
+  type OpmPauseResult,
+  type OpmProjectGroup,
   type OpmAvailableSnapshot,
   type OpmCommandResult,
+  type OpmQuestionDecisionParams,
   type OpmRow,
   type OpmSnapshot,
   type OpmStatusLoadResult,
@@ -271,6 +282,7 @@ const actionTone = (row: OpmRow) => {
 
 const ownerText = (row: OpmRow, t: Translate) => {
   switch (ownerGuidanceKind(row)) {
+    case 'question': return row.question?.text ?? '';
     case 'authorize': return t('opm.owner.authorize', { ref: row.ref });
     case 'deadLetter': return t('opm.owner.deadLetter', { ref: row.ref });
     case 'paused': return t('opm.owner.paused', { ref: row.ref });
@@ -320,6 +332,139 @@ type RunState =
   | { status: 'sent' }
   | { status: 'error'; message: string };
 
+// Component for rendering question options with submit buttons and custom answer input
+const QuestionDecisionBlock = ({
+  row,
+  onCopy,
+  copiedCommand,
+  decisionState,
+  onDecide,
+}: {
+  row: OpmRow;
+  onCopy: (command: string) => void;
+  copiedCommand: string | null;
+  decisionState?: QuestionDecisionState;
+  onDecide?: (row: OpmRow, optionKey: string | null, customText: string | null) => void;
+}) => {
+  const { t } = useI18n();
+  const [customText, setCustomText] = React.useState('');
+  const question = row.question;
+  if (!question) return null;
+
+  // Determine if any submission is in progress
+  const isAnyPending = decisionState?.status === 'pending';
+  const isSent = decisionState?.status === 'sent';
+  const pendingKey = decisionState?.status === 'pending' ? decisionState.key : null;
+
+  // OPM's question model names exactly one recommended option with a reason.
+  // Option order carries no meaning; a legacy question without a
+  // recommendation highlights nothing.
+  const recommendedKey = question.recommendation?.key ?? null;
+  const recommendationReason = question.recommendation?.reason?.trim() ?? '';
+
+  const handleOptionSubmit = (optionKey: string) => {
+    if (onDecide) onDecide(row, optionKey, null);
+  };
+
+  const handleCustomSubmit = () => {
+    if (onDecide && customText.trim()) {
+      onDecide(row, null, customText.trim());
+      setCustomText('');
+    }
+  };
+
+  return (
+    <div data-testid="opm-owner-question" className="mt-1.5 min-w-0 space-y-1.5 rounded-md bg-status-error/10 px-2 py-1.5 text-status-error typography-ui-label">
+      <p className="min-w-0 break-words [overflow-wrap:anywhere] font-medium">{question.text}</p>
+      {question.options.map((option) => {
+        const isRecommended = option.key === recommendedKey;
+        const isThisPending = pendingKey === option.key;
+        return (
+          <div
+            key={option.key}
+            data-testid={isRecommended ? 'opm-question-option-recommended' : 'opm-question-option'}
+            className={cn(
+              'flex min-w-0 flex-wrap items-center gap-2 rounded-md px-1.5 py-1',
+              isRecommended && 'bg-status-error/10 ring-1 ring-status-error/30',
+            )}
+          >
+            <p className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">
+              <strong>{option.key} — {option.label}</strong>
+              {isRecommended ? <span className="ml-1 text-[0.65rem] font-semibold uppercase tracking-wide opacity-80">({t('opm.question.recommended')})</span> : null}
+              {option.detail ? ` (${option.detail})` : ''}
+              {isRecommended && recommendationReason ? (
+                <span data-testid="opm-question-recommendation-reason" className="block opacity-80">{recommendationReason}</span>
+              ) : null}
+            </p>
+            <div className="flex shrink-0 items-center gap-1">
+              <Button
+                size="xs"
+                variant={isRecommended ? 'default' : 'outline'}
+                data-testid="opm-question-submit"
+                disabled={isAnyPending || isSent}
+                onClick={() => handleOptionSubmit(option.key)}
+              >
+                {isThisPending
+                  ? t('opm.actions.running')
+                  : isSent
+                    ? t('opm.actions.sent')
+                    : t('opm.question.submit')}
+              </Button>
+              <Button size="xs" variant="ghost" onClick={() => onCopy(option.command)} title={t('opm.actions.copy')}>
+                <Icon name={copiedCommand === option.command ? 'check' : 'clipboard'} className="size-3" />
+              </Button>
+            </div>
+          </div>
+        );
+      })}
+      <div className="flex min-w-0 flex-wrap items-center gap-2 border-t border-status-error/20 pt-1.5">
+        <label className="min-w-0 flex-1">
+          <span className="block text-[0.65rem] font-medium uppercase tracking-wide opacity-80">{t('opm.question.customLabel')}</span>
+          <input
+            type="text"
+            data-testid="opm-question-custom-input"
+            className="mt-0.5 w-full rounded-md border border-status-error/30 bg-background px-2 py-1 text-foreground typography-ui-label placeholder:text-muted-foreground focus:border-status-error/50 focus:outline-none focus:ring-1 focus:ring-status-error/30"
+            placeholder={t('opm.question.customPlaceholder')}
+            value={customText}
+            onChange={(event) => setCustomText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && customText.trim() && !isAnyPending && !isSent) {
+                handleCustomSubmit();
+              }
+            }}
+            disabled={isAnyPending || isSent}
+          />
+        </label>
+        <Button
+          size="xs"
+          variant="outline"
+          data-testid="opm-question-custom-submit"
+          disabled={!customText.trim() || isAnyPending || isSent}
+          onClick={handleCustomSubmit}
+        >
+          {pendingKey === null && isAnyPending
+            ? t('opm.actions.running')
+            : isSent
+              ? t('opm.actions.sent')
+              : t('opm.question.submitCustom')}
+        </Button>
+        <Button size="xs" variant="ghost" onClick={() => onCopy('/agent decide ')} title={t('opm.actions.copy')}>
+          <Icon name={copiedCommand === '/agent decide ' ? 'check' : 'clipboard'} className="size-3" />
+        </Button>
+      </div>
+      {decisionState?.status === 'error' ? (
+        <p className="mt-1 min-w-0 break-words typography-micro text-status-error" role="alert">{decisionState.message}</p>
+      ) : null}
+    </div>
+  );
+};
+
+type QuestionDecisionState =
+  | { status: 'idle' }
+  | { status: 'pending'; key: string | null }
+  | { status: 'sent' }
+  | { status: 'error'; message: string };
+
 const OpmWorkRow = ({
   row,
   isParent,
@@ -334,6 +479,9 @@ const OpmWorkRow = ({
   childrenExpanded,
   onToggleChildren,
   summaryRef,
+  now,
+  questionDecisionState,
+  onQuestionDecide,
 }: {
   row: OpmRow;
   isParent: boolean;
@@ -348,9 +496,19 @@ const OpmWorkRow = ({
   childrenExpanded?: boolean;
   onToggleChildren?: () => void;
   summaryRef?: (element: HTMLButtonElement | null) => void;
+  now: number;
+  questionDecisionState?: QuestionDecisionState;
+  onQuestionDecide?: (row: OpmRow, optionKey: string | null, customText: string | null) => void;
 }) => {
   const { locale, t } = useI18n();
   const projectLabel = `${row.projectName || row.project || 'OPM'} #${row.ref}`;
+  const referenceLabel = `${row.alias || row.project || 'OPM'}#${row.ref}`;
+  const activeMs = activeDurationMs(row, now);
+  const activeReadout = row.activeSince
+    ? t('opm.row.active', { duration: formatDuration(activeMs) })
+    : activeMs > 0
+      ? t('opm.row.worked', { duration: formatDuration(activeMs) })
+      : null;
   const statusPills = (
     <span className="flex shrink-0 items-center gap-0.5">
       <span data-testid="opm-row-state" className={cn('inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 typography-micro', stateTone(row))}>
@@ -388,45 +546,68 @@ const OpmWorkRow = ({
         >
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-1">
+              <span data-testid="opm-row-reference" className="shrink-0 font-semibold leading-4 text-foreground">{referenceLabel}</span>
               <span data-testid="opm-row-title" className="block min-w-0 flex-1 truncate font-medium leading-4 text-foreground">{row.title}</span>
               {statusPills}
             </span>
             <span className="flex min-w-0 items-center gap-1 leading-4 typography-micro text-muted-foreground">
-              <span data-testid="opm-row-reference" className="min-w-0 truncate">{projectLabel}</span>
-              {isParent ? <span className="shrink-0">· {t('opm.row.parent')}</span> : null}
-              {isChild ? <span className="shrink-0">· {t('opm.row.child')}</span> : null}
-              <span className="shrink-0">· {relativeAge(row.updatedAt, locale)}</span>
+              {isParent ? <span className="shrink-0">{t('opm.row.parent')}</span> : null}
+              {isChild ? <span className="shrink-0">{isParent ? '· ' : ''}{t('opm.row.child')}</span> : null}
+              {activeReadout ? <span data-testid="opm-row-active" className={cn('shrink-0', row.activeSince && 'text-status-success')}>{isParent || isChild ? '· ' : ''}{activeReadout}</span> : null}
+              {row.reason && !row.question ? <span className="min-w-0 truncate">{isParent || isChild || activeReadout ? '· ' : ''}{row.reason}</span> : <span className="shrink-0">{isParent || isChild || activeReadout ? '· ' : ''}{relativeAge(row.updatedAt, locale)}</span>}
             </span>
           </span>
           <Icon name="arrow-right-s" className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')} />
         </button>
       </div>
       <div data-testid="opm-row-detail" className={cn('min-w-0 pl-7', expanded ? 'mt-1.5 block' : 'hidden')}>
-        {row.url ? (
-          <a className="inline-flex min-w-0 max-w-full items-center gap-1 typography-micro text-muted-foreground hover:underline" href={row.url} target="_blank" rel="noreferrer">
-            <span className="min-w-0 truncate">{projectLabel}</span><Icon name="external-link" className="size-3 shrink-0" />
+        {(row.question?.url || row.url) ? (
+          <a className="inline-flex min-w-0 max-w-full items-center gap-1 typography-micro text-muted-foreground hover:underline" href={row.question?.url || row.url || undefined} target="_blank" rel="noreferrer">
+            <span className="min-w-0 truncate">{projectLabel} · {referenceLabel}</span><Icon name="external-link" className="size-3 shrink-0" />
           </a>
         ) : null}
         {row.parentRef ? <p className="mt-1 typography-micro text-muted-foreground">{t('opm.row.childOf', { ref: row.parentRef })}</p> : null}
         {row.reason ? <p className="mt-1 min-w-0 break-words [overflow-wrap:anywhere] typography-ui-label text-muted-foreground">{row.reason}</p> : null}
         {row.nextAction && row.nextAction !== row.reason ? <p className="mt-1 min-w-0 break-words [overflow-wrap:anywhere] typography-ui-label text-muted-foreground">{t('opm.row.nextAction', { action: row.nextAction })}</p> : null}
-        <div className={cn(
-          'mt-1.5 min-w-0 break-words rounded-md px-2 py-1.5 typography-ui-label',
-          row.owner.required ? 'bg-status-error/10 text-status-error' : 'bg-status-success/10 text-status-success',
-        )}>
-          {ownerText(row, t)}
-        </div>
+        {row.question ? (
+          <QuestionDecisionBlock
+            row={row}
+            onCopy={onCopy}
+            copiedCommand={copiedCommand}
+            decisionState={questionDecisionState}
+            onDecide={onQuestionDecide}
+          />
+        ) : (
+          <div className={cn(
+            'mt-1.5 min-w-0 break-words rounded-md px-2 py-1.5 typography-ui-label',
+            row.owner.required ? 'bg-status-error/10 text-status-error' : 'bg-status-success/10 text-status-success',
+          )}>
+            {ownerText(row, t)}
+          </div>
+        )}
         <div className="mt-1.5 min-w-0 space-y-1.5">
           {row.command ? (
             <code className="block w-full min-w-0 whitespace-pre-wrap break-all rounded-md bg-background px-2 py-1.5 typography-micro text-foreground">{row.command}</code>
           ) : null}
+          {/* Render operator-attention guidance when the row needs operator
+              inspection rather than owner action. The command is shown but
+              not actionable; the operator must diagnose first. */}
+          {row.needsOperatorAttention && !isCommandActionable(row) ? (
+            <div className="mt-1 rounded-md border border-status-warning/30 bg-status-warning/10 px-2 py-1.5 typography-ui-label text-status-warning">
+              {t('opm.operator.diagnosisNeeded')}
+            </div>
+          ) : null}
           {(row.command || row.sessionId) ? (
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              {row.command ? (
+              {/* Only show the Run button when the command is actionable.
+                  Operational faults show the command for reference but don't
+                  offer a primary action that won't help without diagnosis. */}
+              {row.command && isCommandActionable(row) ? (
                 <>
                   <Button
                     size="xs"
                     variant="default"
+                    data-testid="opm-command-run"
                     disabled={runState?.status === 'pending' || runState?.status === 'sent'}
                     onClick={() => onRun(row)}
                   >
@@ -441,6 +622,12 @@ const OpmWorkRow = ({
                     {copiedCommand === row.command ? t('opm.actions.copied') : t('opm.actions.copy')}
                   </Button>
                 </>
+              ) : row.command ? (
+                /* Command exists but not actionable: show copy only */
+                <Button size="xs" variant="outline" onClick={() => onCopy(row.command ?? '')}>
+                  <Icon name={copiedCommand === row.command ? 'check' : 'clipboard'} className="size-3" />
+                  {copiedCommand === row.command ? t('opm.actions.copied') : t('opm.actions.copy')}
+                </Button>
               ) : null}
               {row.sessionId ? (
                 <Button size="xs" variant="outline" onClick={() => onOpenSession(row)}>
@@ -466,15 +653,28 @@ const OpmWorkRow = ({
 
 const TaskOverview = ({ snapshot }: { snapshot: OpmAvailableSnapshot }) => {
   const { t } = useI18n();
-  const counts = getOpmCounts(snapshot);
+  const lanes = snapshot.byProject.length > 0 ? getLaneCounts(snapshot) : null;
+  const legacy = getOpmCounts(snapshot);
   const total = getTotalOpmCount(snapshot) ?? 0;
-  const states = [
-    { label: phaseLabel('waiting_owner', t), count: counts.needsYou, tone: 'text-status-error bg-status-error/10' },
-    { label: phaseLabel('blocked', t), count: counts.blocked, tone: 'text-status-warning bg-status-warning/10' },
-    { label: phaseLabel('active', t), count: counts.active, tone: 'text-status-success bg-status-success/10' },
-    { label: phaseLabel('waiting_external', t), count: counts.waiting, tone: 'text-status-info bg-status-info/10' },
-    { label: t('opm.overview.queued'), count: counts.queued, tone: 'text-muted-foreground bg-[var(--surface-muted)]' },
-  ];
+  const states = lanes
+    ? [
+        { label: t('opm.lane.needsYou'), count: lanes.needsYou, tone: 'text-status-error bg-status-error/10' },
+        // operatorAttention is separate from needsYou: operational faults vs owner decisions
+        ...(lanes.operatorAttention > 0 ? [{ label: t('opm.lane.operatorAttention'), count: lanes.operatorAttention, tone: 'text-status-warning bg-status-warning/10' }] : []),
+        { label: t('opm.lane.running'), count: lanes.running, tone: 'text-status-success bg-status-success/10' },
+        { label: t('opm.lane.waiting'), count: lanes.waiting, tone: 'text-status-info bg-status-info/10' },
+        { label: t('opm.lane.backlog'), count: lanes.backlog, tone: 'text-muted-foreground bg-[var(--surface-muted)]' },
+        ...(snapshot.completedTotal !== null ? [{ label: t('opm.completed.title'), count: snapshot.completedTotal, tone: 'text-foreground bg-[var(--surface-muted)]' }] : []),
+      ]
+    : [
+        { label: phaseLabel('waiting_owner', t), count: legacy.needsYou, tone: 'text-status-error bg-status-error/10' },
+        // Show operatorAttention in legacy mode too if present
+        ...(legacy.operatorAttention > 0 ? [{ label: t('opm.lane.operatorAttention'), count: legacy.operatorAttention, tone: 'text-status-warning bg-status-warning/10' }] : []),
+        { label: phaseLabel('blocked', t), count: legacy.blocked, tone: 'text-status-warning bg-status-warning/10' },
+        { label: phaseLabel('active', t), count: legacy.active, tone: 'text-status-success bg-status-success/10' },
+        { label: phaseLabel('waiting_external', t), count: legacy.waiting, tone: 'text-status-info bg-status-info/10' },
+        { label: t('opm.overview.queued'), count: legacy.queued, tone: 'text-muted-foreground bg-[var(--surface-muted)]' },
+      ];
   return (
     <section aria-labelledby="opm-task-overview" data-testid="opm-task-overview" className="min-w-0 rounded-md border border-border/60 bg-[var(--surface-elevated)] px-2 py-1.5">
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -574,6 +774,90 @@ const SupervisorSummary = ({
 
 const rowKey = (row: OpmRow) => `${row.project}#${row.ref}`;
 
+const LANE_ORDER: OpmLane[] = ['needsYou', 'operatorAttention', 'running', 'waiting', 'backlog'];
+const laneTone = (lane: OpmLane) => lane === 'needsYou'
+  ? 'text-status-error'
+  : lane === 'operatorAttention'
+    ? 'text-status-warning'
+    : lane === 'running'
+      ? 'text-status-success'
+      : lane === 'waiting'
+        ? 'text-status-info'
+        : 'text-muted-foreground';
+
+// One section per project; inside, the four lanes the operator asks about.
+// Empty projects collapse to their header so a five-project dashboard stays
+// scannable when only one has work.
+const ProjectGroups = ({
+  groups,
+  renderRow,
+}: {
+  groups: OpmProjectGroup[];
+  renderRow: (row: OpmRow, lane: OpmLane) => React.ReactNode;
+}) => {
+  const { t } = useI18n();
+  return (
+    <div data-testid="opm-project-groups" className="min-w-0 space-y-2">
+      {groups.map((group) => {
+        const total = group.items.length;
+        return (
+          <section key={group.project} data-testid="opm-project-group" aria-label={group.projectName || group.project} className="min-w-0 rounded-md border border-border/60 bg-[var(--surface-elevated)]">
+            <header className="flex min-w-0 items-center gap-2 px-2 py-1.5">
+              <h3 className="min-w-0 truncate font-semibold text-foreground typography-ui-label">{group.projectName || group.project}</h3>
+              <span className="shrink-0 typography-micro text-muted-foreground">{group.alias ? `${group.alias} · ` : ''}{total}</span>
+              <span className="ml-auto flex shrink-0 items-center gap-1 typography-micro">
+                {LANE_ORDER.filter((lane) => group.counts[lane] > 0).map((lane) => (
+                  <span key={lane} className={cn('rounded-full bg-background px-1.5 py-0.5', laneTone(lane))}>{group.counts[lane]} {t(`opm.lane.${lane}`)}</span>
+                ))}
+              </span>
+            </header>
+            {total === 0 ? null : (
+              <div className="min-w-0 space-y-1.5 border-t border-border/60 p-1.5">
+                {LANE_ORDER.map((lane) => {
+                  const rows = group.items.filter((item) => item.lane === lane);
+                  if (rows.length === 0) return null;
+                  return (
+                    <div key={lane} data-testid={`opm-lane-${lane}`} className="min-w-0">
+                      <p className={cn('mb-0.5 px-1 font-medium uppercase tracking-wide typography-micro', laneTone(lane))}>{t(`opm.lane.${lane}`)} · {rows.length}</p>
+                      <div className="min-w-0 space-y-1">{rows.map((row) => renderRow(row, lane))}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+};
+
+const CompletedSection = ({ items, total }: { items: OpmCompletedItem[]; total: number | null }) => {
+  const { locale, t } = useI18n();
+  return (
+    <details data-testid="opm-completed" className="min-w-0 overflow-hidden rounded-lg border border-border/60 bg-[var(--surface-elevated)]">
+      <summary className="cursor-pointer select-none px-3 py-2 font-medium text-foreground typography-ui-label hover:bg-interactive-hover">
+        <span>{t('opm.completed.title')}</span>
+        <span className="ml-2 rounded-full bg-[var(--surface-muted)] px-2 py-0.5 typography-micro text-muted-foreground">
+          {t('opm.completed.summary', { total: total ?? items.length, recent: items.length })}
+        </span>
+      </summary>
+      <div className="min-w-0 space-y-1 border-t border-border/60 p-1.5">
+        {items.length === 0 ? <p className="px-1 typography-micro text-muted-foreground">{t('opm.completed.empty')}</p> : items.map((item) => (
+          <div key={`${item.project}#${item.ref}`} className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1">
+            <a className="shrink-0 font-mono typography-micro text-muted-foreground hover:underline" href={item.url ?? undefined} target="_blank" rel="noreferrer">{item.alias || item.project}#{item.ref}</a>
+            <span className="min-w-0 flex-1 truncate typography-ui-label text-foreground">{item.title}</span>
+            <span className="shrink-0 typography-micro text-muted-foreground">
+              {item.completedAt ? t('opm.completed.at', { age: relativeAge(item.completedAt, locale) }) : null}
+              {item.activeMs > 0 ? ` · ${t('opm.row.worked', { duration: formatDuration(item.activeMs) })}` : ''}
+            </span>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+};
+
 const attentionPath = (rows: OpmTreeRow[], item: OpmAttention): OpmTreeRow[] | null => {
   for (const row of rows) {
     const projectMatches = !item.project || item.project === row.project;
@@ -605,17 +889,24 @@ export const OpmStatusOverlay = ({
   loadStatus = fetchOpmStatus,
   openSession = (sessionId, workspacePath) => useSessionUIStore.getState().setCurrentSession(sessionId, workspacePath),
   sendCommand = postOpmCommand,
+  setPaused = postOpmPause,
+  sendQuestionDecision = postQuestionDecision,
 }: {
   loadStatus?: () => Promise<OpmStatusLoadResult>;
   openSession?: (sessionId: string, workspacePath: string | null) => void;
   sendCommand?: (row: OpmRow) => Promise<OpmCommandResult>;
+  setPaused?: (paused: boolean) => Promise<OpmPauseResult>;
+  sendQuestionDecision?: (params: OpmQuestionDecisionParams) => Promise<OpmCommandResult>;
 }) => {
   const { locale, t } = useI18n();
   const [snapshot, setSnapshot] = React.useState<OpmSnapshot | null>(null);
+  const [now, setNow] = React.useState(() => Date.now());
+  const [pauseState, setPauseState] = React.useState<{ pending: boolean; error: string | null }>({ pending: false, error: null });
   const [supported, setSupported] = React.useState<boolean | null>(null);
   const [open, setOpen] = React.useState(false);
   const [copiedCommand, setCopiedCommand] = React.useState<string | null>(null);
   const [runStates, setRunStates] = React.useState<Record<string, RunState>>({});
+  const [questionDecisionStates, setQuestionDecisionStates] = React.useState<Record<string, QuestionDecisionState>>({});
   // Details stay collapsed until the owner opens them. Every summary remains
   // visible, including children, so the dashboard is useful at a glance.
   const [expandedOverrides, setExpandedOverrides] = React.useState<Record<string, boolean>>({});
@@ -658,13 +949,33 @@ export const OpmStatusOverlay = ({
     return () => document.documentElement.classList.remove(OPM_DIALOG_CLASS);
   }, [open]);
 
+  // The active-time readout ticks while the dialog is open; a poll every 15 s
+  // would show stale minutes between fetches.
+  React.useEffect(() => {
+    if (!open) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [open]);
+
   if (supported !== true || !snapshot) return null;
 
   const counts = snapshot.available
     ? getOpmCounts(snapshot)
     : { needsYou: 0, blocked: 0, active: 0, waiting: 0, queued: 0 };
+  const lanes = snapshot.available && snapshot.byProject.length > 0 ? getLaneCounts(snapshot) : null;
   const pillText = !snapshot.available
     ? t('opm.pill.offline')
+    : lanes
+      ? lanes.needsYou > 0
+        ? t('opm.pill.needsYou', { count: lanes.needsYou })
+        : lanes.running > 0
+          ? t('opm.pill.running', { count: lanes.running })
+          : lanes.waiting > 0
+            ? t('opm.pill.waiting', { count: lanes.waiting })
+            : lanes.backlog > 0
+              ? t('opm.pill.backlog', { count: lanes.backlog })
+              : t('opm.pill.idle')
     : counts.needsYou > 0
       ? t('opm.pill.needsYou', { count: counts.needsYou })
       : counts.blocked > 0
@@ -713,8 +1024,44 @@ export const OpmStatusOverlay = ({
       setRunStates((previous) => ({ ...previous, [key]: { status: 'error', message: result.error } }));
     }
   };
+  const submitQuestionDecision = async (row: OpmRow, optionKey: string | null, customText: string | null) => {
+    if (!row.question || !row.project) return;
+    const key = rowKey(row);
+    setQuestionDecisionStates((previous) => ({ ...previous, [key]: { status: 'pending', key: optionKey } }));
+    const result = await sendQuestionDecision({
+      project: row.project,
+      ref: row.ref,
+      questionId: row.question.id,
+      optionKey: optionKey ?? undefined,
+      customText: customText ?? undefined,
+    });
+    if (result.ok) {
+      setQuestionDecisionStates((previous) => ({ ...previous, [key]: { status: 'sent' } }));
+      window.setTimeout(() => {
+        setQuestionDecisionStates((previous) => {
+          const rest = { ...previous };
+          delete rest[key];
+          return rest;
+        });
+      }, SENT_RESET_MS);
+    } else {
+      setQuestionDecisionStates((previous) => ({ ...previous, [key]: { status: 'error', message: result.error } }));
+    }
+  };
+  const togglePause = async () => {
+    if (!snapshot.available) return;
+    setPauseState({ pending: true, error: null });
+    const result = await setPaused(!snapshot.paused);
+    if (result.ok) {
+      setSnapshot({ ...snapshot, paused: result.paused });
+      setPauseState({ pending: false, error: null });
+    } else {
+      setPauseState({ pending: false, error: result.error });
+    }
+  };
   const rowProps = (row: OpmRow, isParent: boolean, isChild: boolean, defaultExpanded = false, registerSummary = false) => ({
     row,
+    now,
     isParent,
     isChild,
     onCopy: copyCommand,
@@ -730,6 +1077,8 @@ export const OpmStatusOverlay = ({
       if (element) rowSummaries.current.set(rowKey(row), element);
       else rowSummaries.current.delete(rowKey(row));
     } : undefined,
+    questionDecisionState: questionDecisionStates[rowKey(row)],
+    onQuestionDecide: (target: OpmRow, optionKey: string | null, customText: string | null) => void submitQuestionDecision(target, optionKey, customText),
   });
   const renderHierarchy = (rows: OpmTreeRow[], depth = 0): React.ReactNode => rows.map((row) => {
     const children = row.childRows;
@@ -817,6 +1166,20 @@ export const OpmStatusOverlay = ({
           <DialogHeader className="sticky top-0 z-30 min-w-0 shrink-0 gap-1 border-b border-border/60 bg-background pb-2 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-[max(0.75rem,env(safe-area-inset-top))] text-left sm:pb-3 sm:pl-[max(1.25rem,env(safe-area-inset-left))] sm:pr-[max(1.25rem,env(safe-area-inset-right))] sm:pt-[max(1.25rem,env(safe-area-inset-top))]">
             <div className="flex min-w-0 items-center justify-between gap-2">
               <DialogTitle className="flex min-w-0 items-center gap-2"><StatusDot snapshot={snapshot} />OPM</DialogTitle>
+              {snapshot.available ? (
+                <Button
+                  size="xs"
+                  variant={snapshot.paused ? 'default' : 'outline'}
+                  data-testid="opm-pause-switch"
+                  aria-pressed={snapshot.paused}
+                  disabled={pauseState.pending}
+                  className="app-region-no-drag ml-auto shrink-0"
+                  onClick={() => void togglePause()}
+                >
+                  <Icon name={snapshot.paused ? 'play' : 'pause'} className="size-3" />
+                  {snapshot.paused ? t('opm.pause.resume') : t('opm.pause.pause')}
+                </Button>
+              ) : null}
               <Button
                 size="icon"
                 variant="ghost"
@@ -845,7 +1208,13 @@ export const OpmStatusOverlay = ({
               </div>
             ) : (
               <div className="space-y-2">
-                {snapshot.groups.needsYou.length > 0 ? (
+                {snapshot.paused ? (
+                  <div data-testid="opm-paused-banner" className="rounded-md border border-status-warning/40 bg-status-warning/10 px-2 py-1.5 text-status-warning typography-ui-label">{t('opm.pause.pausedBanner')}</div>
+                ) : null}
+                {pauseState.error ? (
+                  <p role="alert" className="typography-micro text-status-error">{t('opm.pause.failed', { error: pauseState.error })}</p>
+                ) : null}
+                {snapshot.byProject.length === 0 && snapshot.groups.needsYou.length > 0 ? (
                   <section aria-labelledby="opm-needs-you" data-testid="opm-needs-you" className="min-w-0 rounded-md border border-status-error/40 bg-status-error/5 p-1.5">
                     <h3 id="opm-needs-you" className="mb-1 px-1 font-semibold text-status-error typography-ui-label">
                       {t('opm.section.needsYou', { count: snapshot.groups.needsYou.length })}
@@ -860,10 +1229,20 @@ export const OpmStatusOverlay = ({
                 <TaskOverview snapshot={snapshot} />
                 <section aria-labelledby="opm-work-items">
                   <h3 id="opm-work-items" className="sr-only">{t('opm.section.workItems')}</h3>
-                  {snapshot.tree.length === 0 ? <p className="text-muted-foreground typography-ui-label">{t('opm.section.empty')}</p> : (
+                  {snapshot.byProject.length > 0 ? (
+                    <ProjectGroups
+                      groups={snapshot.byProject}
+                      renderRow={(row, lane) => (
+                        <OpmWorkRow key={rowKey(row)} {...rowProps(row, false, Boolean(row.parentRef), lane === 'needsYou', true)} />
+                      )}
+                    />
+                  ) : snapshot.tree.length === 0 ? <p className="text-muted-foreground typography-ui-label">{t('opm.section.empty')}</p> : (
                     <div data-testid="opm-work-tree" className="min-w-0 space-y-1.5">{renderHierarchy(prioritizedTree)}</div>
                   )}
                 </section>
+                {snapshot.completedTotal !== null || snapshot.completed.length > 0 ? (
+                  <CompletedSection items={snapshot.completed} total={snapshot.completedTotal} />
+                ) : null}
                 <SupervisorSummary snapshot={snapshot} onOpenAttention={openAttention} />
                 {notificationPermission === 'default' ? (
                   <footer className="flex justify-end border-t border-border/60 pt-3">

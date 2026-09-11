@@ -76,15 +76,19 @@ That runs, in order:
 2. `prepare:opencode-cli` to download/cache the pinned OpenCode CLI and copy it into `packages/electron/resources/opencode-cli`.
 3. `bundle:main` to create `packages/electron/dist-bundle/main.mjs`.
 4. `rebuild:native` to rebuild native modules for Electron.
-5. `package.mjs` to run `electron-builder`; its `afterPack` hook stages the compiled macOS icon asset catalog.
+5. `package.mjs` to run `electron-builder`; its `afterPack` hook stages the compiled macOS icon asset catalog and writes `app-update.yml` from the updater contract before signing or prepackaged artifact creation.
 
 Build output goes to `packages/electron/dist`.
+
+The investigation record for the missing macOS updater configuration in
+`1.21.0-j2k.22` is in
+[`docs/macos-updater-config-incident.md`](./docs/macos-updater-config-incident.md).
 
 macOS builds produce `dmg` and `zip` artifacts. Windows builds produce an NSIS installer. Linux builds produce an AppImage for the native x64 or arm64 host.
 
 ### J2K macOS release channel
 
-The customized macOS channel currently supports arm64 only. Every successful push or manually dispatched `J2K Validate` run for `j2k/current` starts the `J2K Desktop Release` workflow automatically. Manual desktop dispatch remains available for recovery and requires the exact 40-character source SHA. The workflow signs only when the validated or requested SHA, the current `j2k/current` tip, and the trusted workflow commit are identical and a successful `J2K Validate` run exists for that commit. Pull-request and `j2k/v*` validation cannot publish desktop releases.
+The customized macOS channel currently supports arm64 only. `J2K Sync Upstream` follows canonical upstream tags and creates an exact `j2k/vX.Y.Z` candidate. After `J2K Validate` succeeds, `J2K Release` runs the web release gate and calls `J2K Desktop Release` as a build-only component for that same candidate SHA. The desktop workflow has no publication permission. The unified publisher can advance `j2k/current`, create both tags, and publish either release only after both artifact sets pass their trusted verifiers.
 
 Desktop versions use canonical SemVer `X.Y.Z-j2k.N` and tags `desktop-vX.Y.Z-j2k.N`. These GitHub Releases are always prereleases with `make_latest=false`, so they never affect the stable web channel or `/releases/latest`. A desktop release has exactly these six assets:
 
@@ -99,15 +103,18 @@ desktop-release.json
 
 The J2K macOS updater reads `latest-mac.yml` from the dedicated `desktop-channel` branch through `https://raw.githubusercontent.com/jameskorzekwa/openchamber/desktop-channel/`. The workflow embeds the J2K channel marker when it bundles Electron. Ordinary macOS builds keep the upstream production provider, so a local or upstream package cannot opt into the private feed at runtime. The manifest's `files[].url` and legacy `path` are absolute URLs under the immutable matching GitHub prerelease tag. Binary resolution therefore never falls back to `raw.githubusercontent.com`. The compile-time-gated E2E build still accepts its credential-free loopback generic feed.
 
-The workflow stages the desktop version in the root, Electron, web, and shared UI package identities. It embeds the exact source SHA in the bundled web assets, rebuilds `node-pty` and `bun-pty` for Electron arm64, bundles the pinned OpenCode CLI, signs with the pinned private identity, and checks the app from staging, the ZIP, and the mounted DMG before publication. The release metadata records the verified certificate SHA-256 fingerprint and checksums without storing private key material.
+The workflow stages the desktop version in the root, Electron, web, and shared UI package identities. It embeds the exact source SHA in the bundled web assets, rebuilds `node-pty` and `bun-pty` for Electron arm64, bundles the pinned OpenCode CLI, signs with the pinned private identity, and checks the app from staging, the ZIP, and the mounted DMG before publication. Each final app must contain a strictly parsed `app-update.yml` that exactly matches the J2K contract. The release metadata records the verified certificate SHA-256 fingerprint and checksums without storing private key material.
 
-Publication is resumable but immutable. A retry may reuse a matching tag and draft release only when every existing asset is byte-identical; it uploads missing draft assets but never overwrites. After the exact six-asset prerelease is published, the trusted publisher creates a one-file `desktop-channel` commit and pushes it with the branch lease captured before the build. Candidate code runs only in a read-only job. The `contents:write` job checks candidates with verifier code from trusted `j2k/current` and never executes candidate files.
+After signing and final ZIP creation, a separate macOS job with read-only repository access launches a lower-version packaged app built through the same `--dir --publish=never` path. Its compile-time-gated updater points to a per-run loopback feed containing the unchanged final release ZIP. The job must discover the release, complete `electron-updater.downloadUpdate()`, and match the downloaded ZIP's SHA-512 before the reusable desktop workflow can succeed. The job uses isolated home, temporary, user-data, cache, feed, and evidence directories. It never calls the install path and receives no signing or publication credentials.
 
-The repository must define these Actions secrets before the workflow can run:
+Publication is resumable but immutable. Web and desktop use the same `X.Y.Z-j2k.N` revision and source SHA. A retry may reuse a matching tag and draft release only when every existing asset is byte-identical; it uploads missing draft assets but never overwrites. The unified publisher promotes the candidate with a `j2k/current` force-with-lease, publishes the desktop prerelease before the stable web release, then creates a one-file `desktop-channel` commit with the lease captured before either build. Candidate jobs have read-only repository permissions. The `contents:write` job checks both artifact sets with verifier code from trusted `j2k/current` and never executes candidate files.
+
+Create a protected GitHub Actions environment named `j2k-release`, allow deployment only from `j2k/current`, and define these environment secrets before the workflows can run. Do not store them as repository-level secrets: candidate branches are same-repository branches and can define their own workflows, so repository-level secrets would cross the candidate trust boundary.
 
 - `MACOS_PRIVATE_CERTIFICATE`: Base64 of a password-protected PKCS#12 file containing the private signing certificate and key.
 - `MACOS_PRIVATE_CERTIFICATE_PASSWORD`: The PKCS#12 export password.
 - `MACOS_PRIVATE_CERTIFICATE_SHA256`: The 64-character SHA-256 fingerprint of the public certificate, with or without colons.
+- `UPSTREAM_SYNC_TOKEN`: A narrowly scoped token for GitHub owner `github:38769771` with Contents, Workflows, and Issues read/write access to this repository. The sync workflow uses it for exact mirror and candidate ref writes that can contain workflow files, and to file its recovery issues as the owner: OPM admits only owner-authored work items, so a recovery issue authored by `github-actions[bot]` would never be picked up. Artifacts and releases use the job's scoped `GITHUB_TOKEN`.
 
 Create a self-signed root certificate in Keychain Access with the exact common name `Developer ID Application: OpenChamber Private Updates`, certificate type `Code Signing`, a long explicit validity period, digital-signature key usage, and code-signing extended key usage. Export the identity as a password-protected `.p12` for the workflow. Export the public certificate separately for installation on managed Macs. Never copy the private key to client Macs.
 
@@ -140,9 +147,9 @@ Desktop clears AppImage `ARGV0` from `process.env` before probing the login shel
 
 Linux updates are supported only when the packaged app is running from a writable AppImage. Update checks, downloads, and installation report an actionable error when `APPIMAGE` is missing, invalid, or read-only; a missing release feed (`latest-linux.yml` 404 before the first Linux publish) is treated as “no update available”. macOS and Windows updater behavior is unchanged. Release builds keep `latest-linux.yml` (x64) and `latest-linux-arm64.yml` separate and validate each manifest against its AppImage before upload. Linux AppImages download full updates (no `.blockmap` differential channel yet).
 
-### Updater End-to-End Fixture
+### Updater end-to-end fixture
 
-A loopback-only updater fixture is available for contributor QA of N-to-N+1 AppImage replacement and restart behavior. It is test infrastructure, not a user-configurable update source. See [`scripts/updater-e2e-fixture.md`](./scripts/updater-e2e-fixture.md) for the controlled test procedure. Unit tests cover feed selection, check failures, no-update results, and fixture generation; actual AppImage replacement and restart remains a manual native N-to-N+1 release boundary because it requires executing two packaged versions on each supported architecture.
+A loopback-only updater fixture is available for contributor QA of N-to-N+1 AppImage replacement and restart behavior. The J2K release workflow also uses its macOS mode for mandatory packaged-app discovery and payload-download evidence. It is test infrastructure, not a user-configurable update source. See [`scripts/updater-e2e-fixture.md`](./scripts/updater-e2e-fixture.md) for the controlled test procedure. Actual AppImage replacement and restart remains a manual native N-to-N+1 release boundary because it requires executing two packaged versions on each supported architecture.
 
 The package supports macOS, Windows, and Linux desktop features. Linux AppImage builds include in-app window controls, auto-update, system tray (right-click Show / Hide / Close), and launch-at-login (XDG autostart). Opening files in installed apps, installed-app discovery, and FreeDesktop icon lookup (including the default file manager) work on macOS, Windows, and Linux.
 

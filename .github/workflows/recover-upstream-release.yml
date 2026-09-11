@@ -1,0 +1,113 @@
+name: J2K Release Recovery
+
+on:
+  workflow_run:
+    workflows:
+      - J2K Validate
+      - J2K Release
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+concurrency:
+  group: j2k-release-recovery-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      (github.event.workflow_run.name == 'J2K Release' ||
+       (github.event.workflow_run.name == 'J2K Validate' && startsWith(github.event.workflow_run.head_branch, 'j2k/v')))
+    runs-on: ubuntu-latest
+    environment: j2k-release
+    steps:
+      - name: Check out trusted recovery renderer
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Create or update recovery issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILED_WORKFLOW: ${{ github.event.workflow_run.name }}
+          EVENT_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          EVENT_COMMIT: ${{ github.event.workflow_run.head_sha }}
+          FAILED_RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          set -euo pipefail
+          if [[ "$FAILED_WORKFLOW" == 'J2K Validate' ]]; then
+            BRANCH="$EVENT_BRANCH"
+            SOURCE_COMMIT="$EVENT_COMMIT"
+          else
+            gh run download "$FAILED_RUN_ID" --repo "${{ github.repository }}" --name release-identity --dir "$RUNNER_TEMP/release-identity"
+            BRANCH="$(node -p 'require(process.argv[1]).branch' "$RUNNER_TEMP/release-identity/release-trigger.json")"
+            SOURCE_COMMIT="$(node -p 'require(process.argv[1]).commit' "$RUNNER_TEMP/release-identity/release-trigger.json")"
+            SERIES_COMMIT="$(node -p 'require(process.argv[1]).patchSeriesSourceCommit || ``' "$RUNNER_TEMP/release-identity/release-trigger.json")"
+            PREVIOUS_BASE="$(node -p 'require(process.argv[1]).previousBaseTag || ``' "$RUNNER_TEMP/release-identity/release-trigger.json")"
+          fi
+          [[ "$BRANCH" =~ ^j2k/v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git remote add upstream https://github.com/openchamber/openchamber.git
+          git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/candidate" '+refs/heads/j2k/current:refs/remotes/origin/current'
+          git fetch --tags upstream main
+          if [[ -z "$SOURCE_COMMIT" ]]; then
+            SOURCE_COMMIT="$(git rev-parse refs/remotes/origin/candidate)"
+          fi
+          test "$(git rev-parse refs/remotes/origin/candidate)" = "$SOURCE_COMMIT"
+          upstream_tag="v${BRANCH#j2k/v}"
+          upstream_commit="$(git rev-parse "$upstream_tag^{commit}")"
+          series_commit="${SERIES_COMMIT:-$(git rev-parse refs/remotes/origin/current)}"
+          previous_base="${PREVIOUS_BASE:-$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-j2k.*' --abbrev=0 "$series_commit")}"
+          [[ "$series_commit" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$previous_base" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          jobs="$(gh api "repos/${{ github.repository }}/actions/runs/$FAILED_RUN_ID/jobs?per_page=100")"
+          failed_steps="$(JOBS="$jobs" node -e '
+            const jobs = JSON.parse(process.env.JOBS).jobs;
+            process.stdout.write(jobs.flatMap((job) => job.steps || []).filter((step) => step.conclusion === "failure").map((step) => `${step.name} [job ${job.name}]`).join(", "));
+          ')"
+          logs="$(gh run view "$FAILED_RUN_ID" --repo "${{ github.repository }}" --log-failed 2>&1)"
+          logs="${logs:0:60000}"
+          failed_command="gh workflow run release.yml --ref j2k/current -f source_ref=$BRANCH"
+          recovery="$RUNNER_TEMP/upstream-recovery.json"
+          body="$RUNNER_TEMP/release-failure.md"
+          title_file="$RUNNER_TEMP/release-failure-title"
+          UPSTREAM_TAG="$upstream_tag" UPSTREAM_COMMIT="$upstream_commit" PREVIOUS_BASE="$previous_base" \
+            SERIES_COMMIT="$series_commit" BRANCH="$BRANCH" SOURCE_COMMIT="$SOURCE_COMMIT" \
+            FAILED_COMMAND="$failed_command" FAILED_STEPS="$failed_steps" LOGS="$logs" RUN_URL="$RUN_URL" RECOVERY="$recovery" node <<'NODE'
+          const { writeFileSync } = require('node:fs');
+          writeFileSync(process.env.RECOVERY, JSON.stringify({
+            failureKind: 'semantic-failure',
+            upstreamRepository: 'openchamber/openchamber',
+            upstreamTag: process.env.UPSTREAM_TAG,
+            upstreamCommit: process.env.UPSTREAM_COMMIT,
+            previousBaseTag: process.env.PREVIOUS_BASE,
+            patchSeriesSourceCommit: process.env.SERIES_COMMIT,
+            candidateBranch: process.env.BRANCH,
+            candidateCommit: process.env.SOURCE_COMMIT,
+            failedCommand: `${process.env.FAILED_COMMAND} # failed steps: ${process.env.FAILED_STEPS || 'unknown'}`,
+            logs: process.env.LOGS,
+            workflowUrl: process.env.RUN_URL,
+            recreateCommands: [
+              'git fetch origin j2k/current ' + process.env.BRANCH,
+              'git switch --force-create ' + process.env.BRANCH + ' ' + process.env.SOURCE_COMMIT,
+              process.env.FAILED_COMMAND,
+            ],
+          }, null, 2));
+          NODE
+          node tools/desktop-release/upstream-recovery.mjs --input "$recovery" --body "$body" --title "$title_file"
+          title="$(<"$title_file")"
+
+          issue_number="$(gh issue list --repo "${{ github.repository }}" --state all --search "in:title $title" \
+            --json number,title --jq "map(select(.title == \"$title\")) | first | .number // empty")"
+          if [[ -z "$issue_number" ]]; then
+            gh issue create --repo "${{ github.repository }}" --title "$title" --body-file "$body" --label opm:ready
+          else
+            gh issue edit "$issue_number" --repo "${{ github.repository }}" --body-file "$body" --add-label opm:ready
+            gh issue reopen "$issue_number" --repo "${{ github.repository }}" 2>/dev/null || true
+          fi
