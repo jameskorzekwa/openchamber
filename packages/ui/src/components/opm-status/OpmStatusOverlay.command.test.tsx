@@ -93,6 +93,37 @@ const availableResult = (): OpmStatusLoadResult => ({
   }),
 });
 
+const retainedClosedResult = (): OpmStatusLoadResult => {
+  const openRows = Array.from({ length: 7 }, (_, index) => ({
+    ...activeRow,
+    parentRef: null,
+    ref: String(100 + index),
+    title: `Open work ${index + 1}`,
+  }));
+  const retainedRows = ['cfg168', 'cfg169', 'cfg179', 'OPM222'].map((ref) => ({
+    ...baseRow,
+    ref,
+    title: `Cleanup notice ${ref}`,
+    phase: 'owner_closed',
+    state: 'planned',
+    action: 'idle',
+    reason: 'Owner closed this work; workspace cleanup remains visible.',
+    kind: null,
+    command: null,
+    owner: { required: false, instruction: 'Cleanup notice retained.' },
+  }));
+  return {
+    status: 'supported',
+    snapshot: parseOpmSnapshot({
+      available: true, fetchedAt: 100, state: 'active', summary: 'Working', healthOk: true, paused: false,
+      counts: { needsYou: 0, blocked: 0, active: 7, waiting: 4, queued: 0 },
+      groups: { needsYou: [], blocked: [], active: openRows, waiting: retainedRows, queued: [] },
+      tree: [...openRows, ...retainedRows].map((workRow) => ({ ...workRow, childRows: [] })),
+      supervisor: { running: true, pausedReason: null, startedAt: null, lastPollAt: null, pollIntervalMs: null, counters: {}, attention: [], projects: [] },
+    }),
+  };
+};
+
 describe('OpmStatusOverlay command execution and mobile rows', () => {
   let windowInstance: Window;
   let root: Root;
@@ -120,13 +151,16 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
     windowInstance.close();
   });
 
-  const mountAndOpen = async (sendCommand: (row: OpmRow) => Promise<OpmCommandResult>) => {
+  const mountAndOpen = async (
+    sendCommand: (row: OpmRow) => Promise<OpmCommandResult>,
+    result: OpmStatusLoadResult = availableResult(),
+  ) => {
     const container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
     await act(async () => root.render(
       <I18nProvider>
-        <OpmStatusOverlay loadStatus={async () => availableResult()} sendCommand={sendCommand} />
+        <OpmStatusOverlay loadStatus={async () => result} sendCommand={sendCommand} />
       </I18nProvider>,
     ));
     await act(async () => {});
@@ -327,6 +361,23 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       });
       expect(document.documentElement.classList.contains('oc-opm-dialog-open')).toBe(false);
       expect(document.querySelector('[data-testid="opm-dialog"]')).toBeNull();
+    } finally {
+      await unmount();
+    }
+  });
+
+  test('shows retained owner-closed cleanup notices without counting them as unfinished', async () => {
+    await mountAndOpen(async () => ({ ok: true }), retainedClosedResult());
+    try {
+      expect(document.querySelector('[data-testid="opm-pill-total"]')?.textContent).toContain('7');
+      expect(document.querySelector('[data-testid="opm-task-total"]')?.textContent).toBe('7');
+
+      const workTree = document.querySelector('[data-testid="opm-work-tree"]');
+      expect(workTree?.querySelectorAll('[data-testid="opm-row-title"]')).toHaveLength(11);
+      for (const ref of ['cfg168', 'cfg169', 'cfg179', 'OPM222']) {
+        expect(workTree?.textContent).toContain(`Cleanup notice ${ref}`);
+        expect(workTree?.textContent).toContain(`OpenChamber #${ref}`);
+      }
     } finally {
       await unmount();
     }
