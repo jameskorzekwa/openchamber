@@ -388,8 +388,11 @@ describe('OpmStatusOverlay command execution and mobile rows', () => {
       const workTree = document.querySelector('[data-testid="opm-work-tree"]');
       expect(workTree?.querySelectorAll('[data-testid="opm-row-title"]')).toHaveLength(11);
       for (const ref of ['cfg168', 'cfg169', 'cfg179', 'OPM222']) {
-        expect(workTree?.textContent).toContain(`Cleanup notice ${ref}`);
-        expect(workTree?.textContent).toContain(`OpenChamber #${ref}`);
+        const title = [...(workTree?.querySelectorAll('[data-testid="opm-row-title"]') ?? [])]
+          .find((element) => element.textContent === `Cleanup notice ${ref}`);
+        expect(title).toBeDefined();
+        expect(title?.closest('article')?.querySelector('[data-testid="opm-row-reference"]')?.textContent)
+          .toBe(`openchamber#${ref}`);
       }
     } finally {
       await unmount();
