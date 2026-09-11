@@ -209,13 +209,15 @@ export const getOpmCounts = (snapshot: OpmAvailableSnapshot) => ({
   queued: snapshot.groups.queued.length,
 });
 
+const ENDED_MANAGEMENT_PHASES = new Set(['owner_closed', 'completed', 'cancelled', 'verified']);
+
 const countTreeRows = (rows: OpmTreeRow[]): number => rows.reduce(
-  (total, row) => total + 1 + countTreeRows(row.childRows),
+  (total, row) => total + (row.phase && ENDED_MANAGEMENT_PHASES.has(row.phase) ? 0 : 1) + countTreeRows(row.childRows),
   0,
 );
 
-// The pill always reports every registered in-flight item. The hierarchy is
-// authoritative because the status groups classify the same rows by state.
+// The pill reports unfinished items. Ended rows stay in the hierarchy for
+// cleanup and provenance, and their unfinished descendants still count.
 export const getTotalOpmCount = (snapshot: OpmSnapshot): number | null => {
   if (!snapshot.available) return null;
   return countTreeRows(snapshot.tree);
