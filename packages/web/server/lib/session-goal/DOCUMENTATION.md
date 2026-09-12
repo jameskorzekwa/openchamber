@@ -200,12 +200,37 @@ except for one running foreground `task` whose linked child is known, no longer
 busy/retrying, and has a terminal assistant message.
 
 Recovery walks the bounded session tree, at most 1,000 sessions, and handles
-stale children before their parent. Aborting a child lets the parent task settle
-normally. A stale root or verified orphaned parent task is aborted and then the
-same managed goal is resumed. The resume waits briefly for the abort event's
-automatic pause, preserves all progress fields, refuses to overwrite a different
-goal or an explicit user pause, and retries a failed resume write on a later scan
-without aborting the root twice.
+stale children before their parent. A child is eligible only when the root's
+latest assistant message has exactly one running foreground `task` bound to that
+child. Abort attempts and exponential retry deadlines are stored atomically in
+`<rootSessionId>.goal-recovery.json` beside the managed-worktree controller
+record. A server restart therefore cannot reset the five-attempt limit.
+
+After every abort, recovery rereads the exact assistant message. HTTP success is
+not settlement. If the message remains incomplete after the bounded attempts,
+the watchdog preserves that unknown child outcome and uses OpenCode's supported
+part-update route to mark only the exactly bound parent task as interrupted with
+an unknown outcome. It does not edit SQLite, create child output, or report tool
+success. The watchdog rechecks the goal ID, root and child message IDs, task part
+and child binding, workspace, complete session tree, status map, pending tools,
+and user-visible tail before each write.
+
+The continuation is also durable. Recovery holds the goal with a deterministic
+recovery message ID, increments the turn once, and records the pending delivery
+before calling `prompt_async`. Startup discovers pending recovery files even when
+the abort event already paused the goal. It reconciles the exact user message ID
+and text before retrying or clearing the hold, so a crash or lost HTTP response
+cannot silently lose the continuation or create a second one. Explicit pause,
+goal replacement, a new user message, workspace movement, busy or retrying
+descendants, ordinary pending tools, and unavailable status all stop or defer
+the write without being treated as successful recovery.
+
+Deployment verification for this recovery must inspect the installed canonical
+`packages/web/server/lib/session-goal` code, then reproduce a foreground task
+restart against an isolated real OpenCode server. The proof must show the child
+assistant remains preserved as incomplete, the exact parent task becomes an
+interrupted unknown outcome through the API, and one recovery user message
+continues the root goal.
 
 ## Continuation prompt
 
