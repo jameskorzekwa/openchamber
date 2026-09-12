@@ -68,6 +68,7 @@ const createFixture = ({
   maxDeliveryAttempts,
   now = () => NOW,
   promptAdmissionFailures = 0,
+  promptPartialMessage = false,
   promptResponseFailure = false,
   deliveryBackoffMs,
 } = {}) => {
@@ -107,7 +108,7 @@ const createFixture = ({
       }
       messages.set(sessionId, {
         info: { id: options.body.messageID, sessionID: sessionId, role: 'user', time: { created: NOW } },
-        parts: options.body.parts,
+        parts: promptPartialMessage ? [] : options.body.parts,
       });
       if (promptResponseFailure) throw new Error('response lost after prompt admission');
       return null;
@@ -549,6 +550,50 @@ test('delivery exhaustion visibly blocks the goal and clears its recovery hold',
   assert.equal(fixture.root.metadata.openchamber.goal.statusReason, 'stale recovery continuation delivery exhausted');
   await fixture.recovery.scanNow();
   assert.equal(fixture.prompts.length, 2);
+});
+
+test('process restart durably bounds reconciliation of an incomplete recovery message', async () => {
+  let currentTime = NOW;
+  const fixture = createFixture({
+    rootMessage: assistant({ id: 'msg_stale' }),
+    statuses: {},
+    abortSettles: false,
+    maxAbortAttempts: 1,
+    maxDeliveryAttempts: 3,
+    deliveryBackoffMs: 100,
+    promptPartialMessage: true,
+    now: () => currentTime,
+  });
+
+  await fixture.recovery.discoverNow();
+  await fixture.recovery.scanNow();
+  await fixture.recovery.scanNow();
+  currentTime += 101;
+  await fixture.recovery.scanNow();
+  fixture.recovery.stop();
+
+  const restarted = createManagedGoalStaleRecovery({
+    openCodeFetch: fixture.openCodeFetch,
+    staleMs: STALE_MS,
+    maxAbortAttempts: 1,
+    maxDeliveryAttempts: 3,
+    deliveryBackoffMs: 100,
+    now: () => currentTime,
+    stateDirectory,
+    sleep: async () => {},
+    logger: { warn: () => {} },
+  });
+  await restarted.discoverNow();
+  await restarted.scanNow();
+
+  assert.equal(fixture.prompts.length, 1);
+  assert.equal(fixture.root.metadata.openchamber.goal.status, 'active');
+  currentTime += 201;
+  await restarted.scanNow();
+  assert.equal(fixture.root.metadata.openchamber.goal.status, 'blocked');
+  assert.equal(fixture.root.metadata.openchamber.goal.statusReason, 'stale recovery continuation message remained incomplete');
+  await restarted.scanNow();
+  assert.equal(fixture.prompts.length, 1);
 });
 
 test('process restart continues an abort attempt persisted before settlement verification', async () => {
