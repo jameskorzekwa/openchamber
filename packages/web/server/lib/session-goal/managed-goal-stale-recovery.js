@@ -451,7 +451,35 @@ export const createManagedGoalStaleRecovery = ({
   const deliver = async (state) => {
     const existing = await findDelivery(state);
     if (existing) {
-      await finishDelivery(state, existing);
+      if (await finishDelivery(state, existing)) return;
+      if (state.deliveryAttempts >= maxDeliveryAttempts) {
+        if (!await terminalizeRecovery(state, 'blocked', 'stale recovery continuation message remained incomplete')) {
+          await abandonState(state);
+        }
+        return;
+      }
+      const partialDelay = Math.min(
+        deliveryBackoffMs * 2 ** Math.max(0, state.deliveryAttempts - 1),
+        maxBackoffMs,
+      );
+      if (state.deliveryAttemptedAt && now() - state.deliveryAttemptedAt < partialDelay) return;
+      const observed = {
+        ...state,
+        deliveryAttemptedAt: now(),
+        deliveryAttempts: state.deliveryAttempts + 1,
+      };
+      await saveState(observed);
+      logger.warn('[session-goal] recovery continuation message remains incomplete', {
+        rootId: state.rootId,
+        messageId: state.deliveryMessageId,
+        attempts: observed.deliveryAttempts,
+      });
+      if (
+        observed.deliveryAttempts >= maxDeliveryAttempts
+        && !await terminalizeRecovery(observed, 'blocked', 'stale recovery continuation message remained incomplete')
+      ) {
+        await abandonState(observed);
+      }
       return;
     }
     if (state.deliveryAttempts >= maxDeliveryAttempts) {

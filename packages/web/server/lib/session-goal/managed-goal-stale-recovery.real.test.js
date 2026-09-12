@@ -8,6 +8,9 @@ import { test } from 'vitest';
 
 import { createManagedGoalStaleRecovery } from './managed-goal-stale-recovery.js';
 
+const MAX_MODEL_REQUEST_BYTES = 1024 * 1024;
+const MAX_OPENCODE_OUTPUT_CHARS = 64 * 1024;
+
 const executable = async () => {
   if (process.env.OPENCODE_BINARY) {
     try {
@@ -73,8 +76,10 @@ const finishText = (response, text) => {
 
 const createModelServer = async () => {
   let requests = 0;
+  let recoveryRequests = 0;
   let childStarted = false;
   const hanging = new Set();
+  const sockets = new Set();
   const server = http.createServer((request, response) => {
     if (request.url === '/v1/models') {
       response.setHeader('Content-Type', 'application/json');
@@ -86,51 +91,81 @@ const createModelServer = async () => {
       response.end();
       return;
     }
-    requests += 1;
-    response.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
+    let requestBody = '';
+    let requestBytes = 0;
+    let requestTooLarge = false;
+    request.setEncoding('utf8');
+    request.on('data', (chunk) => {
+      if (requestTooLarge) return;
+      requestBytes += Buffer.byteLength(chunk);
+      if (requestBytes > MAX_MODEL_REQUEST_BYTES) {
+        requestTooLarge = true;
+        response.writeHead(413);
+        response.end();
+        request.destroy();
+        return;
+      }
+      requestBody += chunk;
     });
-    if (requests === 1) {
-      openAiChunk(response, {
-        delta: {
-          role: 'assistant',
-          tool_calls: [{
-            index: 0,
-            id: 'call_restart_fixture',
-            type: 'function',
-            function: {
-              name: 'task',
-              arguments: JSON.stringify({
-                description: 'Hang across restart',
-                prompt: 'Wait for the fixture.',
-                subagent_type: 'general',
-              }),
-            },
-          }],
-        },
-        finish_reason: null,
+    request.on('end', () => {
+      if (requestTooLarge) return;
+      requests += 1;
+      response.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
       });
-      openAiChunk(response, { delta: {}, finish_reason: 'tool_calls' });
+      if (requestBody.includes('Continue after the isolated restart.')) {
+        recoveryRequests += 1;
+        finishText(response, 'Recovered after restart.');
+        return;
+      }
+      if (requestBody.includes('Wait for the fixture.')) {
+        childStarted = true;
+        hanging.add(response);
+        response.on('close', () => hanging.delete(response));
+        return;
+      }
+      if (requestBody.includes('Start the foreground restart fixture.')) {
+        openAiChunk(response, {
+          delta: {
+            role: 'assistant',
+            tool_calls: [{
+              index: 0,
+              id: 'call_restart_fixture',
+              type: 'function',
+              function: {
+                name: 'task',
+                arguments: JSON.stringify({
+                  description: 'Hang across restart',
+                  prompt: 'Wait for the fixture.',
+                  subagent_type: 'general',
+                }),
+              },
+            }],
+          },
+          finish_reason: null,
+        });
+        openAiChunk(response, { delta: {}, finish_reason: 'tool_calls' });
+        response.end('data: [DONE]\n\n');
+        return;
+      }
       response.end('data: [DONE]\n\n');
-      return;
-    }
-    if (requests === 2) {
-      childStarted = true;
-      hanging.add(response);
-      response.on('close', () => hanging.delete(response));
-      return;
-    }
-    finishText(response, 'Recovered after restart.');
+    });
+  });
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
   });
   const port = await listen(server);
   return {
     port,
     requests: () => requests,
+    recoveryRequests: () => recoveryRequests,
     childStarted: () => childStarted,
     close: async () => {
       for (const response of hanging) response.destroy();
+      for (const socket of sockets) socket.destroy();
       await stopServer(server);
     },
   };
@@ -171,27 +206,40 @@ const startOpenCode = async ({ directory, dataDirectory, modelPort, port }) => {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';
-  child.stdout.on('data', (chunk) => { output += chunk; });
-  child.stderr.on('data', (chunk) => { output += chunk; });
-  await waitFor(async () => {
-    if (processExited(child)) throw new Error(`isolated OpenCode exited early: ${output}`);
-    try {
-      return (await fetch(`http://127.0.0.1:${port}/global/health`)).ok;
-    } catch {
-      return false;
-    }
-  }, 15_000, 'isolated OpenCode health');
-  return {
-    child,
-    stop: async () => {
-      if (processExited(child)) return;
-      child.kill('SIGTERM');
-      await waitFor(() => processExited(child), 5_000, 'OpenCode graceful exit').catch(() => {
-        child.kill('SIGKILL');
-        return waitFor(() => processExited(child), 5_000, 'OpenCode forced exit');
-      });
-    },
+  const captureOutput = (chunk) => {
+    const remaining = MAX_OPENCODE_OUTPUT_CHARS - output.length;
+    if (remaining > 0) output += chunk.toString().slice(0, remaining);
   };
+  child.stdout.on('data', captureOutput);
+  child.stderr.on('data', captureOutput);
+  const stop = async () => {
+    if (processExited(child)) return;
+    child.kill('SIGTERM');
+    await waitFor(() => processExited(child), 5_000, 'OpenCode graceful exit').catch(() => {
+      child.kill('SIGKILL');
+      return waitFor(() => processExited(child), 5_000, 'OpenCode forced exit');
+    });
+  };
+  try {
+    await waitFor(async () => {
+      if (processExited(child)) throw new Error(`isolated OpenCode exited early: ${output}`);
+      try {
+        return (await fetch(`http://127.0.0.1:${port}/global/health`, {
+          signal: AbortSignal.timeout(2_000),
+        })).ok;
+      } catch {
+        return false;
+      }
+    }, 15_000, 'isolated OpenCode health');
+  } catch (error) {
+    try {
+      await stop();
+    } catch {
+      // Preserve the startup failure, which includes the bounded process output.
+    }
+    throw error;
+  }
+  return { child, stop };
 };
 
 test.runIf(process.env.OPENCODE_REAL_TEST === '1')('recovers a real foreground task orphaned by an OpenCode restart', async () => {
@@ -199,16 +247,19 @@ test.runIf(process.env.OPENCODE_REAL_TEST === '1')('recovers a real foreground t
   const workspace = path.join(root, 'workspace');
   const dataDirectory = path.join(root, 'xdg');
   const recoveryDirectory = path.join(root, 'controller');
-  await Promise.all([mkdir(workspace), mkdir(dataDirectory), mkdir(recoveryDirectory)]);
-  const git = spawn('git', ['init', '--quiet'], { cwd: workspace });
-  await new Promise((resolve, reject) => {
-    git.once('error', reject);
-    git.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`git init exited ${code}`)));
-  });
-  const model = await createModelServer();
-  const port = await reservePort();
+  let model;
   let opencode;
+  let recovery;
+  let restartedRecovery;
   try {
+    await Promise.all([mkdir(workspace), mkdir(dataDirectory), mkdir(recoveryDirectory)]);
+    const git = spawn('git', ['init', '--quiet'], { cwd: workspace });
+    await new Promise((resolve, reject) => {
+      git.once('error', reject);
+      git.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`git init exited ${code}`)));
+    });
+    model = await createModelServer();
+    const port = await reservePort();
     opencode = await startOpenCode({ directory: workspace, dataDirectory, modelPort: model.port, port });
     const base = `http://127.0.0.1:${port}`;
     const request = async (pathname, options = {}) => {
@@ -218,6 +269,7 @@ test.runIf(process.env.OPENCODE_REAL_TEST === '1')('recovers a real foreground t
         method: options.method || 'GET',
         headers: options.body ? { 'Content-Type': 'application/json' } : {},
         body: options.body ? JSON.stringify(options.body) : undefined,
+        signal: AbortSignal.timeout(30_000),
       });
       if (!response.ok) throw new Error(`${options.method || 'GET'} ${pathname} returned ${response.status}: ${await response.text()}`);
       if (response.status === 204) return null;
@@ -255,7 +307,7 @@ test.runIf(process.env.OPENCODE_REAL_TEST === '1')('recovers a real foreground t
     opencode = await startOpenCode({ directory: workspace, dataDirectory, modelPort: model.port, port });
 
     const warnings = [];
-    const recovery = createManagedGoalStaleRecovery({
+    recovery = createManagedGoalStaleRecovery({
       openCodeFetch: (pathname, options = {}) => request(pathname, options),
       buildRecoveryPrompt: async () => 'Continue after the isolated restart.',
       staleMs: 0,
@@ -295,7 +347,8 @@ test.runIf(process.env.OPENCODE_REAL_TEST === '1')('recovers a real foreground t
     assert.ok(warnings.some((warning) => warning[0].includes('verified continuation')));
 
     recovery.stop();
-    const restartedRecovery = createManagedGoalStaleRecovery({
+    recovery = null;
+    restartedRecovery = createManagedGoalStaleRecovery({
       openCodeFetch: (pathname, options = {}) => request(pathname, options),
       staleMs: 0,
       maxAbortAttempts: 1,
@@ -307,11 +360,19 @@ test.runIf(process.env.OPENCODE_REAL_TEST === '1')('recovers a real foreground t
     await restartedRecovery.scanNow();
     const afterRestart = await request(`/session/${session.id}/message`);
     assert.equal(afterRestart.filter((message) => message.info?.id === recoveryUsers[0].info.id).length, 1);
-    assert.equal(model.requests(), 3);
-    restartedRecovery.stop();
+    assert.ok(model.requests() >= 3);
+    assert.equal(model.recoveryRequests(), 1);
   } finally {
-    await opencode?.stop();
-    await model.close();
-    await rm(root, { recursive: true, force: true });
+    restartedRecovery?.stop();
+    recovery?.stop();
+    try {
+      await opencode?.stop();
+    } finally {
+      try {
+        await model?.close();
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    }
   }
 }, 120_000);
