@@ -300,6 +300,7 @@ export const createSessionGoalRuntime = ({
   const staleRecovery = createManagedGoalStaleRecovery({
     openCodeFetch,
     isEnabled,
+    maxAutoTurns,
     stateDirectory: managedWorktreeStateDirectory,
     buildRecoveryPrompt: async ({ rootId, goal }) => {
       let objective = goal.objective;

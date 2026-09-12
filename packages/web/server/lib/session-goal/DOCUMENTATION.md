@@ -205,6 +205,9 @@ latest assistant message has exactly one running foreground `task` bound to that
 child. Abort attempts and exponential retry deadlines are stored atomically in
 `<rootSessionId>.goal-recovery.json` beside the managed-worktree controller
 record. A server restart therefore cannot reset the five-attempt limit.
+Missing state and invalid or unreadable state are distinct: malformed,
+unsupported-version, or unreadable journals remain untouched for inspection and
+block recovery instead of being replaced with a fresh retry budget.
 
 After every abort, recovery rereads the exact assistant message. HTTP success is
 not settlement. If the message remains incomplete after the bounded attempts,
@@ -225,12 +228,24 @@ goal replacement, a new user message, workspace movement, busy or retrying
 descendants, ordinary pending tools, and unavailable status all stop or defer
 the write without being treated as successful recovery.
 
+Recovery applies the same token-budget and auto-continuation hard stops before
+delivery. Reaching either limit terminalizes the goal without incrementing its
+turn or sending a prompt. Exhausting the bounded delivery attempts, or finding
+the deterministic message ID attached to different content, visibly blocks the
+goal and clears the owned recovery hold instead of leaving an active goal
+stranded. A newly admitted user message may temporarily exist without its text
+part; that partial state is retried and is not classified as an identity
+collision.
+
 Deployment verification for this recovery must inspect the installed canonical
 `packages/web/server/lib/session-goal` code, then reproduce a foreground task
 restart against an isolated real OpenCode server. The proof must show the child
 assistant remains preserved as incomplete, the exact parent task becomes an
 interrupted unknown outcome through the API, and one recovery user message
 continues the root goal.
+Both pull-request validation workflows provision the pinned OpenCode 1.18.29
+binary and require this real restart test to pass in a dedicated isolated step
+rather than relying on the ordinary suite's environment-gated skip.
 
 ## Continuation prompt
 

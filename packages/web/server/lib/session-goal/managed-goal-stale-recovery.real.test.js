@@ -9,9 +9,17 @@ import { test } from 'vitest';
 import { createManagedGoalStaleRecovery } from './managed-goal-stale-recovery.js';
 
 const executable = async () => {
-  const names = [process.env.OPENCODE_BINARY, ...String(process.env.PATH || '')
+  if (process.env.OPENCODE_BINARY) {
+    try {
+      await access(process.env.OPENCODE_BINARY);
+      return process.env.OPENCODE_BINARY;
+    } catch {
+      if (process.env.OPENCODE_REAL_TEST_REQUIRED === '1') return '';
+    }
+  }
+  const names = String(process.env.PATH || '')
     .split(path.delimiter)
-    .map((directory) => path.join(directory, 'opencode'))]
+    .map((directory) => path.join(directory, 'opencode'))
     .filter(Boolean);
   for (const name of names) {
     try {
@@ -23,6 +31,9 @@ const executable = async () => {
 };
 
 const binary = await executable();
+if (process.env.OPENCODE_REAL_TEST_REQUIRED === '1' && !binary) {
+  throw new Error('OPENCODE_REAL_TEST_REQUIRED=1 but no OpenCode binary is available');
+}
 
 const listen = (server) => new Promise((resolve, reject) => {
   server.once('error', reject);
@@ -34,14 +45,14 @@ const stopServer = (server) => new Promise((resolve) => {
   server.closeAllConnections();
 });
 
-const waitFor = async (check, timeoutMs = 15_000) => {
+const waitFor = async (check, timeoutMs = 15_000, description = 'isolated OpenCode fixture') => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const result = await check();
     if (result) return result;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error('timed out waiting for isolated OpenCode fixture');
+  throw new Error(`timed out waiting for ${description}`);
 };
 
 const openAiChunk = (response, body) => {
@@ -132,6 +143,8 @@ const reservePort = async () => {
   return port;
 };
 
+const processExited = (child) => child.exitCode !== null || child.signalCode !== null;
+
 const startOpenCode = async ({ directory, dataDirectory, modelPort, port }) => {
   const config = {
     model: 'fixture/recovery',
@@ -161,26 +174,27 @@ const startOpenCode = async ({ directory, dataDirectory, modelPort, port }) => {
   child.stdout.on('data', (chunk) => { output += chunk; });
   child.stderr.on('data', (chunk) => { output += chunk; });
   await waitFor(async () => {
-    if (child.exitCode !== null) throw new Error(`isolated OpenCode exited early: ${output}`);
+    if (processExited(child)) throw new Error(`isolated OpenCode exited early: ${output}`);
     try {
       return (await fetch(`http://127.0.0.1:${port}/global/health`)).ok;
     } catch {
       return false;
     }
-  });
+  }, 15_000, 'isolated OpenCode health');
   return {
     child,
     stop: async () => {
-      if (child.exitCode !== null) return;
+      if (processExited(child)) return;
       child.kill('SIGTERM');
-      await waitFor(() => child.exitCode !== null, 5_000).catch(() => {
+      await waitFor(() => processExited(child), 5_000, 'OpenCode graceful exit').catch(() => {
         child.kill('SIGKILL');
+        return waitFor(() => processExited(child), 5_000, 'OpenCode forced exit');
       });
     },
   };
 };
 
-test.runIf(Boolean(binary))('recovers a real foreground task orphaned by an OpenCode restart', async () => {
+test.runIf(process.env.OPENCODE_REAL_TEST === '1')('recovers a real foreground task orphaned by an OpenCode restart', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'openchamber-real-stale-recovery-'));
   const workspace = path.join(root, 'workspace');
   const dataDirectory = path.join(root, 'xdg');
@@ -230,11 +244,11 @@ test.runIf(Boolean(binary))('recovers a real foreground task orphaned by an Open
         parts: [{ type: 'text', text: 'Start the foreground restart fixture.' }],
       },
     });
-    await waitFor(() => model.childStarted());
+    await waitFor(() => model.childStarted(), 30_000, 'foreground child request');
     const childrenBefore = await waitFor(async () => {
       const children = await request(`/session/${session.id}/children`);
       return children.length === 1 ? children : null;
-    });
+    }, 15_000, 'foreground child session');
     const childId = childrenBefore[0].id;
 
     await opencode.stop();
@@ -261,7 +275,7 @@ test.runIf(Boolean(binary))('recovers a real foreground task orphaned by an Open
       return current.some((message) => message?.parts?.some((part) => part?.text === 'Recovered after restart.'))
         ? current
         : null;
-    });
+    }, 30_000, 'recovery continuation response');
     const childMessages = await request(`/session/${childId}/message`);
     await recovery.scanNow();
     const recoveryUsers = rootMessages.filter((message) => (
@@ -300,4 +314,4 @@ test.runIf(Boolean(binary))('recovers a real foreground task orphaned by an Open
     await model.close();
     await rm(root, { recursive: true, force: true });
   }
-}, 60_000);
+}, 120_000);
