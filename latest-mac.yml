@@ -1,8 +1,8 @@
-version: 1.21.0-j2k.32
+version: 1.21.0-j2k.33
 files:
-  - url: https://github.com/jameskorzekwa/openchamber/releases/download/desktop-v1.21.0-j2k.32/OpenChamber-1.21.0-j2k.32-mac-arm64.zip
-    sha512: w9OSoEPYrwFHnS9sNFHErJ/4bJc6QJaiM7NaexwHmPjXi4GKPPZzV1bGpZ+CDVXfh/zcejJOH8rTFg0FtRevBg==
-    size: 206039293
-path: https://github.com/jameskorzekwa/openchamber/releases/download/desktop-v1.21.0-j2k.32/OpenChamber-1.21.0-j2k.32-mac-arm64.zip
-sha512: w9OSoEPYrwFHnS9sNFHErJ/4bJc6QJaiM7NaexwHmPjXi4GKPPZzV1bGpZ+CDVXfh/zcejJOH8rTFg0FtRevBg==
-releaseDate: '2026-09-11T03:08:00.000Z'
+  - url: https://github.com/jameskorzekwa/openchamber/releases/download/desktop-v1.21.0-j2k.33/OpenChamber-1.21.0-j2k.33-mac-arm64.zip
+    sha512: NAzuIbVET+xhl9Ti3tCYBcJoWf5JTplLUodLGt0ULOMvAVbwCNC8MfWBlGcQ1lQX5w0FHc02MkpL+Uv0vrIFzw==
+    size: 206047749
+path: https://github.com/jameskorzekwa/openchamber/releases/download/desktop-v1.21.0-j2k.33/OpenChamber-1.21.0-j2k.33-mac-arm64.zip
+sha512: NAzuIbVET+xhl9Ti3tCYBcJoWf5JTplLUodLGt0ULOMvAVbwCNC8MfWBlGcQ1lQX5w0FHc02MkpL+Uv0vrIFzw==
+releaseDate: '2026-09-12T02:24:49.000Z'
