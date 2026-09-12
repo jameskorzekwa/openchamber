@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, test } from 'vitest';
@@ -64,8 +64,12 @@ const createFixture = ({
   patchFailures = 0,
   abortSettles = true,
   maxAbortAttempts,
+  maxAutoTurns,
+  maxDeliveryAttempts,
   now = () => NOW,
+  promptAdmissionFailures = 0,
   promptResponseFailure = false,
+  deliveryBackoffMs,
 } = {}) => {
   let currentStatuses = statuses;
   const sessions = new Map([[root.id, root]]);
@@ -97,6 +101,10 @@ const createFixture = ({
     if (promptMatch) {
       const sessionId = decodeURIComponent(promptMatch[1]);
       prompts.push({ sessionId, body: options.body });
+      if (promptAdmissionFailures > 0) {
+        promptAdmissionFailures -= 1;
+        throw new Error('prompt admission failed');
+      }
       messages.set(sessionId, {
         info: { id: options.body.messageID, sessionID: sessionId, role: 'user', time: { created: NOW } },
         parts: options.body.parts,
@@ -143,6 +151,9 @@ const createFixture = ({
   };
   if (isEnabled) recoveryOptions.isEnabled = isEnabled;
   if (maxAbortAttempts) recoveryOptions.maxAbortAttempts = maxAbortAttempts;
+  if (maxAutoTurns) recoveryOptions.maxAutoTurns = maxAutoTurns;
+  if (maxDeliveryAttempts) recoveryOptions.maxDeliveryAttempts = maxDeliveryAttempts;
+  if (deliveryBackoffMs !== undefined) recoveryOptions.deliveryBackoffMs = deliveryBackoffMs;
   const recovery = createManagedGoalStaleRecovery(recoveryOptions);
 
   return {
@@ -422,6 +433,27 @@ test('recovery process restart preserves retry state and deadline', async () => 
   assert.equal(fixture.aborts.length, 2);
 });
 
+for (const damagedState of [
+  { name: 'malformed', create: (target) => writeFile(target, '{not json') },
+  { name: 'unsupported-version', create: (target) => writeFile(target, JSON.stringify({ version: 2 })) },
+  { name: 'unreadable', create: (target) => mkdir(target) },
+]) {
+  test(`fails closed without resetting abort attempts for ${damagedState.name} recovery state`, async () => {
+    const fixture = createFixture({
+      rootMessage: assistant({ id: 'msg_stale' }),
+      abortSettles: false,
+    });
+    const target = path.join(stateDirectory, 'ses_root.goal-recovery.json');
+    await damagedState.create(target);
+
+    await fixture.recovery.discoverNow();
+    await fixture.recovery.scanNow();
+
+    assert.deepEqual(fixture.aborts, []);
+    assert.ok(fixture.warnings.some((warning) => warning[0].includes('invalid recovery state preserved')));
+  });
+}
+
 test('process restart reconciles a response-lost continuation without sending it twice', async () => {
   const fixture = createFixture({
     rootMessage: assistant({ id: 'msg_stale' }),
@@ -453,6 +485,70 @@ test('process restart reconciles a response-lost continuation without sending it
   assert.equal(fixture.prompts.length, 1);
   assert.equal(fixture.root.metadata.openchamber.goal.statusReason, '');
   assert.ok(warnings.some((warning) => warning[0].includes('verified continuation')));
+});
+
+test('blocks recovery instead of exceeding the auto-continuation cap', async () => {
+  const root = managedRoot();
+  root.metadata.openchamber.goal.turnsUsed = 20;
+  const fixture = createFixture({
+    root,
+    rootMessage: assistant({ id: 'msg_stale' }),
+    statuses: {},
+    abortSettles: false,
+    maxAbortAttempts: 1,
+    maxAutoTurns: 20,
+  });
+
+  await fixture.recovery.discoverNow();
+  await fixture.recovery.scanNow();
+
+  assert.equal(fixture.prompts.length, 0);
+  assert.equal(fixture.root.metadata.openchamber.goal.status, 'blocked');
+  assert.equal(fixture.root.metadata.openchamber.goal.statusReason, 'auto-continuation limit reached');
+  assert.equal(fixture.root.metadata.openchamber.goal.turnsUsed, 20);
+});
+
+test('budget-limits recovery instead of exceeding the token budget', async () => {
+  const root = managedRoot();
+  root.metadata.openchamber.goal.tokensUsed = 500;
+  root.metadata.openchamber.goal.tokenBudget = 500;
+  const fixture = createFixture({
+    root,
+    rootMessage: assistant({ id: 'msg_stale' }),
+    statuses: {},
+    abortSettles: false,
+    maxAbortAttempts: 1,
+  });
+
+  await fixture.recovery.discoverNow();
+  await fixture.recovery.scanNow();
+
+  assert.equal(fixture.prompts.length, 0);
+  assert.equal(fixture.root.metadata.openchamber.goal.status, 'budgetLimited');
+  assert.equal(fixture.root.metadata.openchamber.goal.statusReason, 'token budget reached');
+});
+
+test('delivery exhaustion visibly blocks the goal and clears its recovery hold', async () => {
+  const fixture = createFixture({
+    rootMessage: assistant({ id: 'msg_stale' }),
+    statuses: {},
+    abortSettles: false,
+    maxAbortAttempts: 1,
+    maxDeliveryAttempts: 2,
+    deliveryBackoffMs: 0,
+    promptAdmissionFailures: 2,
+  });
+
+  await fixture.recovery.discoverNow();
+  await fixture.recovery.scanNow();
+  await fixture.recovery.scanNow();
+  await fixture.recovery.scanNow();
+
+  assert.equal(fixture.prompts.length, 2);
+  assert.equal(fixture.root.metadata.openchamber.goal.status, 'blocked');
+  assert.equal(fixture.root.metadata.openchamber.goal.statusReason, 'stale recovery continuation delivery exhausted');
+  await fixture.recovery.scanNow();
+  assert.equal(fixture.prompts.length, 2);
 });
 
 test('process restart continues an abort attempt persisted before settlement verification', async () => {

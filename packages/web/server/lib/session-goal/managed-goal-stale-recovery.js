@@ -16,6 +16,7 @@ const RECOVERY_REASON_PREFIX = 'stale-recovery:';
 const RECOVERY_TASK_ERROR = 'Task outcome is unknown because OpenCode restarted during foreground execution.';
 
 const DEFAULT_MAX_ABORT_ATTEMPTS = 5;
+const DEFAULT_MAX_AUTO_TURNS = 20;
 const DEFAULT_INITIAL_BACKOFF_MS = 60 * 1_000;
 const DEFAULT_MAX_BACKOFF_MS = 30 * 60 * 1_000;
 const isText = (value) => String(value) === value;
@@ -109,6 +110,7 @@ export const createManagedGoalStaleRecovery = ({
   maxBackoffMs = DEFAULT_MAX_BACKOFF_MS,
   deliveryBackoffMs = DEFAULT_INITIAL_BACKOFF_MS,
   maxDeliveryAttempts = DEFAULT_MAX_ABORT_ATTEMPTS,
+  maxAutoTurns = DEFAULT_MAX_AUTO_TURNS,
   now = () => Date.now(),
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   setIntervalImpl = setInterval,
@@ -147,16 +149,31 @@ export const createManagedGoalStaleRecovery = ({
     discovering = (async () => {
       if (!isEnabled()) return;
       for (const rootId of await listManagedGoalRecoveryRoots(stateOptions)) {
-        const state = await readManagedGoalRecoveryState(rootId, stateOptions);
-        if (state) roots.set(rootId, state.directory);
+        roots.set(rootId, '');
+        try {
+          const state = await readManagedGoalRecoveryState(rootId, stateOptions);
+          if (state) roots.set(rootId, state.directory);
+        } catch (error) {
+          logger.warn('[session-goal] invalid recovery state preserved for inspection:', {
+            rootId,
+            error: error?.message || error,
+          });
+        }
       }
       const payload = await openCodeFetch('/experimental/session', {
         query: { archived: 'true', limit: '10000' },
       });
       for (const session of sessionList(payload)) {
         if (session?.parentID || !isText(session?.id)) continue;
-        if (isActiveManagedGoal(session)) roots.set(session.id, session.directory || '');
-        else if (!await readManagedGoalRecoveryState(session.id, stateOptions)) roots.delete(session.id);
+        if (isActiveManagedGoal(session)) {
+          roots.set(session.id, session.directory || '');
+          continue;
+        }
+        try {
+          if (!await readManagedGoalRecoveryState(session.id, stateOptions)) roots.delete(session.id);
+        } catch {
+          roots.set(session.id, session.directory || '');
+        }
       }
     })().catch((error) => {
       logger.warn('[session-goal] stale recovery discovery failed:', error?.message || error);
@@ -287,6 +304,60 @@ export const createManagedGoalStaleRecovery = ({
     await clearState(state.rootId);
   };
 
+  const terminalizeRecovery = async (state, status, statusReason) => {
+    const session = await openCodeFetch(`/session/${encodeURIComponent(state.rootId)}`, { directory: state.directory });
+    const goal = goalFrom(session);
+    if (goal?.id !== state.goalId) return false;
+    if (goal.status === status && goal.statusReason === statusReason) {
+      await clearState(state.rootId);
+      return true;
+    }
+    const owned = (
+      goal.status === 'paused' && goal.statusReason === 'paused after abort'
+    ) || (
+      goal.status === 'active'
+      && (!goal.statusReason || goal.statusReason === recoveryReason(state.deliveryMessageId))
+    );
+    if (!owned) return false;
+    const metadata = isRecord(session?.metadata) ? session.metadata : {};
+    const namespace = isRecord(metadata.openchamber) ? metadata.openchamber : {};
+    await openCodeFetch(`/session/${encodeURIComponent(state.rootId)}`, {
+      directory: state.directory,
+      method: 'PATCH',
+      body: {
+        metadata: {
+          ...metadata,
+          openchamber: {
+            ...namespace,
+            goal: { ...goal, status, statusReason, updatedAt: now() },
+          },
+        },
+      },
+    });
+    const written = await openCodeFetch(`/session/${encodeURIComponent(state.rootId)}`, { directory: state.directory });
+    const writtenGoal = goalFrom(written);
+    if (writtenGoal?.id !== state.goalId || writtenGoal.status !== status || writtenGoal.statusReason !== statusReason) {
+      return false;
+    }
+    await clearState(state.rootId);
+    logger.warn('[session-goal] stale recovery stopped before continuation', {
+      rootId: state.rootId,
+      status,
+      statusReason,
+    });
+    return true;
+  };
+
+  const hardContinuationStop = (goal) => {
+    if (Number.isFinite(goal.tokenBudget) && goal.tokensUsed >= goal.tokenBudget) {
+      return { status: 'budgetLimited', statusReason: 'token budget reached' };
+    }
+    if (goal.turnsUsed >= maxAutoTurns) {
+      return { status: 'blocked', statusReason: 'auto-continuation limit reached' };
+    }
+    return null;
+  };
+
   const reconcileTask = async (state, evidence) => {
     if (!state.target.taskPartId) return true;
     const part = evidence.taskPart;
@@ -355,12 +426,17 @@ export const createManagedGoalStaleRecovery = ({
   };
 
   const finishDelivery = async (state, delivered) => {
-    if (delivered?.info?.role !== 'user' || textFrom(delivered) !== state.deliveryPrompt) {
+    const deliveredText = textFrom(delivered);
+    if (delivered?.info?.role === 'user' && !deliveredText) return false;
+    if (delivered?.info?.role !== 'user' || deliveredText !== state.deliveryPrompt) {
       logger.warn('[session-goal] stale recovery message identity collision; refusing continuation', {
         rootId: state.rootId,
         messageId: state.deliveryMessageId,
       });
-      return;
+      if (!await terminalizeRecovery(state, 'blocked', 'stale recovery message identity collision')) {
+        await abandonState(state);
+      }
+      return true;
     }
     await clearRecoveryHold(state);
     await clearState(state.rootId);
@@ -369,6 +445,7 @@ export const createManagedGoalStaleRecovery = ({
       sessionId: state.target.sessionId,
       messageId: state.deliveryMessageId,
     });
+    return true;
   };
 
   const deliver = async (state) => {
@@ -378,11 +455,14 @@ export const createManagedGoalStaleRecovery = ({
       return;
     }
     if (state.deliveryAttempts >= maxDeliveryAttempts) {
-      logger.warn('[session-goal] stale recovery continuation exhausted; preserving pending delivery', {
+      logger.warn('[session-goal] stale recovery continuation exhausted; blocking managed goal', {
         rootId: state.rootId,
         messageId: state.deliveryMessageId,
         attempts: state.deliveryAttempts,
       });
+      if (!await terminalizeRecovery(state, 'blocked', 'stale recovery continuation delivery exhausted')) {
+        await abandonState(state);
+      }
       return;
     }
     const deliveryDelay = Math.min(
@@ -408,6 +488,13 @@ export const createManagedGoalStaleRecovery = ({
       return;
     }
     if (refreshed.blocked) return;
+    const hardStop = hardContinuationStop(goalFrom(refreshed.root));
+    if (hardStop) {
+      if (!await terminalizeRecovery(state, hardStop.status, hardStop.statusReason)) {
+        await abandonState(state);
+      }
+      return;
+    }
     const writtenGoal = await prepareDelivery(state, refreshed);
     if (!writtenGoal) {
       await abandonState(state);
@@ -452,8 +539,7 @@ export const createManagedGoalStaleRecovery = ({
       await sleep(100);
       const delivered = await findDelivery(state);
       if (delivered) {
-        await finishDelivery(state, delivered);
-        return;
+        if (await finishDelivery(state, delivered)) return;
       }
     }
   };

@@ -42,9 +42,11 @@ export const readManagedGoalRecoveryState = async (rootId, options = {}) => {
   if (!target) return null;
   try {
     const state = JSON.parse(await readFile(target, 'utf8'));
-    return validState(state, rootId) ? state : null;
-  } catch {
-    return null;
+    if (!validState(state, rootId)) throw new Error(`invalid managed goal recovery state for ${rootId}`);
+    return state;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
   }
 };
 
@@ -73,7 +75,8 @@ export const listManagedGoalRecoveryRoots = async (options = {}) => {
       .filter((name) => name.endsWith(suffix))
       .map((name) => name.slice(0, -suffix.length))
       .filter((rootId) => ID_PATTERN.test(rootId));
-  } catch {
-    return [];
+  } catch (error) {
+    if (error?.code === 'ENOENT') return [];
+    throw error;
   }
 };
