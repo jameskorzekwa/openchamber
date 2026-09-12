@@ -234,8 +234,9 @@ turn or sending a prompt. Exhausting the bounded delivery attempts, or finding
 the deterministic message ID attached to different content, visibly blocks the
 goal and clears the owned recovery hold instead of leaving an active goal
 stranded. A newly admitted user message may temporarily exist without its text
-part; that partial state is retried and is not classified as an identity
-collision.
+part; that partial state is not classified as an identity collision, but each
+reconciliation attempt and deadline is persisted and the same delivery bound
+eventually blocks the goal if the text never appears.
 
 Deployment verification for this recovery must inspect the installed canonical
 `packages/web/server/lib/session-goal` code, then reproduce a foreground task
