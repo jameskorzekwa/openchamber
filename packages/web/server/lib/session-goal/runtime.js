@@ -297,7 +297,26 @@ export const createSessionGoalRuntime = ({
     return response.json().catch(() => null);
   };
 
-  const staleRecovery = createManagedGoalStaleRecovery({ openCodeFetch, isEnabled });
+  const staleRecovery = createManagedGoalStaleRecovery({
+    openCodeFetch,
+    isEnabled,
+    maxAutoTurns,
+    stateDirectory: managedWorktreeStateDirectory,
+    buildRecoveryPrompt: async ({ rootId, goal }) => {
+      let objective = goal.objective;
+      const managedObjective = await readManagedWorktreeGoalObjective(rootId, goal.id, managedWorktreeOptions);
+      if (managedObjective) objective = managedObjective;
+      if (goal.objectiveFile) {
+        const fileObjective = await readObjective(rootId);
+        if (fileObjective) objective = fileObjective;
+      }
+      return buildContinuationPrompt({
+        ...goal,
+        objective,
+        turnsUsed: (Number.isFinite(goal.turnsUsed) ? goal.turnsUsed : 0) + 1,
+      });
+    },
+  });
   staleRecovery.start();
 
   const fetchRecentMessages = async (sessionId, directory) => {
@@ -475,7 +494,14 @@ export const createSessionGoalRuntime = ({
 
     const goal = parseGoalMetadata(session);
     if (!goal || goal.status !== 'active') return;
-    if (goal.managedWorktree && (goal.statusReason === 'worktree-moving' || goal.statusReason === 'worktree-resume-dispatching')) return;
+    if (
+      goal.managedWorktree
+      && (
+        goal.statusReason === 'worktree-moving'
+        || goal.statusReason === 'worktree-resume-dispatching'
+        || goal.statusReason.startsWith('stale-recovery:')
+      )
+    ) return;
 
     // File-backed objectives: the metadata carries only a flag; the objective
     // TEXT lives under the OpenChamber data dir keyed by session id and is
