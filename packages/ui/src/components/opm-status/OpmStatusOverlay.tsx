@@ -1,4 +1,5 @@
 import React from 'react';
+import { OpmSettingsPanel } from './OpmSettingsPanel';
 import { z } from 'zod';
 
 import { Icon } from '@/components/icon/Icon';
@@ -904,6 +905,7 @@ export const OpmStatusOverlay = ({
   const [pauseState, setPauseState] = React.useState<{ pending: boolean; error: string | null }>({ pending: false, error: null });
   const [supported, setSupported] = React.useState<boolean | null>(null);
   const [open, setOpen] = React.useState(false);
+  const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [copiedCommand, setCopiedCommand] = React.useState<string | null>(null);
   const [runStates, setRunStates] = React.useState<Record<string, RunState>>({});
   const [questionDecisionStates, setQuestionDecisionStates] = React.useState<Record<string, QuestionDecisionState>>({});
@@ -1166,6 +1168,7 @@ export const OpmStatusOverlay = ({
           <DialogHeader className="sticky top-0 z-30 min-w-0 shrink-0 gap-1 border-b border-border/60 bg-background pb-2 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-[max(0.75rem,env(safe-area-inset-top))] text-left sm:pb-3 sm:pl-[max(1.25rem,env(safe-area-inset-left))] sm:pr-[max(1.25rem,env(safe-area-inset-right))] sm:pt-[max(1.25rem,env(safe-area-inset-top))]">
             <div className="flex min-w-0 items-center justify-between gap-2">
               <DialogTitle className="flex min-w-0 items-center gap-2"><StatusDot snapshot={snapshot} />OPM</DialogTitle>
+              <Button size="xs" variant="outline" aria-pressed={settingsOpen} onClick={() => setSettingsOpen((value) => !value)}>{t('opm.settings.title')}</Button>
               {snapshot.available ? (
                 <Button
                   size="xs"
@@ -1202,6 +1205,7 @@ export const OpmStatusOverlay = ({
             </DialogDescription>
           </DialogHeader>
           <div className="min-w-0 overflow-x-hidden pb-1 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-2.5 sm:pl-[max(1.25rem,env(safe-area-inset-left))] sm:pr-[max(1.25rem,env(safe-area-inset-right))] sm:pt-3">
+            {settingsOpen ? <OpmSettingsPanel /> : null}
             {!snapshot.available ? (
               <div className="rounded-lg border border-status-warning/30 bg-status-warning/10 p-3 text-status-warning typography-ui-label">
                 {t('opm.dialog.controlUnreachable')}

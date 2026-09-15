@@ -7,6 +7,8 @@ This component renders OPM status in connected hosted web, Electron, and mobile 
 ## Ownership
 
 - `opm-status.ts` owns route transport (`GET /api/opm/status`, `POST /api/opm/command`), boundary parsing, derived counts (including the complete hierarchy count), and owner-guidance classification used for localization.
+- `opm-settings.ts` parses OPM's authoritative settings contract and owns settings transport. `OpmSettingsPanel.tsx` edits that contract inside the dashboard. Each project has an **Admit new work** control distinct from **Pause OPM**. Common controls precede advanced provider configuration, whose composite values use JSON. The supported field inventory and input kinds come from OPM, not a second UI configuration schema.
+- The editor shows effective model inheritance, server validation errors without discarding the draft, and explicit confirmation of sensitive field changes. It reports **Applied to running supervisor** only after OPM acknowledges application. Restart-required saves remain visibly pending. Runtime changes discard the previous runtime's editor. This dashboard-specific editor is not a Settings navigation page, so entity-dependent controls are not indexed in Settings search.
 - `OpmStatusOverlay.tsx` owns the fixed pill, pill dragging and edge placement, dashboard dialog, visible-only polling, browser notifications, copy and one-tap Run actions, mobile row collapsing, session navigation, and supervisor-attention navigation into task details.
 - `MainLayout.tsx` owns the hosted desktop and Electron mount. `MobileApp.tsx` mounts it inside the connected provider shell. Unavailable/disconnected mobile screens and `VSCodeLayout` do not mount it.
 

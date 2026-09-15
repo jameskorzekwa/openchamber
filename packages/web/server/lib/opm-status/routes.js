@@ -722,6 +722,28 @@ export function registerOpmStatusRoutes(app, options = {}) {
 
   const execFile = options.execFile ?? nodeExecFile;
 
+  // OPM owns validation, revision checks, persistence, and live acknowledgement.
+  // This authenticated runtime route must never edit a second settings file.
+  const settingsRequest = async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      const request = {
+        method: req.method,
+        signal: AbortSignal.timeout(120000),
+      };
+      if (req.method === 'POST') {
+        request.headers = { 'content-type': 'application/json' };
+        request.body = JSON.stringify(req.body);
+      }
+      const response = await fetch(`${(config.controlUrl ?? DEFAULT_CONTROL_URL).replace(/\/$/, '')}/settings`, request);
+      return res.status(response.status).json(await response.json());
+    } catch {
+      return res.status(502).json({ error: 'OPM settings request failed. Reload settings to check whether the change was applied before retrying.' });
+    }
+  };
+  app.get('/api/opm/settings', settingsRequest);
+  app.post('/api/opm/settings', parseJsonBody, settingsRequest);
+
   app.get('/api/opm/status', (_req, res) => {
     res.set('Cache-Control', 'no-store');
     res.json(poller.current());
