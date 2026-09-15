@@ -72,6 +72,7 @@ import { SessionActivityDuration } from '@/components/session/SessionActivityDur
 import type { WorktreeMetadata } from '@/types/worktree';
 
 import { MobileDeleteWorktreeDialog } from './MobileDeleteWorktreeDialog';
+import { openMobileNewChatDraft } from './mobileNewSessionTarget';
 import { MobileProjectEditSurface } from './MobileProjectEditSurface';
 
 type MobileSessionsSheetProps = {
@@ -1330,7 +1331,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
   };
 
   const handleStartNewChat = () => {
-    openNewSessionDraft();
+    openMobileNewChatDraft(projects, activeProjectId, openNewSessionDraft);
     onOpenChange(false);
   };
 

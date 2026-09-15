@@ -1,9 +1,11 @@
 import React from 'react';
 
 import { isCapacitorApp } from '@/lib/platform';
+import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 
 import { parseDeepLink, type DeepLinkIntent, type SessionsFilter, type ViewTarget } from './deepLinks';
+import { openDeepLinkNewSessionDraft } from './mobileNewSessionTarget';
 
 /**
  * Navigation layer for {@link DeepLinkIntent}s — the only place that knows how to *apply* a
@@ -40,15 +42,8 @@ const execute = (intent: DeepLinkIntent): boolean => {
       return true;
 
     case 'new-session': {
-      const store = useSessionUIStore.getState();
-      store.openNewSessionDraft();
-      if (intent.directory || intent.projectId) {
-        store.setNewSessionDraftTarget({
-          directoryOverride: intent.directory ?? null,
-          projectId: intent.projectId ?? null,
-          selectedProjectId: intent.projectId ?? null,
-        });
-      }
+      const { openNewSessionDraft } = useSessionUIStore.getState();
+      openDeepLinkNewSessionDraft(intent, useProjectsStore.getState().projects, openNewSessionDraft);
       return true;
     }
 
