@@ -34,6 +34,7 @@ Optional configuration lives at `~/.config/openchamber-opm-status.json`:
 - Poll every 10 seconds and time out each OPM fetch after 3 seconds.
 - Polling failure replaces the cached response with `available: false`; stale success must not look current.
 - Responses use `Cache-Control: no-store`.
+- `GET /api/opm/settings` and `POST /api/opm/settings` proxy the authoritative OPM `/settings` interface through the existing authenticated runtime. They preserve validation/conflict responses and never read or write an OPM configuration file locally. OPM enforces mutation opt-in, stale revisions, sensitive-change confirmation, credential exclusion, and runtime acknowledgement. A transport timeout is explicitly uncertain and requires reloading settings before retrying. Web, connected Electron, and connected mobile use this route; VS Code does not mount the OPM dashboard.
 - The interval is unreferenced and must be cleared through the returned `close()` handle.
 - Register this explicit OpenChamber route before the generic OpenCode `/api/*` proxy.
 - A waiting parent is not counted as active. Rich child rows win over inline child summaries, and owner-required children raise their family to the top of the tree.

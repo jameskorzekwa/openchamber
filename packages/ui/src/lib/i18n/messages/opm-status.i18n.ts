@@ -1,4 +1,7 @@
+import { opmSettingsI18n } from './opm-settings.i18n';
+
 const en = {
+  ...opmSettingsI18n.en,
   'opm.row.parent': 'Parent',
   'opm.row.child': 'Child',
   'opm.overview.queued': 'Queued',
@@ -103,6 +106,7 @@ const en = {
 type OpmMessages = Record<keyof typeof en, string>;
 
 const de = {
+  ...opmSettingsI18n.de,
   'opm.row.parent': 'Übergeordnet', 'opm.row.child': 'Untergeordnet', 'opm.overview.queued': 'Eingereiht',
   'opm.phase.planned': 'Geplant', 'opm.phase.active': 'In Arbeit', 'opm.phase.waitingOwner': 'Wartet auf dich', 'opm.phase.waiting': 'Wartet', 'opm.phase.paused': 'Pausiert', 'opm.phase.blocked': 'Blockiert', 'opm.phase.review': 'In Prüfung', 'opm.phase.merged': 'Zusammengeführt', 'opm.phase.deployed': 'Bereitgestellt', 'opm.phase.verified': 'Verifiziert', 'opm.phase.completed': 'Abgeschlossen', 'opm.phase.cancelled': 'Abgebrochen', 'opm.phase.failed': 'Fehlgeschlagen', 'opm.phase.idle': 'Inaktiv',
   'opm.row.state': 'Zustand', 'opm.row.action': 'Aktion', 'opm.state.implemented': 'Implementiert', 'opm.state.reviewed': 'Geprüft',
@@ -117,6 +121,7 @@ const de = {
 } satisfies OpmMessages;
 
 const es = {
+  ...opmSettingsI18n.es,
   'opm.row.parent': 'Principal', 'opm.row.child': 'Secundario', 'opm.overview.queued': 'En cola',
   'opm.phase.planned': 'Planificado', 'opm.phase.active': 'En curso', 'opm.phase.waitingOwner': 'Esperando tu acción', 'opm.phase.waiting': 'En espera', 'opm.phase.paused': 'Pausado', 'opm.phase.blocked': 'Bloqueado', 'opm.phase.review': 'En revisión', 'opm.phase.merged': 'Fusionado', 'opm.phase.deployed': 'Desplegado', 'opm.phase.verified': 'Verificado', 'opm.phase.completed': 'Completado', 'opm.phase.cancelled': 'Cancelado', 'opm.phase.failed': 'Fallido', 'opm.phase.idle': 'Inactivo',
   'opm.row.state': 'Estado', 'opm.row.action': 'Acción', 'opm.state.implemented': 'Implementado', 'opm.state.reviewed': 'Revisado',
@@ -131,6 +136,7 @@ const es = {
 } satisfies OpmMessages;
 
 const fr = {
+  ...opmSettingsI18n.fr,
   'opm.row.parent': 'Parent', 'opm.row.child': 'Enfant', 'opm.overview.queued': 'En file',
   'opm.phase.planned': 'Planifié', 'opm.phase.active': 'En cours', 'opm.phase.waitingOwner': 'Attend votre action', 'opm.phase.waiting': 'En attente', 'opm.phase.paused': 'En pause', 'opm.phase.blocked': 'Bloqué', 'opm.phase.review': 'En révision', 'opm.phase.merged': 'Fusionné', 'opm.phase.deployed': 'Déployé', 'opm.phase.verified': 'Vérifié', 'opm.phase.completed': 'Terminé', 'opm.phase.cancelled': 'Annulé', 'opm.phase.failed': 'Échoué', 'opm.phase.idle': 'Inactif',
   'opm.row.state': 'État', 'opm.row.action': 'Action', 'opm.state.implemented': 'Implémenté', 'opm.state.reviewed': 'Révisé',
@@ -146,6 +152,7 @@ const fr = {
 } satisfies OpmMessages;
 
 const ja = {
+  ...opmSettingsI18n.ja,
   'opm.row.parent': '親', 'opm.row.child': '子', 'opm.overview.queued': 'キュー内',
   'opm.phase.planned': '計画済み', 'opm.phase.active': '作業中', 'opm.phase.waitingOwner': 'あなたの対応待ち', 'opm.phase.waiting': '待機中', 'opm.phase.paused': '一時停止', 'opm.phase.blocked': 'ブロック中', 'opm.phase.review': 'レビュー中', 'opm.phase.merged': 'マージ済み', 'opm.phase.deployed': 'デプロイ済み', 'opm.phase.verified': '検証済み', 'opm.phase.completed': '完了', 'opm.phase.cancelled': 'キャンセル済み', 'opm.phase.failed': '失敗', 'opm.phase.idle': '待機',
   'opm.row.state': '状態', 'opm.row.action': 'アクション', 'opm.state.implemented': '実装済み', 'opm.state.reviewed': 'レビュー済み',
@@ -161,6 +168,7 @@ const ja = {
 } satisfies OpmMessages;
 
 const ko = {
+  ...opmSettingsI18n.ko,
   'opm.row.parent': '상위', 'opm.row.child': '하위', 'opm.overview.queued': '대기열',
   'opm.phase.planned': '계획됨', 'opm.phase.active': '작업 중', 'opm.phase.waitingOwner': '사용자 조치 대기', 'opm.phase.waiting': '대기 중', 'opm.phase.paused': '일시 중지됨', 'opm.phase.blocked': '차단됨', 'opm.phase.review': '검토 중', 'opm.phase.merged': '병합됨', 'opm.phase.deployed': '배포됨', 'opm.phase.verified': '검증됨', 'opm.phase.completed': '완료됨', 'opm.phase.cancelled': '취소됨', 'opm.phase.failed': '실패', 'opm.phase.idle': '유휴',
   'opm.row.state': '상태', 'opm.row.action': '작업', 'opm.state.implemented': '구현됨', 'opm.state.reviewed': '검토됨',
@@ -176,6 +184,7 @@ const ko = {
 } satisfies OpmMessages;
 
 const pl = {
+  ...opmSettingsI18n.pl,
   'opm.row.parent': 'Nadrzędne', 'opm.row.child': 'Podrzędne', 'opm.overview.queued': 'W kolejce',
   'opm.phase.planned': 'Zaplanowane', 'opm.phase.active': 'W toku', 'opm.phase.waitingOwner': 'Czeka na Ciebie', 'opm.phase.waiting': 'Oczekuje', 'opm.phase.paused': 'Wstrzymane', 'opm.phase.blocked': 'Zablokowane', 'opm.phase.review': 'W przeglądzie', 'opm.phase.merged': 'Scalone', 'opm.phase.deployed': 'Wdrożone', 'opm.phase.verified': 'Zweryfikowane', 'opm.phase.completed': 'Ukończone', 'opm.phase.cancelled': 'Anulowane', 'opm.phase.failed': 'Niepowodzenie', 'opm.phase.idle': 'Bezczynne',
   'opm.row.state': 'Stan', 'opm.row.action': 'Działanie', 'opm.state.implemented': 'Zaimplementowane', 'opm.state.reviewed': 'Sprawdzone',
@@ -191,6 +200,7 @@ const pl = {
 } satisfies OpmMessages;
 
 const ptBR = {
+  ...opmSettingsI18n['pt-BR'],
   'opm.row.parent': 'Pai', 'opm.row.child': 'Filho', 'opm.overview.queued': 'Na fila',
   'opm.phase.planned': 'Planejado', 'opm.phase.active': 'Em andamento', 'opm.phase.waitingOwner': 'Aguardando você', 'opm.phase.waiting': 'Aguardando', 'opm.phase.paused': 'Pausado', 'opm.phase.blocked': 'Bloqueado', 'opm.phase.review': 'Em revisão', 'opm.phase.merged': 'Mesclado', 'opm.phase.deployed': 'Implantado', 'opm.phase.verified': 'Verificado', 'opm.phase.completed': 'Concluído', 'opm.phase.cancelled': 'Cancelado', 'opm.phase.failed': 'Falhou', 'opm.phase.idle': 'Ocioso',
   'opm.row.state': 'Estado', 'opm.row.action': 'Ação', 'opm.state.implemented': 'Implementado', 'opm.state.reviewed': 'Revisado',
@@ -206,6 +216,7 @@ const ptBR = {
 } satisfies OpmMessages;
 
 const uk = {
+  ...opmSettingsI18n.uk,
   'opm.row.parent': 'Батьківська', 'opm.row.child': 'Дочірня', 'opm.overview.queued': 'У черзі',
   'opm.phase.planned': 'Заплановано', 'opm.phase.active': 'У роботі', 'opm.phase.waitingOwner': 'Очікує на вас', 'opm.phase.waiting': 'Очікує', 'opm.phase.paused': 'Призупинено', 'opm.phase.blocked': 'Заблоковано', 'opm.phase.review': 'На перевірці', 'opm.phase.merged': 'Злито', 'opm.phase.deployed': 'Розгорнуто', 'opm.phase.verified': 'Перевірено', 'opm.phase.completed': 'Завершено', 'opm.phase.cancelled': 'Скасовано', 'opm.phase.failed': 'Помилка', 'opm.phase.idle': 'Бездіяльність',
   'opm.row.state': 'Стан', 'opm.row.action': 'Дія', 'opm.state.implemented': 'Реалізовано', 'opm.state.reviewed': 'Переглянуто',
@@ -221,6 +232,7 @@ const uk = {
 } satisfies OpmMessages;
 
 const zhCN = {
+  ...opmSettingsI18n['zh-CN'],
   'opm.row.parent': '父项', 'opm.row.child': '子项', 'opm.overview.queued': '排队中',
   'opm.phase.planned': '已计划', 'opm.phase.active': '进行中', 'opm.phase.waitingOwner': '等待你处理', 'opm.phase.waiting': '等待中', 'opm.phase.paused': '已暂停', 'opm.phase.blocked': '已阻塞', 'opm.phase.review': '审核中', 'opm.phase.merged': '已合并', 'opm.phase.deployed': '已部署', 'opm.phase.verified': '已验证', 'opm.phase.completed': '已完成', 'opm.phase.cancelled': '已取消', 'opm.phase.failed': '失败', 'opm.phase.idle': '空闲',
   'opm.row.state': '状态', 'opm.row.action': '当前操作', 'opm.state.implemented': '已实现', 'opm.state.reviewed': '已审核',
@@ -236,6 +248,7 @@ const zhCN = {
 } satisfies OpmMessages;
 
 const zhTW = {
+  ...opmSettingsI18n['zh-TW'],
   'opm.row.parent': '父項目', 'opm.row.child': '子項目', 'opm.overview.queued': '排隊中',
   'opm.phase.planned': '已規劃', 'opm.phase.active': '進行中', 'opm.phase.waitingOwner': '等待你處理', 'opm.phase.waiting': '等待中', 'opm.phase.paused': '已暫停', 'opm.phase.blocked': '已阻擋', 'opm.phase.review': '審查中', 'opm.phase.merged': '已合併', 'opm.phase.deployed': '已部署', 'opm.phase.verified': '已驗證', 'opm.phase.completed': '已完成', 'opm.phase.cancelled': '已取消', 'opm.phase.failed': '失敗', 'opm.phase.idle': '閒置',
   'opm.row.state': '狀態', 'opm.row.action': '目前操作', 'opm.state.implemented': '已實作', 'opm.state.reviewed': '已審查',
