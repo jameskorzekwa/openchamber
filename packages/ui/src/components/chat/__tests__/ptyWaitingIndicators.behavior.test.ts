@@ -12,13 +12,13 @@ const sidebarSource = readFileSync(
 );
 
 describe('PTY waiting indicator integration', () => {
-  test('mounts the focused banner directly after the session recap in the list footer', () => {
-    const recapIndex = chatContainerSource.indexOf('<SessionRecapNote');
-    const bannerIndex = chatContainerSource.indexOf('<PtyWaitingBanner', recapIndex);
+  test('mounts the focused banner directly after the session error notice in the list footer', () => {
+    const errorNoticeIndex = chatContainerSource.indexOf('<SessionErrorNotice');
+    const bannerIndex = chatContainerSource.indexOf('<PtyWaitingBanner', errorNoticeIndex);
     const footerSpacerIndex = chatContainerSource.indexOf('className="flex-shrink-0"', bannerIndex);
 
-    expect(recapIndex).toBeGreaterThan(-1);
-    expect(bannerIndex).toBeGreaterThan(recapIndex);
+    expect(errorNoticeIndex).toBeGreaterThan(-1);
+    expect(bannerIndex).toBeGreaterThan(errorNoticeIndex);
     expect(footerSpacerIndex).toBeGreaterThan(bannerIndex);
   });
 
