@@ -379,6 +379,9 @@ jobs:
           bun run test
 
       - name: Stage channel version and build
+        env:
+          # vite build peaks near Node's default ~2 GiB heap on the macOS runner.
+          NODE_OPTIONS: --max-old-space-size=4096
         run: |
           set -euo pipefail
           node tools/channel-release/channel-release.mjs stage-version \
@@ -525,6 +528,9 @@ jobs:
           bun install --frozen-lockfile
 
       - name: Stage exact channel version and build
+        env:
+          # vite build peaks near Node's default ~2 GiB heap on the macOS runner.
+          NODE_OPTIONS: --max-old-space-size=4096
         run: |
           set -euo pipefail
           node tools/channel-release/channel-release.mjs stage-version \
