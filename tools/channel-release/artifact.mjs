@@ -75,7 +75,15 @@ function dependencySets(packageJson) {
   return { required: [...required].sort(), optional: [...optional].sort() };
 }
 
-function findInstalledDependency(packageDirectory, name, repositoryRoot) {
+// A `workspace:*` dependency (upstream's @openchamber/sdk) is a symlink into
+// the repository's own packages/ tree rather than the frozen node_modules
+// tree. It is a legitimate, lockfile-pinned source and is materialized like
+// any other dependency; anything else outside node_modules stays rejected.
+function isWorkspacePackage(repositoryRoot, resolved) {
+  return isInside(join(repositoryRoot, 'packages'), resolved) && resolved !== join(repositoryRoot, 'packages');
+}
+
+function findInstalledDependency(packageDirectory, name, repositoryRoot, workspaceSources) {
   let current = packageDirectory;
   const segments = packageSegments(name);
   while (true) {
@@ -83,10 +91,12 @@ function findInstalledDependency(packageDirectory, name, repositoryRoot) {
     if (existsSync(candidate)) {
       const resolved = realpathSync(candidate);
       if (!statSync(resolved).isDirectory()) fail(`Installed dependency is not a directory: ${name}`);
-      if (!isInside(join(repositoryRoot, 'node_modules'), resolved)) {
-        fail(`Installed dependency resolves outside the frozen node_modules tree: ${name}`);
+      if (isInside(join(repositoryRoot, 'node_modules'), resolved)) return resolved;
+      if (isWorkspacePackage(repositoryRoot, resolved)) {
+        workspaceSources.add(resolved);
+        return resolved;
       }
-      return resolved;
+      fail(`Installed dependency resolves outside the frozen node_modules tree: ${name}`);
     }
     const parent = dirname(current);
     if (parent === current) return null;
@@ -116,6 +126,29 @@ function copyMaterialized(source, destination, active = new Set()) {
   chmodSync(destination, (sourceStat.mode & 0o111) !== 0 ? 0o755 : 0o644);
 }
 
+// A workspace package carries its sources, examples, and tests next to the
+// built output. Only what npm would publish (`files` plus package.json) is
+// staged, so the archive matches the registry package and nested example
+// workspaces never enter the dependency graph.
+function copyWorkspacePackage(source, target) {
+  const packageJson = readPackageJson(source);
+  const files = Array.isArray(packageJson.files) ? packageJson.files : null;
+  if (!files) {
+    copyMaterialized(source, target);
+    return;
+  }
+  mkdirSync(target, { recursive: true, mode: 0o755 });
+  copyMaterialized(join(source, 'package.json'), join(target, 'package.json'));
+  for (const entry of files) {
+    if (typeof entry !== 'string' || entry.includes('*') || entry.startsWith('!') || entry.includes('..')) {
+      fail(`Unsupported files entry in workspace package ${packageJson.name}: ${entry}`);
+    }
+    const entrySource = join(source, entry);
+    if (!existsSync(entrySource)) continue;
+    copyMaterialized(entrySource, join(target, entry));
+  }
+}
+
 function findPlacedDependency(packageTarget, name, stagingRoot, placements) {
   let current = packageTarget;
   const segments = packageSegments(name);
@@ -128,7 +161,7 @@ function findPlacedDependency(packageTarget, name, stagingRoot, placements) {
   return null;
 }
 
-function placeDependency(source, parentTarget, name, stagingRoot, placements, pending) {
+function placeDependency(source, parentTarget, name, stagingRoot, placements, pending, workspaceSources) {
   const existing = findPlacedDependency(parentTarget, name, stagingRoot, placements);
   if (existing?.source === source) return;
 
@@ -142,7 +175,8 @@ function placeDependency(source, parentTarget, name, stagingRoot, placements, pe
     return;
   }
 
-  copyMaterialized(source, target);
+  if (workspaceSources.has(source)) copyWorkspacePackage(source, target);
+  else copyMaterialized(source, target);
   const stagedPackage = readPackageJson(target, name);
   if (stagedPackage.name !== name) fail(`Resolved dependency ${name} contains package ${stagedPackage.name || '<unnamed>'}`);
   placements.set(target, source);
@@ -169,19 +203,20 @@ export function stageRelocatablePackage({ repositoryRoot, packageRoot, stagingRo
   mkdirSync(join(stagingRoot, 'node_modules'), { recursive: true, mode: 0o755 });
 
   const placements = new Map();
+  const workspaceSources = new Set();
   const pending = [{ source: packageRoot, target: stagingRoot }];
   while (pending.length > 0) {
     const current = pending.pop();
     const packageJson = readPackageJson(current.source);
     const dependencies = dependencySets(packageJson);
     for (const name of dependencies.required) {
-      const source = findInstalledDependency(current.source, name, repositoryRoot);
+      const source = findInstalledDependency(current.source, name, repositoryRoot, workspaceSources);
       if (!source) fail(`Missing required production dependency ${name} for ${packageJson.name}`);
-      placeDependency(source, current.target, name, stagingRoot, placements, pending);
+      placeDependency(source, current.target, name, stagingRoot, placements, pending, workspaceSources);
     }
     for (const name of dependencies.optional) {
-      const source = findInstalledDependency(current.source, name, repositoryRoot);
-      if (source) placeDependency(source, current.target, name, stagingRoot, placements, pending);
+      const source = findInstalledDependency(current.source, name, repositoryRoot, workspaceSources);
+      if (source) placeDependency(source, current.target, name, stagingRoot, placements, pending, workspaceSources);
     }
   }
   return { packages: placements.size + 1 };

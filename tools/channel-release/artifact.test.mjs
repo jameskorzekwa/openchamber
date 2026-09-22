@@ -7,6 +7,7 @@ import { gzipSync } from 'node:zlib';
 import {
   ARCHIVE_LIMITS,
   createRelocatableArchive,
+  stageRelocatablePackage,
   verifyNativeBinary,
   verifyRelocatableArchive,
 } from './artifact.mjs';
@@ -229,5 +230,55 @@ test('does not extract an archive that fails final identity validation', async (
     assert.equal(existsSync(extraction), false);
   } finally {
     rmSync(value.root, { recursive: true, force: true });
+  }
+});
+
+test('stages a workspace dependency through its published files and rejects other out-of-tree links', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'channel-artifact-workspace-'));
+  const repositoryRoot = join(root, 'repo');
+  const packageRoot = join(repositoryRoot, 'packages', 'web');
+  const sdkRoot = join(repositoryRoot, 'packages', 'sdk');
+  const stagingRoot = join(root, 'staging');
+  try {
+    writePackage(packageRoot, {
+      name: '@openchamber/web', version, bin: { openchamber: './bin/cli.js' },
+      dependencies: { '@openchamber/sdk': 'workspace:*', 'dep-a': '1.0.0' },
+    });
+    for (const path of ['bin', 'server', 'dist', 'public']) mkdirSync(join(packageRoot, path), { recursive: true });
+    writeFileSync(join(packageRoot, 'bin/cli.js'), '#!/usr/bin/env node\n');
+    writeFileSync(join(packageRoot, 'server/index.js'), 'export {};\n');
+    writeFileSync(join(packageRoot, 'dist/index.html'), '<!doctype html>\n');
+    writeFileSync(join(packageRoot, 'README.md'), '# web\n');
+    writePackage(sdkRoot, { name: '@openchamber/sdk', version, files: ['dist', 'README.md'], dependencies: { 'dep-a': '1.0.0' } });
+    mkdirSync(join(sdkRoot, 'dist'), { recursive: true });
+    mkdirSync(join(sdkRoot, 'src'), { recursive: true });
+    mkdirSync(join(sdkRoot, 'examples', 'hello'), { recursive: true });
+    writeFileSync(join(sdkRoot, 'dist/index.js'), 'export {};\n');
+    writeFileSync(join(sdkRoot, 'src/index.ts'), 'export {};\n');
+    writePackage(join(sdkRoot, 'examples', 'hello'), { name: '@openchamber/example-hello', version, dependencies: { 'dep-missing': '1.0.0' } });
+    writePackage(join(repositoryRoot, 'node_modules', 'dep-a'), { name: 'dep-a', version: '1.0.0' });
+    mkdirSync(join(repositoryRoot, 'node_modules', '@openchamber'), { recursive: true });
+    symlinkSync(join('..', '..', 'packages', 'sdk'), join(repositoryRoot, 'node_modules', '@openchamber', 'sdk'));
+
+    stageRelocatablePackage({ repositoryRoot, packageRoot, stagingRoot, sourceCommit, target });
+    assert.ok(existsSync(join(stagingRoot, 'node_modules', '@openchamber', 'sdk', 'dist', 'index.js')));
+    assert.ok(existsSync(join(stagingRoot, 'node_modules', '@openchamber', 'sdk', 'package.json')));
+    assert.equal(existsSync(join(stagingRoot, 'node_modules', '@openchamber', 'sdk', 'src')), false);
+    assert.equal(existsSync(join(stagingRoot, 'node_modules', '@openchamber', 'sdk', 'examples')), false);
+    assert.ok(existsSync(join(stagingRoot, 'node_modules', 'dep-a', 'package.json')));
+    const archive = join(root, 'artifact.tgz');
+    await createRelocatableArchive(stagingRoot, archive);
+    assert.doesNotThrow(() => verifyRelocatableArchive(archive, { expectedVersion: version, sourceCommit, target }));
+
+    const outside = join(root, 'outside-dep');
+    writePackage(outside, { name: 'dep-a', version: '1.0.0' });
+    rmSync(join(repositoryRoot, 'node_modules', 'dep-a'), { recursive: true });
+    symlinkSync(outside, join(repositoryRoot, 'node_modules', 'dep-a'));
+    assert.throws(
+      () => stageRelocatablePackage({ repositoryRoot, packageRoot, stagingRoot, sourceCommit, target }),
+      /resolves outside the frozen node_modules tree: dep-a/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
