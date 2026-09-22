@@ -11,6 +11,8 @@ import { isolatedSpacesI18n } from './isolated-spaces.i18n';
 import { providersI18n } from './providers.i18n';
 import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
+import { opmStatusI18n } from './opm-status.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
   "opencodeCompatibility.bundled": "OpenCode, OpenChamber ile birlikte gelir. OpenCode v2 için OpenChamber’ı güncelleyin.",
@@ -68,6 +70,8 @@ export const dict = {
   ...providersI18n.tr,
   ...mcpGridI18n.tr,
   ...pluginsGridI18n.tr,
+  ...opmStatusI18n.tr,
+  ...updateStatusI18n.tr,
   'terminalView.actions.attachSelection': 'Seçili çıktıyı ekle',
   'terminalView.actions.copySelection': 'Seçili çıktıyı kopyala',
   'terminalView.toast.selectionCopied': 'Çıktı kopyalandı',
@@ -596,6 +600,11 @@ export const dict = {
   'sessions.sidebar.session.export.dialog.includeSubtasks': 'Alt agent görevlerini dahil et',
   'sessions.sidebar.session.export.dialog.confirm': 'Dışa aktar',
   'sessions.sidebar.session.status.active': 'Session aktif',
+  'sessions.sidebar.session.status.waitingSingleDescription': 'Bekleniyor: {description}',
+  'sessions.sidebar.session.status.waitingSingleDefault': 'Bir arka plan işlemi bekleniyor',
+  'sessions.sidebar.session.status.waitingMany': '{count} arka plan işlemi bekleniyor',
+  'sessions.sidebar.session.status.waitingBadgeSingle': 'Bekliyor',
+  'sessions.sidebar.session.status.waitingBadgeMany': 'Bekliyor · {count}',
   'sessions.sidebar.session.status.unread': 'Okunmamış güncellemeler',
   'sessions.sidebar.session.status.backgroundSubagent': 'Alt ajan arka planda çalışıyor',
   'sessions.sidebar.session.status.backgroundCommand': 'Komut arka planda çalışıyor',
@@ -607,6 +616,12 @@ export const dict = {
   'sessions.sidebar.session.status.questionPending': 'Bekleyen soru',
   'sessions.sidebar.session.status.activeFor': '{duration} süredir aktif',
   'sessions.sidebar.session.status.lastTurnDuration': 'Son tur {duration} sürdü',
+  'chat.ptyWaiting.backgroundProcess': 'Arka plan işlemi',
+  'chat.ptyWaiting.backgroundProcesses': '{count} arka plan işlemi',
+  'chat.ptyWaiting.ariaSingleDescription': 'Bekleniyor: {description}',
+  'chat.ptyWaiting.ariaSingleDefault': 'Bir arka plan işlemi bekleniyor',
+  'chat.ptyWaiting.ariaMany': '{count} arka plan işlemi bekleniyor',
+  'chat.ptyWaiting.label': 'Bekleniyor…',
   'sessions.sidebar.session.subsessions.collapse': 'Alt session\'ları daralt',
   'sessions.sidebar.session.subsessions.expand': 'Alt session\'ları genişlet',
   'sessions.sidebar.dialogs.deleteSession.title': 'Session silinsin mi?',

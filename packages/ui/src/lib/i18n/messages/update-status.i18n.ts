@@ -49,6 +49,11 @@ export const updateStatusI18n = {
     'updateDialog.status.rollbackComplete': '已恢复上一版本。',
     'updateDialog.status.noValidatedRelease': '此 Mac 暂无经过验证的版本。',
   },
+  tr: {
+    'updateDialog.status.updateInstalled': 'Güncelleme yüklendi',
+    'updateDialog.status.rollbackComplete': 'Önceki sürüm geri yüklendi.',
+    'updateDialog.status.noValidatedRelease': 'Bu Mac için doğrulanmış bir sürüm yok.',
+  },
   'zh-TW': {
     'updateDialog.status.updateInstalled': '更新已安裝',
     'updateDialog.status.rollbackComplete': '已還原先前版本。',

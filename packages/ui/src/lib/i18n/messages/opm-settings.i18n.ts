@@ -85,4 +85,12 @@ const zhTW = {
   'opm.settings.inherit': '{field} 的有效值：{value}。來源：{source}。', 'opm.settings.applied': '已套用至執行中的監督程式', 'opm.settings.restart': '需要重新啟動：{fields}。儲存的變更尚未套用。',
   'opm.settings.confirm': '確認敏感變更', 'opm.settings.syntax': '陣列和物件使用 JSON。清空欄位可移除覆寫值。', 'opm.settings.invalid': '{field} 中的 JSON 無效',
 } satisfies Messages;
-export const opmSettingsI18n = { en, de, es, fr, ja, ko, pl, 'pt-BR': ptBR, uk, 'zh-CN': zhCN, 'zh-TW': zhTW };
+const tr = {
+  'opm.settings.restartLabel': 'Süpervizörün yeniden başlatılması gerekir',
+  'opm.settings.title': 'OPM ayarları', 'opm.settings.admit': 'Yeni işi kabul et', 'opm.settings.admitHelp': 'Kapalı: mevcut iş devam eder, ancak yeni konular kabul edilmez.',
+  'opm.settings.advanced': 'Gelişmiş', 'opm.settings.global': 'Genel ayarlar', 'opm.settings.save': 'Doğrula ve uygula', 'opm.settings.reload': 'Ayarları yeniden yükle',
+  'opm.settings.inherit': 'Geçerli {field}: {value}. Kaynak: {source}.', 'opm.settings.applied': 'Çalışan süpervizöre uygulandı',
+  'opm.settings.restart': 'Yeniden başlatma gerekli: {fields}. Kaydedilen değişiklikler henüz uygulanmadı.', 'opm.settings.confirm': 'Hassas değişiklikleri onayla',
+  'opm.settings.syntax': 'Diziler ve nesneler JSON kullanır. Geçersiz kılmayı kaldırmak için alanı temizleyin.', 'opm.settings.invalid': '{field} alanında geçersiz JSON',
+} satisfies Messages;
+export const opmSettingsI18n = { en, de, es, fr, ja, ko, pl, 'pt-BR': ptBR, uk, 'zh-CN': zhCN, 'zh-TW': zhTW, tr };
