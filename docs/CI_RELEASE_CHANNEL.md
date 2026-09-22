@@ -58,7 +58,7 @@ left for manual conflict resolution.
 requests targeting `j2k/current`, and manual dispatches. It has `contents: read` only
 and cancels superseded validation for the same ref.
 
-The Ubuntu x86_64 job pins Bun 1.3.14 and Node 22.22.0, requires Node modules
+The Ubuntu x86_64 job pins Bun 1.4.2 and Node 22.22.0, requires Node modules
 ABI 127, then runs:
 
 ```bash
@@ -210,7 +210,7 @@ exactly these four assets:
 - `channel.json`
 
 The web channel does not publish to npm and does not use npm, Apple, VS Code,
-or other repository secrets. CI pins Bun 1.3.14, Node 22.22.0, and npm 11.6.2.
+or other repository secrets. CI pins Bun 1.4.2, Node 22.22.0, and npm 11.6.2.
 Web companion assets never enter the Desktop release.
 
 ## Manifest contract
