@@ -552,12 +552,12 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Resolve pinned Bun from source
+      - name: Resolve pinned Bun from trusted source
         id: bun
         run: |
           set -euo pipefail
-          pin="$(jq -r '.packageManager // ""' package.json)"
-          [[ "$pin" =~ ^bun@([0-9]+\.[0-9]+\.[0-9]+)$ ]] || { echo "package.json packageManager must pin bun@X.Y.Z; got '$pin'" >&2; exit 1; }
+          pin="$(jq -r '.packageManager // ""' trusted/package.json)"
+          [[ "$pin" =~ ^bun@([0-9]+\.[0-9]+\.[0-9]+)$ ]] || { echo "trusted package.json packageManager must pin bun@X.Y.Z; got '$pin'" >&2; exit 1; }
           echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
           echo "BUN_VERSION=${BASH_REMATCH[1]}" >> "$GITHUB_ENV"
 
