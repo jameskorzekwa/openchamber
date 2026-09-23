@@ -32,6 +32,13 @@ export interface StartWebUiServerOptions {
   exitOnShutdown?: boolean;
   uiPassword?: string | null;
   desktopUpdater?: DesktopUpdater;
+  /**
+   * Set to `false` when the embedding host owns OpenChamber's lifecycle and
+   * updates (for example a pinned deployment restarted by a supervisor). The
+   * server then reports no self-update, performs no update-channel requests,
+   * and refuses `POST /api/openchamber/update-install`. Defaults to `true`.
+   */
+  selfUpdate?: boolean;
   /** App-owned built-in resources outside Electron's ASAR archive. */
   builtInExtensionsDir?: string;
 }
