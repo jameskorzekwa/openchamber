@@ -139,6 +139,80 @@ describe('checkForUpdates', () => {
     expect(result.available).toBe(false);
   });
 
+  // --- Scenario: fork channel builds (`<upstream>-j2k.<n>`) are not prereleases ---
+
+  it('returns available=false when a fork build is compared against the same upstream release', async () => {
+    fetchMock
+      .when('api.openchamber.dev', {
+        ok: true,
+        json: async () => ({
+          latestVersion: '1.24.2',
+          updateAvailable: true,
+        }),
+      })
+      .when('registry.npmjs.org', {
+        ok: true,
+        json: async () => ({
+          'dist-tags': { latest: '1.24.2' },
+        }),
+      });
+
+    const result = await checkForUpdates({ currentVersion: '1.24.2-j2k.1' });
+
+    expect(result.available).toBe(false);
+  });
+
+  it('returns available=true when a fork build is behind a newer upstream release', async () => {
+    fetchMock
+      .when('api.openchamber.dev', {
+        ok: true,
+        json: async () => ({
+          latestVersion: '1.24.3',
+          updateAvailable: true,
+        }),
+      })
+      .when('registry.npmjs.org', {
+        ok: true,
+        json: async () => ({
+          'dist-tags': { latest: '1.24.3' },
+        }),
+      })
+      .when('raw.githubusercontent.com', {
+        ok: true,
+        text: async () => '## [1.24.3] - 2026-09-30\n\n- Fix',
+      });
+
+    const result = await checkForUpdates({ currentVersion: '1.24.2-j2k.1' });
+
+    expect(result.available).toBe(true);
+    expect(result.version).toBe('1.24.3');
+  });
+
+  it('still treats a real prerelease as older than the release', async () => {
+    fetchMock
+      .when('api.openchamber.dev', {
+        ok: true,
+        json: async () => ({
+          latestVersion: '1.24.2',
+          updateAvailable: true,
+        }),
+      })
+      .when('registry.npmjs.org', {
+        ok: true,
+        json: async () => ({
+          'dist-tags': { latest: '1.24.2' },
+        }),
+      })
+      .when('raw.githubusercontent.com', {
+        ok: true,
+        text: async () => '## [1.24.2] - 2026-09-20\n\n- Release',
+      });
+
+    const result = await checkForUpdates({ currentVersion: '1.24.2-beta.1' });
+
+    expect(result.available).toBe(true);
+  });
+
   it('returns available=false when npm only has a prerelease of the current version', async () => {
     fetchMock
       .when('api.openchamber.dev', Promise.reject(new Error('Network error')))
