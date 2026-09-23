@@ -1959,6 +1959,9 @@ async function main(options = {}) {
     && typeof options.desktopUpdater.restart === 'function'
     ? options.desktopUpdater
     : null;
+  // An embedding host that owns updates opts out explicitly; absence keeps
+  // the in-app updater, so existing CLI and desktop starts are unchanged.
+  const selfUpdate = options.selfUpdate !== false;
 
   console.log(`Starting OpenChamber on port ${port === 0 ? 'auto' : port}`);
 
@@ -2189,6 +2192,7 @@ async function main(options = {}) {
     agentToolRuntime,
     desktopUpdater,
     skipBodyParsing: (req) => spacesHost?.skipsBodyParsing(req) === true,
+    selfUpdate,
   });
   uiAuthController = bootstrapResult.uiAuthController;
   // After the API auth gate, before every route that reads a directory, before the OpenCode proxy.

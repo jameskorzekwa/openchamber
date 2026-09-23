@@ -71,6 +71,7 @@ export const createBootstrapRuntime = (dependencies) => {
       pluginNotificationEmitter,
       desktopUpdater,
       skipBodyParsing,
+      selfUpdate,
     } = options;
 
     const uiAuthController = createUiAuth({
@@ -178,6 +179,7 @@ export const createBootstrapRuntime = (dependencies) => {
       fetchFreeZenModels,
       getCachedZenModels,
       desktopUpdater,
+      selfUpdate,
     });
 
     return {
