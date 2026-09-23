@@ -708,12 +708,22 @@ async function getLatestVersion() {
 }
 
 /**
+ * Fork builds are published as `<upstream version>-j2k.<revision>`. The suffix
+ * marks a build of that upstream version plus fork patches, so it must not be
+ * read as a semver prerelease: otherwise `1.24.2-j2k.1` would rank below
+ * upstream `1.24.2` and every fork install would see a phantom update.
+ */
+const FORK_CHANNEL_SUFFIX = /^j2k\.(\d+)$/;
+
+/**
  * Compare semver-like version strings.
  */
 function parseVersionForComparison(value) {
   const normalized = String(value || '').replace(/^v/, '').split('+')[0];
-  const prereleaseIndex = normalized.indexOf('-');
-  const core = prereleaseIndex >= 0 ? normalized.slice(0, prereleaseIndex) : normalized;
+  const suffixIndex = normalized.indexOf('-');
+  const core = suffixIndex >= 0 ? normalized.slice(0, suffixIndex) : normalized;
+  const suffix = suffixIndex >= 0 ? normalized.slice(suffixIndex + 1) : '';
+  const forkChannel = FORK_CHANNEL_SUFFIX.exec(suffix);
   const parts = core.split('.').map((part) => {
     const parsed = Number.parseInt(part || '0', 10);
     return Number.isFinite(parsed) ? parsed : 0;
@@ -721,7 +731,8 @@ function parseVersionForComparison(value) {
 
   return {
     parts,
-    prerelease: prereleaseIndex >= 0,
+    prerelease: suffixIndex >= 0 && !forkChannel,
+    forkRevision: forkChannel ? Number.parseInt(forkChannel[1], 10) : 0,
   };
 }
 
@@ -739,7 +750,7 @@ function compareVersions(left, right) {
     return a.prerelease ? -1 : 1;
   }
 
-  return 0;
+  return a.forkRevision - b.forkRevision;
 }
 
 /** Release notes between the installed and the offered version, or undefined. */
