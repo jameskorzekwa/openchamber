@@ -41,6 +41,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
     fetchFreeZenModels,
     getCachedZenModels,
     desktopUpdater,
+    selfUpdate = true,
     createValidatedReleaseInstaller = createDefaultValidatedReleaseInstaller,
     checkForUpdates: injectedCheckForUpdates,
     spawnSync: injectedSpawnSync,
@@ -117,6 +118,17 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
           updateOwner: 'electron-updater',
         });
       }
+      if (appType === 'web' && !selfUpdate) {
+        // The host owns updates: report nothing to install and do not touch
+        // the update channel, so no phantom banner and no network traffic.
+        return res.json({
+          available: false,
+          currentVersion: openchamberVersion,
+          version: null,
+          updateOwner: 'external',
+          installation: updateInstaller.getStatus(),
+        });
+      }
       const updateInfo = appType === 'web'
         ? await updateInstaller.checkForUpdate()
         : await (injectedCheckForUpdates || (await import('../package-manager.js')).checkForUpdates)({
@@ -145,6 +157,12 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
 
   app.post('/api/openchamber/update-install', async (_req, res) => {
     try {
+      if (!selfUpdate) {
+        return res.status(409).json({
+          code: 'UPDATE_OWNER_EXTERNAL',
+          error: 'OpenChamber updates are managed by the host, not from this UI.',
+        });
+      }
       if (process.env.OPENCHAMBER_RUNTIME === 'desktop') {
         if (typeof desktopUpdater?.install !== 'function' || typeof desktopUpdater?.restart !== 'function') {
           return res.status(503).json({

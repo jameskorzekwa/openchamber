@@ -61,7 +61,7 @@ function createInstaller() {
   };
 }
 
-function createApp({ environment = {}, storedOptions = {}, installer = createInstaller(), platform = 'linux', survivingTransaction = null, canonicalManagedInstallRoot = null, desktopUpdater } = {}) {
+function createApp({ environment = {}, storedOptions = {}, installer = createInstaller(), platform = 'linux', survivingTransaction = null, canonicalManagedInstallRoot = null, desktopUpdater, selfUpdate } = {}) {
   const app = express();
   const processMock = {
     env: environment,
@@ -99,6 +99,7 @@ function createApp({ environment = {}, storedOptions = {}, installer = createIns
     fetchFreeZenModels: vi.fn(),
     getCachedZenModels: vi.fn(),
     desktopUpdater,
+    selfUpdate,
     createValidatedReleaseInstaller: vi.fn(() => installer),
     checkForUpdates,
     spawnSync,
@@ -217,6 +218,34 @@ describe('OpenChamber desktop host update route', () => {
       error: 'The desktop updater is not available.',
     });
     expect(installer.beginInstall).not.toHaveBeenCalled();
+  });
+});
+
+describe('OpenChamber host-owned update routes', () => {
+  it('reports no self-update and never consults the channel when the host owns updates', async () => {
+    const { app, installer } = createApp({ selfUpdate: false });
+    const response = await request(app).get('/api/openchamber/update-check?appType=web').expect(200);
+    expect(response.body).toMatchObject({ available: false, currentVersion: '1.0.0', version: null, updateOwner: 'external', installation: { state: 'installed' } });
+    expect(installer.checkForUpdate).not.toHaveBeenCalled();
+    expect(installer.noteAvailable).not.toHaveBeenCalled();
+  });
+
+  it('refuses installation when the host owns updates', async () => {
+    const { app, installer } = createApp({ selfUpdate: false });
+    await request(app).post('/api/openchamber/update-install').expect(409, {
+      code: 'UPDATE_OWNER_EXTERNAL',
+      error: 'OpenChamber updates are managed by the host, not from this UI.',
+    });
+    expect(installer.beginInstall).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('keeps non-web client checks unaffected by the host-owned flag', async () => {
+    const { app, installer } = createApp({ selfUpdate: false });
+    const response = await request(app).get('/api/openchamber/update-check?appType=mobile-capacitor&platform=android').expect(200);
+    expect(checkForUpdates).toHaveBeenCalledOnce();
+    expect(installer.checkForUpdate).not.toHaveBeenCalled();
+    expect(response.body).toMatchObject({ available: true, version: '2.0.0' });
   });
 });
 

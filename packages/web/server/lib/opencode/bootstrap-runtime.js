@@ -67,6 +67,7 @@ export const createBootstrapRuntime = (dependencies) => {
       setAutoAcceptSession,
       agentToolRuntime,
       desktopUpdater,
+      selfUpdate,
     } = options;
 
     const uiAuthController = createUiAuth({
@@ -165,6 +166,7 @@ export const createBootstrapRuntime = (dependencies) => {
       fetchFreeZenModels,
       getCachedZenModels,
       desktopUpdater,
+      selfUpdate,
     });
 
     return {
