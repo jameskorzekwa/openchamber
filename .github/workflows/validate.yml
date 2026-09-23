@@ -116,6 +116,8 @@ jobs:
           bun run --cwd packages/web test -- server/lib/session-goal/managed-goal-stale-recovery.real.test.js
 
       - name: Build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: |
           set -euo pipefail
           bun run build

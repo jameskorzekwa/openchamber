@@ -195,6 +195,9 @@ jobs:
 
       - name: Stage version and build unsigned custom app
         env:
+          # The web bundle's vite build peaks near Node's default ~2 GiB heap
+          # on the macOS runner and aborted with "Reached heap limit".
+          NODE_OPTIONS: --max-old-space-size=4096
           OPENCHAMBER_BUILD_REVISION: ${{ needs.metadata.outputs.source_commit }}
           OPENCHAMBER_J2K_DESKTOP_BUILD: '1'
           OPENCHAMBER_TARGET_ARCH: arm64
