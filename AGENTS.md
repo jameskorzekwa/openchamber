@@ -144,6 +144,11 @@ Before adding guidance to a skill, identify its canonical owner. If another skil
 
 ## Pull Request Handoff
 
+For this fork, read [repository workflow](docs/REPOSITORY-WORKFLOW.md) before
+preparing or merging a PR. OPM is the default merge pipeline. A particular
+direct merge requires explicit informed owner approval; agents may ask for it
+outside emergencies or outages. Respect preparation-only review holds.
+
 Before creating or updating a pull request, read `CONTRIBUTING.md` and
 `.github/PULL_REQUEST_TEMPLATE.md`. Complete the template with concrete,
 current evidence for the final PR HEAD; do not make the reviewer reconstruct

@@ -7,9 +7,38 @@ This module exposes the loopback-only opencode-project-manager (OPM) activity in
 ## Ownership
 
 - `routes.js` owns configuration, polling, classification, hierarchy construction, and the HTTP route.
-- `pushover-notifier.js` owns Pushover pushes for new needs-owner demands and stalled attention entries. Credentials come from the macOS login keychain (`Uptime Kuma Pushover User Key` / `Uptime Kuma Pushover API Token`); dedupe keys persist in `~/.local/state/openchamber-opm-status-notified.json` (last 100).
+- `pushover-notifier.js` owns Pushover pushes for new needs-owner demands and stalled attention entries. Its default credential reader supports macOS login Keychain only. See the host boundary below before relying on notifications.
 - `feature-routes-runtime.js` owns the registration handle. It closes the previous handle before HMR re-registration and closes the active handle during server shutdown.
 - `packages/ui/src/components/opm-status/` owns parsing and presentation. It must treat a failed request as unavailable, not as an empty work list.
+
+## Host and credential boundary
+
+bee2 is the headless Linux server. A Mac laptop displaying OpenChamber does not
+move this server module's credential lookup to the laptop.
+
+The current `readKeychainSecret` calls `security find-generic-password` for
+`Uptime Kuma Pushover User Key` and `Uptime Kuma Pushover API Token`. The default
+route registration calls `createPushoverNotifier()` without a Linux reader.
+The injectable `readSecret` option is a code interface, not a configured Secret
+Service adapter. The source therefore does not provide bee2 Pushover delivery.
+On credential lookup failure it logs once, disables pushes for that notifier
+instance and keeps the dashboard/poll loop working. A green status route does
+not prove that owner notifications were sent.
+
+Keep macOS login Keychain support for Mac-hosted services. For bee2, credential
+values must come from its live Secret Service on
+`unix:path=/run/user/1000/bus`, inside the consuming process or an approved
+inherited descriptor. Do not add a shell `security` shim, export values, or copy
+them into files. A Linux reader and route integration require a reviewed code
+change with failure and delivery tests. Until that exists, inspect the OPM
+dashboard and issue directly; use a separately verified host notification
+consumer only when its delivery has been established.
+
+The notifier's current default state path is
+`path.join(os.homedir(), '.local', 'state', 'openchamber-opm-status-notified.json')`,
+retaining the last 100 keys. It does not read `XDG_STATE_HOME`. On bee2, resolve
+that path from the service HOME, not the SSH login HOME. An injected `stateFile`
+can change it in code; documentation alone does not change the runtime path.
 
 ## Configuration
 
