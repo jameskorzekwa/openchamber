@@ -1,8 +1,8 @@
-version: 1.24.2-j2k.3
+version: 1.24.2-j2k.4
 files:
-  - url: https://github.com/jameskorzekwa/openchamber/releases/download/desktop-v1.24.2-j2k.3/OpenChamber-1.24.2-j2k.3-mac-arm64.zip
-    sha512: xxRtXOhpT0xy4ptACW4kC801So0smzQFhvkt5uh5eFpGsNy1SqCnvfqXl1jHp/LV8I2B+QhSbJ1FthNnvOVvbQ==
-    size: 214981087
-path: https://github.com/jameskorzekwa/openchamber/releases/download/desktop-v1.24.2-j2k.3/OpenChamber-1.24.2-j2k.3-mac-arm64.zip
-sha512: xxRtXOhpT0xy4ptACW4kC801So0smzQFhvkt5uh5eFpGsNy1SqCnvfqXl1jHp/LV8I2B+QhSbJ1FthNnvOVvbQ==
-releaseDate: '2026-09-23T23:40:58.000Z'
+  - url: https://github.com/jameskorzekwa/openchamber/releases/download/desktop-v1.24.2-j2k.4/OpenChamber-1.24.2-j2k.4-mac-arm64.zip
+    sha512: 3LIMF/ahlbro99qCrKXRzZLIbsLlSU6Tw5jlLVDU5dPvql/Se3Px0XEi48rEW4GlV2Rs8mnbKHzAV197Y2kmYw==
+    size: 214981389
+path: https://github.com/jameskorzekwa/openchamber/releases/download/desktop-v1.24.2-j2k.4/OpenChamber-1.24.2-j2k.4-mac-arm64.zip
+sha512: 3LIMF/ahlbro99qCrKXRzZLIbsLlSU6Tw5jlLVDU5dPvql/Se3Px0XEi48rEW4GlV2Rs8mnbKHzAV197Y2kmYw==
+releaseDate: '2026-09-24T23:50:10.000Z'
