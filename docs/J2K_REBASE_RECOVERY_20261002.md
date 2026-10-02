@@ -1,7 +1,7 @@
 # J2K v2.1.0 rebase recovery
 
-The rebase completed all 114 steps. It replayed 113 commits and skipped one
-with explicit parent authorization. Compatibility changes follow the replay.
+The rebase completed all 114 steps. It replayed 113 commits and skipped the
+obsolete local credential-file patch. Compatibility changes follow the replay.
 
 - Worktree: `/srv/opencode-data/jkorzekwa/opencode/state/openchamber-2.1.0-recovery-20261002`
 - Branch: `fix/j2k-2.1.0-recovery-20261002`
@@ -9,14 +9,14 @@ with explicit parent authorization. Compatibility changes follow the replay.
 - Original fork tip: `ebda4920bbe4848d1bdd168b832c3c7e10f7d18f`
 - Completed replay tip: `ca86b558977154c0ed7ccdcdd9c475a9b72139d7`
 
-No push, PR, merge, release, OPM operation, remote branch mutation, credential
-migration, or live-service change was performed.
+This is a manually prepared recovery, not an OPM execution. Publication of the
+repair branch does not authorize promotion to `j2k/current` or prove a release.
+No credential migration or live-service upgrade is part of this recovery.
 
 ## Dropped commit
 
 Only `443cf06dd5e4c0c4a3bb34eece5aedbf84dc6c60`, Support XDG OpenCode auth data
-directories, was skipped. The parent explicitly chose upstream credential
-authority.
+directories, was skipped in favor of upstream credential authority.
 
 OpenChamber now asks the running OpenCode for credentials. It no longer selects
 or writes provider `auth.json` using `OPENCODE_DATA_DIR`, `XDG_DATA_HOME/opencode`,
@@ -43,7 +43,7 @@ without manual conflict resolution.
 | `e039e6233` | `bun.lock`: temporary legacy plugin dependencies isolated from upstream v2 SDK/effect/native pins. |
 | `adddb3271` | `bun.lock`: replayed the original plugin revert and preserved upstream dependencies that the old revert would otherwise remove. The plugin package does not remain in the final tree. |
 | `628165aae` | Electron `main.mjs`: packaged updater smoke retained without duplicating upstream early-startup initialization. |
-| `073a51519` | `oc-review.yml`: upstream separate tests job retained with incoming legacy recovery fixture steps. Workflow cleanup remains a parent follow-up. |
+| `073a51519` | `oc-review.yml`: upstream separate tests job retained. Subsequent workflow repairs remove obsolete v1 recovery provisioning. |
 | `43d38f348` | Turkish dictionary: both upstream dictionaries and J2K PTY/OPM/update strings retained. |
 | `9b86b770f` | Server `index.js`, bootstrap runtime, update routes/tests: embedding-host update ownership combined with upstream spaces body-parsing and existing install-blocked behavior. |
 
@@ -53,12 +53,12 @@ and other dependency pins were not downgraded.
 
 ## Explicit OpenCode v2 compatibility gap
 
-Parent research established that pinned `@opencode/client@2.0.21` has no
+Inspection of pinned `@opencode/client@2.0.21` established that it has no
 assistant tool-part PATCH. Interrupt acts asynchronously on the current fiber;
 an idle false result is not task settlement. The v2 tool is `subagent`, using
 `metadata.sessionID`, instead of the v1 task binding.
 
-Evidence supplied by the parent:
+Pinned protocol evidence:
 <https://github.com/anomalyco/opencode/blob/8a8bd622a3d7dc29ccf30ec17f84e363ed95ed72/packages/protocol/src/groups/session.ts>
 and the session-message schema at the same commit.
 
@@ -87,13 +87,28 @@ contract and starts no server. It is not proof of v2 restart behavior.
 - The fork's validated installer does not fall back to upstream npm/batch
   installation for daemon/Windows web servers. Desktop host-owned updating is
   retained. Unsupported web installation remains an explicit refusal.
-- No separate release-workflow defect was fixed. Old 1.18.29 recovery-fixture
-  provisioning remains in replayed workflows for the parent's follow-up.
+- Connected-server updates preserve their explicit web target when the client
+  is native mobile or Electron. Electron-owned server updates retain restart
+  monitoring and exact target-version verification.
+- Dutch translations cover the fork's PTY, OPM, and update-status controls.
+
+## Workflow repairs
+
+- An existing candidate without the required upstream ancestry fails sync with
+  an explicit error. It no longer reports a successful no-op indefinitely.
+- Recovery reporting fetches full history before describing the previous base.
+- Removed v1.18.29 fixture provisioning for the now-inert legacy worker. The
+  root suites still exercise the unsupported-worker and journal-preservation
+  contracts; this is not evidence of native v2 restart recovery.
+- The four upstream PR check jobs use GitHub-hosted Ubuntu runners in this fork,
+  not the upstream organization's private Blacksmith runner labels.
+- Release tests exercise the fork's actual assembly and publication conditions,
+  including failed, cancelled, and skipped prerequisites and untrusted refs.
 
 ## Validation
 
-Located Bun 1.4.2 at `/srv/opencode-data/jkorzekwa/runtime/bun/bin/bun`.
-The suggested encrypted HOME `.bun/bin` location was absent.
+Local verification uses Node 22.23.3, Bun 1.4.2, and npm 11.6.2 on bee2 Linux
+x64. The toolchain is isolated from the running OpenCode service.
 
 Passed:
 
@@ -106,12 +121,24 @@ Passed:
 - `git diff --check` before every completed manual continuation and after the
   compatibility changes.
 
-Dependency-bound checks could not run in this worktree. Goal runtime, PTY value
-and OPM value tests fail at import because `zod` is missing. Electron updater
-contract and packaged-smoke tests fail at import because `yaml` is missing.
-No dependencies were installed. An attempted `NODE_PATH` lookup did not resolve
-the missing package and did not change the result.
+Subsequent complete verification:
 
-Package type-check, lint, dead-code analysis, full suites, builds, native/runtime
-checks, live recovery, and release validation remain for the parent. Syntax
-compilation and the focused tests do not establish those results.
+- `bun install --frozen-lockfile`: passed without changing the lockfile.
+- `bun run type-check`, `bun run lint`, and `bun run build`: passed.
+- `bun run test`: passed. Root scripts: 9 files; release tooling: 68 tests;
+  SDK: 17 files; UI: 664 files; VS Code: 54 files; Electron: 34 files;
+  web: 4,878 tests passed, 128 skipped across 301 passed and 9 skipped files.
+- After the runner correction, release tooling passed 69 tests.
+- `bun run dead-code`: completed with non-blocking repository findings, including
+  `oxlint.config.ts` and unused exports. No broad dead-code cleanup was attempted.
+- Focused updater tests: 21 passed. Dutch dictionary parity: 4 passed.
+
+Known limits:
+
+- `bun run changelog:check` fails because the old fork added three lines to
+  generated root `CHANGELOG.md`. The existing PR gate remains intact. Changelog
+  files were not edited or regenerated without the maintainer's request.
+- Native signed macOS packaging, artifact-install smoke, GitHub release
+  publication, and live OpenCode v2 integration remain release-stage checks.
+- No live service or credential store was changed. This release targets
+  OpenCode v2; the existing bee2 OpenCode v1 service was not upgraded.

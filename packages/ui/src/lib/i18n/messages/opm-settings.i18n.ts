@@ -15,6 +15,13 @@ const en = {
   'opm.settings.invalid': 'Invalid JSON in {field}',
 };
 type Messages = Record<keyof typeof en, string>;
+const nl = {
+  'opm.settings.restartLabel': 'Vereist herstart van supervisor',
+  'opm.settings.title': 'OPM-instellingen', 'opm.settings.admit': 'Nieuw werk toelaten', 'opm.settings.admitHelp': 'Uit: bestaand werk gaat door, maar nieuwe issues worden niet toegelaten.',
+  'opm.settings.advanced': 'Geavanceerd', 'opm.settings.global': 'Globale instellingen', 'opm.settings.save': 'Valideren en toepassen', 'opm.settings.reload': 'Instellingen herladen',
+  'opm.settings.inherit': 'Effectieve waarde voor {field}: {value}. Bron: {source}.', 'opm.settings.applied': 'Toegepast op de lopende supervisor', 'opm.settings.restart': 'Herstart vereist: {fields}. Opgeslagen wijzigingen zijn nog niet toegepast.',
+  'opm.settings.confirm': 'Gevoelige wijzigingen bevestigen', 'opm.settings.syntax': 'Arrays en objecten gebruiken JSON. Wis een veld om de overschrijving te verwijderen.', 'opm.settings.invalid': 'Ongeldige JSON in {field}',
+} satisfies Messages;
 const de = {
   'opm.settings.restartLabel': 'Erfordert einen Neustart des Supervisors',
   'opm.settings.title': 'OPM-Einstellungen', 'opm.settings.admit': 'Neue Arbeit zulassen', 'opm.settings.admitHelp': 'Aus: Bestehende Arbeit läuft weiter, aber neue Issues werden nicht aufgenommen.',
@@ -93,4 +100,4 @@ const tr = {
   'opm.settings.restart': 'Yeniden başlatma gerekli: {fields}. Kaydedilen değişiklikler henüz uygulanmadı.', 'opm.settings.confirm': 'Hassas değişiklikleri onayla',
   'opm.settings.syntax': 'Diziler ve nesneler JSON kullanır. Geçersiz kılmayı kaldırmak için alanı temizleyin.', 'opm.settings.invalid': '{field} alanında geçersiz JSON',
 } satisfies Messages;
-export const opmSettingsI18n = { en, de, es, fr, ja, ko, pl, 'pt-BR': ptBR, uk, 'zh-CN': zhCN, 'zh-TW': zhTW, tr };
+export const opmSettingsI18n = { en, nl, de, es, fr, ja, ko, pl, 'pt-BR': ptBR, uk, 'zh-CN': zhCN, 'zh-TW': zhTW, tr };

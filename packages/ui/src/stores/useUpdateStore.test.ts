@@ -34,7 +34,7 @@ describe('web installation lifecycle recovery', () => {
 
     await useUpdateStore.getState().refreshInstallation();
     expect(useUpdateStore.getState().installation?.state).toBe('restarting');
-    expect(await useUpdateStore.getState().startWebUpdate()).toBe(false);
+    expect(await useUpdateStore.getState().startWebUpdate('web')).toBe(false);
     expect(requests).toEqual(['/api/openchamber/update-status']);
   });
 
@@ -81,8 +81,32 @@ describe('web installation lifecycle recovery', () => {
       if (init?.method === 'POST') posts += 1;
       return new Response(JSON.stringify({ accepted: true, installation: status('downloading') }), { status: 202 });
     });
-    expect(await useUpdateStore.getState().startWebUpdate()).toBe(true);
+    expect(await useUpdateStore.getState().startWebUpdate('web')).toBe(true);
     expect(useUpdateStore.getState().installation?.state).toBe('downloading');
     expect(posts).toBe(1);
+  });
+
+  for (const clientRuntime of ['mobile', 'desktop'] as const) {
+    test(`${clientRuntime} client installs its explicitly selected connected server`, async () => {
+      useUpdateStore.setState({ runtimeType: clientRuntime });
+      const requests: string[] = [];
+      setUpdateStoreRuntimeFetchForTests(async (input, init) => {
+        requests.push(`${init?.method} ${input}`);
+        return new Response(JSON.stringify({ accepted: true, installation: status('downloading') }), { status: 202 });
+      });
+
+      expect(await useUpdateStore.getState().startWebUpdate('web')).toBe(true);
+      expect(requests).toEqual(['POST /api/openchamber/update-install']);
+      expect(useUpdateStore.getState().runtimeType).toBe(clientRuntime);
+      expect(useUpdateStore.getState().installation?.state).toBe('downloading');
+    });
+  }
+
+  test('does not send native app updates to the server installer', async () => {
+    let requests = 0;
+    setUpdateStoreRuntimeFetchForTests(async () => { requests += 1; return new Response(); });
+    expect(await useUpdateStore.getState().startWebUpdate('mobile')).toBe(false);
+    expect(await useUpdateStore.getState().startWebUpdate('desktop')).toBe(false);
+    expect(requests).toBe(0);
   });
 });

@@ -9,15 +9,15 @@ concurrency:
   group: pr-checks-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
-# Four independent jobs on their own Blacksmith runners (same image as
-# ubuntu-24.04, faster CPUs, colocated cache; the Blacksmith GitHub App is
-# installed on the openchamber org). None of them reads another's output: the
+# Four independent jobs use GitHub-hosted Ubuntu runners. This fork has no
+# registered runners for the upstream organization's Blacksmith label.
+# None of them reads another's output: the
 # tests and type-check need only what `bun install` prepares (postinstall
 # builds the SDK and the built-in extensions), so the wall time is the slowest
 # job, not the sum.
 jobs:
   type-check:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -30,7 +30,7 @@ jobs:
         run: bun run type-check
 
   lint:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -45,7 +45,7 @@ jobs:
         run: bun run changelog:check
 
   tests:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -54,24 +54,8 @@ jobs:
           node-version: '22'
       - name: Install dependencies
         run: bun install --frozen-lockfile
-      - name: Prepare exact OpenCode restart-test binary
-        env:
-          OPENCHAMBER_OPENCODE_CLI_VERSION: 1.18.29
-        run: |
-          set -euo pipefail
-          bun run --cwd packages/electron prepare:opencode-cli
-          binary="$GITHUB_WORKSPACE/packages/electron/resources/opencode-cli/opencode"
-          test "$("$binary" --version)" = "$OPENCHAMBER_OPENCODE_CLI_VERSION"
-          printf 'OPENCODE_BINARY=%s\n' "$binary" >> "$GITHUB_ENV"
-
       - name: Tests
         run: bun run test
-
-      - name: Real OpenCode restart recovery
-        env:
-          OPENCODE_REAL_TEST: 1
-          OPENCODE_REAL_TEST_REQUIRED: 1
-        run: bun run --cwd packages/web test -- server/lib/session-goal/managed-goal-stale-recovery.real.test.js
 
       - name: Electron Linux packaging unit tests
         working-directory: packages/electron
@@ -83,7 +67,7 @@ jobs:
   # build's memory ceiling. The packages whose `build` is only `tsc --noEmit`
   # (ui) or a no-op (electron) are covered by the type-check job.
   build:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0

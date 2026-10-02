@@ -15,6 +15,11 @@ import { openExternalUrl } from '@/lib/url';
 import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
 import { useUpdateStore } from '@/stores/useUpdateStore';
 import { canStartWebUpdate } from '@/components/update/web-update-status';
+import { installWebUpdate, waitForUpdateApplied } from '@/lib/web-update';
+
+type ElectronHostUpdate =
+  | { phase: 'idle' | 'installing' | 'restarting' | 'installed' }
+  | { phase: 'failed'; error: string };
 
 interface UpdateDialogProps {
   open: boolean;
@@ -128,12 +133,17 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
   const installationCompleted = useUpdateStore((state) => state.installationCompleted);
   const refreshInstallation = useUpdateStore((state) => state.refreshInstallation);
   const startWebUpdate = useUpdateStore((state) => state.startWebUpdate);
+  const installationError = useUpdateStore((state) => state.error);
+  const [electronHostUpdate, setElectronHostUpdate] = useState<ElectronHostUpdate>({ phase: 'idle' });
+  const isElectronHost = info?.packageManager === 'electron';
   // A persisted `installed` from an earlier update is idle, not "just done":
   // only an install this page watched finish counts as installed here.
-  const webUpdateState = installation?.state === 'installed' && !installationCompleted
-    ? 'available'
-    : (installation?.state ?? 'available');
-  const webError = installation?.error ?? null;
+  const webUpdateState = isElectronHost
+    ? (electronHostUpdate.phase === 'idle' ? 'available' : electronHostUpdate.phase)
+    : (installation?.state === 'installed' && !installationCompleted ? 'available' : (installation?.state ?? 'available'));
+  const webError = isElectronHost
+    ? (electronHostUpdate.phase === 'failed' ? electronHostUpdate.error : null)
+    : installation?.error ?? installationError;
 
   const releaseUrl = info?.version
     ? (info.releaseUrl || `${GITHUB_RELEASES_URL}/tag/v${info.version}`)
@@ -149,14 +159,18 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
   const updateCommand = info?.updateCommand || 'openchamber update';
 
   useEffect(() => {
-    if (open && isWebRuntime) void refreshInstallation();
-  }, [isWebRuntime, open, refreshInstallation]);
+    if (open && isWebRuntime && !isElectronHost) void refreshInstallation();
+  }, [isWebRuntime, isElectronHost, open, refreshInstallation]);
 
   useEffect(() => {
-    if (!installationCompleted) return;
+    if (!open) setElectronHostUpdate({ phase: 'idle' });
+  }, [open]);
+
+  useEffect(() => {
+    if (!isWebRuntime || !(isElectronHost ? electronHostUpdate.phase === 'installed' : installationCompleted)) return;
     const timer = window.setTimeout(() => window.location.reload(), 500);
     return () => window.clearTimeout(timer);
-  }, [installationCompleted]);
+  }, [isWebRuntime, isElectronHost, electronHostUpdate.phase, installationCompleted]);
 
   const handleCopyCommand = async () => {
     const result = await copyTextToClipboard(updateCommand);
@@ -170,17 +184,37 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
     await openExternalUrl(url);
   }, []);
   const handleWebUpdate = useCallback(async () => {
-    await startWebUpdate();
-  }, [startWebUpdate]);
+    if (!isWebRuntime) return;
+    if (!isElectronHost) {
+      await startWebUpdate('web');
+      return;
+    }
+
+    setElectronHostUpdate({ phase: 'installing' });
+    const result = await installWebUpdate();
+    if (!result.success) {
+      setElectronHostUpdate({ phase: 'failed', error: result.error || t('updateDialog.error.updateFailed') });
+      return;
+    }
+    if (result.target.owner !== 'electron') {
+      setElectronHostUpdate({ phase: 'failed', error: t('updateDialog.error.updateFailed') });
+      return;
+    }
+    setElectronHostUpdate({ phase: 'restarting' });
+    const applied = await waitForUpdateApplied(result.target, info?.currentVersion);
+    setElectronHostUpdate(applied.status === 'applied'
+      ? { phase: 'installed' }
+      : { phase: 'failed', error: applied.status === 'failed' ? applied.error : t('updateDialog.error.takingLonger') });
+  }, [isWebRuntime, isElectronHost, startWebUpdate, info?.currentVersion, t]);
 
   const handleMobileUpdate = useCallback(() => {
     void handleOpenExternal(mobileUpdateUrl);
   }, [handleOpenExternal, mobileUpdateUrl]);
 
-  const isWebUpdating = webUpdateState === 'downloading'
+  const isWebUpdating = isWebRuntime && (webUpdateState === 'downloading'
     || webUpdateState === 'installing'
     || webUpdateState === 'restarting'
-    || webUpdateState === 'installed';
+    || webUpdateState === 'installed');
 
   const changelog = useMemo<ParsedChangelog | null>(() => {
     if (!info?.body) {
@@ -376,7 +410,7 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
           )}
 
           {/* Error display */}
-          {(error || webError) && (
+          {(error || (isWebRuntime && webError)) && (
             <div className="p-3 mt-4 bg-[var(--status-error-background)] border border-[var(--status-error-border)] rounded-lg">
               {webUpdateState === 'rollback' && (
                 <p className="mb-1 text-sm font-medium text-[var(--status-error)]">{t('updateDialog.status.rollbackComplete')}</p>

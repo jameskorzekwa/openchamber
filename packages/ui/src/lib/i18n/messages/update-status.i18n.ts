@@ -4,6 +4,11 @@ export const updateStatusI18n = {
     'updateDialog.status.rollbackComplete': 'The previous version was restored.',
     'updateDialog.status.noValidatedRelease': 'No validated release is available for this Mac.',
   },
+  nl: {
+    'updateDialog.status.updateInstalled': 'Update geïnstalleerd',
+    'updateDialog.status.rollbackComplete': 'De vorige versie is hersteld.',
+    'updateDialog.status.noValidatedRelease': 'Er is geen geverifieerde versie beschikbaar voor deze Mac.',
+  },
   de: {
     'updateDialog.status.updateInstalled': 'Update installiert',
     'updateDialog.status.rollbackComplete': 'Die vorherige Version wurde wiederhergestellt.',

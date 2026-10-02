@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import YAML from 'yaml';
 
@@ -9,7 +12,156 @@ const releaseWorkflow = readFileSync(new URL('../../.github/workflows/release.ym
 const syncWorkflow = readFileSync(new URL('../../.github/workflows/sync-upstream.yml', import.meta.url), 'utf8');
 const recoveryWorkflow = readFileSync(new URL('../../.github/workflows/recover-upstream-release.yml', import.meta.url), 'utf8');
 const validateWorkflow = readFileSync(new URL('../../.github/workflows/validate.yml', import.meta.url), 'utf8');
+const reviewWorkflow = readFileSync(new URL('../../.github/workflows/oc-review.yml', import.meta.url), 'utf8');
 const macVerifier = readFileSync(new URL('./verify-macos-app.mjs', import.meta.url), 'utf8');
+
+function git(cwd, ...args) {
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  assert.equal(result.status, 0, `git ${args.join(' ')}: ${result.stderr}`);
+  return result.stdout.trim();
+}
+
+function recoveryFixture(t) {
+  const root = mkdtempSync(join(tmpdir(), 'workflow-recovery-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = join(root, 'origin');
+  git(root, 'init', '--initial-branch=main', repo);
+  git(repo, 'config', 'user.name', 'Workflow test');
+  git(repo, 'config', 'user.email', 'workflow@example.invalid');
+  git(repo, 'commit', '--allow-empty', '-m', 'Previous upstream');
+  git(repo, 'tag', 'v2.0.0');
+  git(repo, 'switch', '-c', 'j2k/current');
+  git(repo, 'commit', '--allow-empty', '-m', 'Fork patch');
+  const series = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'switch', 'main');
+  git(repo, 'commit', '--allow-empty', '-m', 'New upstream');
+  git(repo, 'tag', 'v2.1.0');
+  const upstream = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'branch', 'j2k/v2.1.0', series);
+  return { root, repo, series, upstream };
+}
+
+test('existing sync candidates fail blocked or retain exact-SHA validation behavior', (t) => {
+  const { root, repo, series, upstream } = recoveryFixture(t);
+  const checkout = join(root, 'checkout');
+  git(root, 'clone', repo, checkout);
+  git(checkout, 'update-ref', 'refs/remotes/upstream/main', upstream);
+  const script = YAML.parse(syncWorkflow).jobs.sync.steps.find((step) => step.id === 'rebase').run;
+  // Execute the real selection/ancestry/redispatch path, stopping before new
+  // candidate creation. The origin is a local fixture; gh only serves run data.
+  const end = script.indexOf('git config user.name');
+  assert.ok(end > 0);
+  const excerpt = script.slice(0, end).replaceAll('${{ github.repository }}', 'fixture/repo');
+  const output = join(root, 'output');
+  const ghCalls = join(root, 'gh-calls');
+  function run(runs) {
+    writeFileSync(output, '');
+    writeFileSync(ghCalls, '');
+    const result = spawnSync('bash', {
+      cwd: checkout,
+      encoding: 'utf8',
+      env: { ...process.env, UPSTREAM_SYNC_TOKEN: 'fixture', GITHUB_OUTPUT: output, GH_CALLS: ghCalls, FIXTURE_RUNS: JSON.stringify(runs) },
+      input: `gh() { printf '%s\\n' "$*" >> "$GH_CALLS"; printf '%s' "$FIXTURE_RUNS"; }\n${excerpt}`,
+    });
+    return { ...result, output: readFileSync(output, 'utf8'), calls: readFileSync(ghCalls, 'utf8') };
+  }
+  const blocked = run([]);
+  assert.equal(blocked.status, 1, blocked.stderr);
+  assert.match(blocked.stderr, /::error::.*blocked.*j2k\/v2\.1\.0.*v2\.1\.0/);
+  assert.ok(blocked.stderr.includes(series));
+  assert.equal(blocked.output, '');
+  assert.equal(blocked.calls, '');
+  assert.equal(git(repo, 'rev-parse', 'j2k/v2.1.0'), series);
+  assert.equal(git(repo, 'rev-parse', 'j2k/current'), series);
+
+  git(repo, 'branch', '-f', 'j2k/v2.1.0', upstream);
+  for (const runInfo of [
+    { status: 'queued', conclusion: null },
+    { status: 'in_progress', conclusion: null },
+    { status: 'completed', conclusion: 'success' },
+  ]) {
+    const result = run([{ headSha: upstream, ...runInfo }]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.output, 'changed=false\n');
+  }
+  for (const runs of [
+    [],
+    [{ headSha: upstream, status: 'completed', conclusion: 'failure' }],
+    [{ headSha: upstream, status: 'completed', conclusion: 'cancelled' }],
+    [{ headSha: series, status: 'completed', conclusion: 'success' }],
+  ]) {
+    const result = run(runs);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.output, 'dispatch=true\nbranch=j2k/v2.1.0\n');
+  }
+});
+
+test('recovery reports can describe the previous base beyond the checkout tip', (t) => {
+  const { root, repo, series } = recoveryFixture(t);
+  const report = YAML.parse(recoveryWorkflow).jobs.report;
+  const checkout = report.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+  assert.equal(checkout.with['fetch-depth'], 0);
+  const validationReport = YAML.parse(validateWorkflow).jobs['report-release-branch-result'];
+  assert.equal(validationReport.steps.find((step) => step.uses?.startsWith('actions/checkout@')).with['fetch-depth'], 0);
+  const script = report.steps.find((step) => step.run).run;
+  const start = script.indexOf('series_commit=');
+  const end = script.indexOf('jobs=');
+  assert.ok(start >= 0 && end > start);
+  const excerpt = `set -euo pipefail\n${script.slice(start, end)}\nprintf '%s\\n' "$previous_base"`;
+  function describe(cwd) {
+    return spawnSync('bash', {
+      cwd, input: excerpt, encoding: 'utf8',
+      env: { ...process.env, SERIES_COMMIT: series, PREVIOUS_BASE: '' },
+    });
+  }
+  const shallow = join(root, 'shallow');
+  git(root, 'clone', '--depth=1', '--branch=j2k/current', pathToFileURL(repo).href, shallow);
+  git(shallow, 'fetch', '--tags', 'origin');
+  assert.notEqual(describe(shallow).status, 0, 'Fetching tags alone must reproduce the shallow-history failure');
+  const full = join(root, 'full');
+  git(root, 'clone', '--branch=j2k/current', pathToFileURL(repo).href, full);
+  const result = describe(full);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'v2.0.0\n');
+});
+
+test('fork PR checks use available hosted runners and retain all four validation jobs', () => {
+  const jobs = YAML.parse(reviewWorkflow).jobs;
+  const expectedCommands = {
+    'type-check': ['bun run type-check'],
+    lint: ['bun run lint', 'bun run changelog:check'],
+    tests: ['bun run test', 'bun run test:architecture', 'bun run test:updater'],
+    build: ['bun run --cwd packages/web build', 'bun run --cwd packages/vscode build', 'bun run --cwd packages/mobile build:assets'],
+  };
+  assert.deepEqual(Object.keys(jobs).sort(), Object.keys(expectedCommands).sort());
+  for (const [name, required] of Object.entries(expectedCommands)) {
+    const job = jobs[name];
+    assert.equal(job['runs-on'], 'ubuntu-latest', `${name} must run without upstream-only runner registration`);
+    assert.equal(job.if, undefined);
+    assert.equal(job.needs, undefined);
+    assert.notEqual(job['continue-on-error'], true);
+    const commands = job.steps.flatMap((step) => (step.run ?? '').split('\n').map((line) => line.trim()));
+    for (const command of ['bun install --frozen-lockfile', ...required]) {
+      assert.ok(commands.includes(command), `${name} must retain ${command}`);
+    }
+    for (const step of job.steps) {
+      assert.equal(step.if, undefined);
+      assert.notEqual(step['continue-on-error'], true);
+    }
+  }
+});
+
+test('validation retains root suites without the obsolete v1 fixture', () => {
+  for (const source of [validateWorkflow, reviewWorkflow, releaseWorkflow]) {
+    const jobs = Object.values(YAML.parse(source).jobs);
+    const steps = jobs.flatMap((job) => job.steps ?? []);
+    const commands = steps.flatMap((step) => (step.run ?? '').split('\n').map((line) => line.trim()));
+    assert.ok(commands.includes('bun run test'));
+    assert.ok(commands.includes('bun run type-check'));
+    assert.ok(commands.includes('bun run lint'));
+    assert.doesNotMatch(source, /1\.18\.29|OPENCODE_REAL_TEST|Prepare exact OpenCode restart-test binary/);
+  }
+});
 
 test('desktop release is a build-only component for an exact candidate', () => {
   assert.match(desktopWorkflow, /workflow_call:/);
@@ -194,6 +346,7 @@ test('every workflow run block is parseable bash, including heredoc terminators'
     ['sync-upstream.yml', syncWorkflow],
     ['recover-upstream-release.yml', recoveryWorkflow],
     ['validate.yml', validateWorkflow],
+    ['oc-review.yml', reviewWorkflow],
   ];
   const failures = [];
   for (const [name, source] of workflows) {

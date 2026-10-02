@@ -43,7 +43,7 @@ interface UpdateStore extends UpdateState {
   downloadUpdate: () => Promise<void>;
   restartToUpdate: () => Promise<void>;
   refreshInstallation: () => Promise<WebUpdateInstallationStatus | null>;
-  startWebUpdate: () => Promise<boolean>;
+  startWebUpdate: (targetRuntime: ClientRuntime) => Promise<boolean>;
   reconcileInstallation: (status: WebUpdateInstallationStatus | null) => void;
   dismiss: () => void;
   reset: () => void;
@@ -439,9 +439,11 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
     }
   },
 
-  startWebUpdate: async () => {
+  startWebUpdate: async (targetRuntime) => {
     const current = get();
-    if (current.runtimeType !== 'web' || isInstallationActive(current.installation)) return false;
+    // Native clients can update their connected server. The caller names the
+    // target; runtimeType describes the client application's own update flow.
+    if (targetRuntime !== 'web' || isInstallationActive(current.installation)) return false;
     try {
       const response = await updateStoreRuntimeFetch('/api/openchamber/update-install', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
       const data = await response.json().catch(() => null);

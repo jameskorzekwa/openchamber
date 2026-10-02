@@ -11,6 +11,8 @@ import { isolatedSpacesI18n } from './isolated-spaces.i18n';
 import { providersI18n } from './providers.i18n';
 import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
+import { opmStatusI18n } from './opm-status.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
   "opencodeCompatibility.bundled": "OpenCode is inbegrepen bij OpenChamber. Werk OpenChamber bij om OpenCode v2 te krijgen.",
@@ -68,6 +70,8 @@ export const dict = {
   ...providersI18n.nl,
   ...mcpGridI18n.nl,
   ...pluginsGridI18n.nl,
+  ...opmStatusI18n.nl,
+  ...updateStatusI18n.nl,
   'terminalView.actions.attachSelection': 'Geselecteerde uitvoer toevoegen',
   'terminalView.actions.copySelection': 'Geselecteerde uitvoer kopiëren',
   'terminalView.toast.selectionCopied': 'Uitvoer gekopieerd',
@@ -615,6 +619,11 @@ export const dict = {
   'sessions.sidebar.session.export.dialog.includeSubtasks': 'Sub-agenttaken opnemen',
   'sessions.sidebar.session.export.dialog.confirm': 'Exporteren',
   'sessions.sidebar.session.status.active': 'Sessie actief',
+  'sessions.sidebar.session.status.waitingSingleDescription': 'Wachten: {description}',
+  'sessions.sidebar.session.status.waitingSingleDefault': 'Wachten op een achtergrondproces',
+  'sessions.sidebar.session.status.waitingMany': 'Wachten op {count} achtergrondprocessen',
+  'sessions.sidebar.session.status.waitingBadgeSingle': 'Wachten',
+  'sessions.sidebar.session.status.waitingBadgeMany': 'Wachten · {count}',
   'sessions.sidebar.session.status.unread': 'Ongelezen updates',
   'sessions.sidebar.session.status.backgroundSubagent': 'Subagent draait op de achtergrond',
   'sessions.sidebar.session.status.backgroundCommand': 'Opdracht draait op de achtergrond',
@@ -626,6 +635,12 @@ export const dict = {
   'sessions.sidebar.session.status.questionPending': 'Openstaande vraag',
   'sessions.sidebar.session.status.activeFor': '{duration} actief',
   'sessions.sidebar.session.status.lastTurnDuration': 'Laatste beurt duurde {duration}',
+  'chat.ptyWaiting.backgroundProcess': 'Achtergrondproces',
+  'chat.ptyWaiting.backgroundProcesses': '{count} achtergrondprocessen',
+  'chat.ptyWaiting.ariaSingleDescription': 'Wachten: {description}',
+  'chat.ptyWaiting.ariaSingleDefault': 'Wachten op een achtergrondproces',
+  'chat.ptyWaiting.ariaMany': 'Wachten op {count} achtergrondprocessen',
+  'chat.ptyWaiting.label': 'Wachten…',
   'sessions.sidebar.session.subsessions.collapse': 'Subsessies inklappen',
   'sessions.sidebar.session.subsessions.expand': 'Subsessies uitklappen',
   'sessions.sidebar.dialogs.deleteSession.title': 'Sessie verwijderen?',

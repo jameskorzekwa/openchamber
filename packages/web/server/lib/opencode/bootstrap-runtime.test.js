@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import express from 'express';
 import { createBootstrapRuntime } from './bootstrap-runtime.js';
 
 describe('bootstrap runtime OpenChamber version wiring', () => {
@@ -17,10 +18,11 @@ describe('bootstrap runtime OpenChamber version wiring', () => {
       registerTtsRoutes,
       registerNotificationRoutes,
       registerOpenChamberRoutes,
-      express: {},
+      express,
     });
     const sessionRuntime = new Proxy({}, { get: () => vi.fn() });
-    runtime.setupBaseRoutes({}, {
+    const mockApp = { post: vi.fn() };
+    runtime.setupBaseRoutes(mockApp, {
       process: {},
       openchamberVersion: '1.21.0-j2k.7',
       sessionRuntime,
@@ -30,7 +32,7 @@ describe('bootstrap runtime OpenChamber version wiring', () => {
       server: {},
     });
 
-    expect(registerServerStatusRoutes).toHaveBeenCalledWith({}, expect.objectContaining({ openchamberVersion: '1.21.0-j2k.7' }));
-    expect(registerOpenChamberRoutes).toHaveBeenCalledWith({}, expect.objectContaining({ openchamberVersion: '1.21.0-j2k.7' }));
+    expect(registerServerStatusRoutes).toHaveBeenCalledWith(mockApp, expect.objectContaining({ openchamberVersion: '1.21.0-j2k.7' }));
+    expect(registerOpenChamberRoutes).toHaveBeenCalledWith(mockApp, expect.objectContaining({ openchamberVersion: '1.21.0-j2k.7' }));
   });
 });

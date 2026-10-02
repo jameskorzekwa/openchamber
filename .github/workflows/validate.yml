@@ -92,28 +92,10 @@ jobs:
           set -euo pipefail
           bun run lint
 
-      - name: Prepare exact OpenCode restart-test binary
-        env:
-          OPENCHAMBER_OPENCODE_CLI_VERSION: 1.18.29
-        run: |
-          set -euo pipefail
-          bun run --cwd packages/electron prepare:opencode-cli
-          binary="$GITHUB_WORKSPACE/packages/electron/resources/opencode-cli/opencode"
-          test "$("$binary" --version)" = "$OPENCHAMBER_OPENCODE_CLI_VERSION"
-          printf 'OPENCODE_BINARY=%s\n' "$binary" >> "$GITHUB_ENV"
-
       - name: Test
         run: |
           set -euo pipefail
           bun run test
-
-      - name: Real OpenCode restart recovery
-        env:
-          OPENCODE_REAL_TEST: 1
-          OPENCODE_REAL_TEST_REQUIRED: 1
-        run: |
-          set -euo pipefail
-          bun run --cwd packages/web test -- server/lib/session-goal/managed-goal-stale-recovery.real.test.js
 
       - name: Build
         env:
@@ -181,6 +163,7 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Defer failure recovery to trusted workflow-run handler

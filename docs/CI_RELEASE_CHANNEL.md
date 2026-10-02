@@ -49,8 +49,14 @@ runs validation.
 If a release branch already exists at a commit based on the expected upstream
 tag, sync inspects validation runs for that exact SHA. It does not duplicate an
 active run or a successful run. A missing, failed, or cancelled run is
-redispatched. Branches that are not descendants of the named upstream tag are
-left for manual conflict resolution.
+redispatched. If an existing branch is not a descendant of the named upstream
+tag, sync fails with a blocked error naming the branch, SHA, and required tag.
+The candidate stays unchanged for manual conflict resolution. This is not a
+successful no-op and does not dispatch validation.
+
+Recovery report checkouts fetch full history and tags so the issue renderer can
+resolve the previous patch-series base with `git describe`. Fetching tags alone
+does not repair a shallow history boundary.
 
 ### J2K Validate
 
@@ -68,6 +74,12 @@ bun run lint
 bun run test
 bun run build
 ```
+
+The root test script runs isolated script tests, the fork's release-tool tests,
+and the SDK, UI, VS Code, Electron, and web suites. The web suite verifies that
+legacy stale-task recovery remains disabled on OpenCode v2. CI no longer
+downloads the obsolete v1.18.29 restart fixture or invokes its former opt-in
+recovery path separately.
 
 It stages `packages/web` plus the complete recursive production dependency
 closure resolved from the frozen Bun installation. Every dependency is copied

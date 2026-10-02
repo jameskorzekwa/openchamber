@@ -150,8 +150,8 @@ const quiet = () => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 };
 
-const runTick = async (runtime) => {
-  await runtime.notifyGoalChanged(SESSION_ID, '/repo', { openchamber: { goal: activeGoal() } });
+const runTick = async (runtime, goal = activeGoal()) => {
+  await runtime.notifyGoalChanged(SESSION_ID, '/repo', { openchamber: { goal } });
   // idleQuietMs / kickoffQuietMs are 1 ms; the tick itself is async.
   for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
 };
@@ -596,14 +596,23 @@ describe('managed worktree goal runtime integration', () => {
     stateDirectories.push(stateDirectory);
     const { calls } = v2OpenCode({ messages: [assistantRecord()] });
     const seam = wired({ openchamber: { goal } });
+    const generate = vi.fn(async () => ({ text: smallModelSays({ all_done: true }) }));
     const { runtime } = makeRuntime({
       ...seam,
       managedWorktreeStateDirectory: stateDirectory,
-      getSmallModelService: async () => ({ generateSmallModelText: async () => ({ text: smallModelSays({ all_done: true }) }) }),
+      getSmallModelService: async () => ({ generateSmallModelText: generate }),
     });
-    await runTick(runtime);
-    expect(calls.some((call) => call.path.endsWith('/prompt') && call.method === 'POST')).toBe(true);
-    expect(seam.persistSessionGoal.mock.calls.at(-1)[2]).toMatchObject({ status: 'active', turnsUsed: 1 });
+    await runTick(runtime, goal);
+    await vi.waitFor(() => {
+      expect(calls.some((call) => call.path.endsWith('/prompt') && call.method === 'POST')).toBe(true);
+    });
+    expect(generate).toHaveBeenCalledOnce();
+    expect(seam.persistSessionGoal).toHaveBeenCalledOnce();
+    expect(seam.persistSessionGoal.mock.calls[0][2]).toMatchObject({
+      status: 'active',
+      turnsUsed: 1,
+      note: 'Finish implementation and provide verified dev deployment evidence before returning to the primary workspace.',
+    });
     runtime.stop();
   });
 
