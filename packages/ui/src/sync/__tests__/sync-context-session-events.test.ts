@@ -78,7 +78,7 @@ const buildEvent = (session: Session): SyncEvent => ({
   type: "session.patched",
   properties: {
     sessionID: session.id,
-    patch: { title: session.title, time: session.time },
+    patch: { title: session.title, time: session.time, ...(session.directory ? { directory: session.directory } : {}) },
   },
 })
 

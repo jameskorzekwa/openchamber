@@ -11,9 +11,8 @@
 // channel to settle its own goal. When no check can run the loop stops after
 // one unchecked continuation rather than driving blind to the cap.
 //
-// Normal continuation remains event-driven. Managed worktree goals also use
-// a conservative watchdog because an upstream model stream can disappear without
-// emitting the idle/error event required to re-arm the goal.
+// Continuation is event-driven. The v1 stale-recovery worker is unavailable on
+// OpenCode v2; persisted recovery journals and holds block automatic continuation.
 
 import fs from 'fs';
 import os from 'os';
@@ -31,6 +30,7 @@ import { readMergedSettingsSync } from '../opencode/settings-files.js';
 import { createSessionActivityProbe } from '../opencode/session-activity.js';
 import { unwrapOpenCodeResponse } from '../opencode/response-envelope.js';
 import { createManagedGoalStaleRecovery } from './managed-goal-stale-recovery.js';
+import { hasNonterminalChildTool, hasUnresolvedManagedRecovery, isLegacyRecoveryHold } from './legacy-recovery-compatibility.js';
 import { readManagedWorktreeGoalGate, readManagedWorktreeGoalObjective, readManagedWorktreeGoalRecord, writeManagedWorktreeGoalProgress } from './worktree-goal-gate.js';
 
 const OPENCHAMBER_SETTINGS_FILE = path.join(
@@ -103,6 +103,7 @@ const buildContinuationPrompt = (goal) => {
     ...budgetLines,
     `Auto-continuations used: ${goal.turnsUsed} of ${MAX_AUTO_TURNS}.`,
     '',
+    ...(goal.managedWorktree && goal.note ? ['Managed worktree lifecycle:', goal.note, ''] : []),
     'Continuation rules:',
     '- The goal persists across turns. Keep the full objective intact; do not redefine success around a smaller subtask.',
     '- Treat the current worktree and external state as authoritative evidence; inspect before relying on prior conversation context.',
@@ -175,6 +176,7 @@ const parseGoalMetadata = (session) => {
     objective: objective.slice(0, GOAL_OBJECTIVE_CHAR_LIMIT),
     objectiveFile,
     managedWorktree: goal.managedWorktree === true,
+    ...(goal.managedWorktree === true && typeof goal.note === 'string' ? { note: goal.note.slice(0, REASON_CHAR_LIMIT) } : {}),
     status,
     tokenBudget: Number.isFinite(goal.tokenBudget) && goal.tokenBudget > 0 ? Math.floor(goal.tokenBudget) : null,
     tokensUsed: Number.isFinite(goal.tokensUsed) && goal.tokensUsed > 0 ? Math.floor(goal.tokensUsed) : 0,
@@ -230,6 +232,7 @@ const toLoopMessage = (message) => {
           finish: message.finish,
           tokens: message.tokens,
           error,
+          hasNonterminalChildTool: hasNonterminalChildTool(message.content),
         },
         parts: (Array.isArray(message.content) ? message.content : [])
           .filter((part) => part?.type === 'text' && part.text)
@@ -390,26 +393,7 @@ export const createSessionGoalRuntime = ({
     return unwrapOpenCodeResponse(await response.json().catch(() => null));
   };
 
-  const staleRecovery = createManagedGoalStaleRecovery({
-    openCodeFetch,
-    isEnabled,
-    maxAutoTurns,
-    stateDirectory: managedWorktreeStateDirectory,
-    buildRecoveryPrompt: async ({ rootId, goal }) => {
-      let objective = goal.objective;
-      const managedObjective = await readManagedWorktreeGoalObjective(rootId, goal.id, managedWorktreeOptions);
-      if (managedObjective) objective = managedObjective;
-      if (goal.objectiveFile) {
-        const fileObjective = await readObjective(rootId);
-        if (fileObjective) objective = fileObjective;
-      }
-      return buildContinuationPrompt({
-        ...goal,
-        objective,
-        turnsUsed: (Number.isFinite(goal.turnsUsed) ? goal.turnsUsed : 0) + 1,
-      });
-    },
-  });
+  const staleRecovery = createManagedGoalStaleRecovery();
   staleRecovery.start();
 
   const fetchRecentMessages = async (sessionId, directory) => {
@@ -446,6 +430,7 @@ export const createSessionGoalRuntime = ({
   const writeGoal = async (sessionId, directory, expectedGoalId, mutate) => {
     const currentGoal = await readGoal(sessionId);
     if (!currentGoal || currentGoal.id !== expectedGoalId) return null;
+    if (isLegacyRecoveryHold(currentGoal) || await hasUnresolvedManagedRecovery(sessionId, managedWorktreeOptions)) return null;
     const nextGoal = { ...currentGoal, ...mutate(currentGoal), updatedAt: Date.now() };
     await persistSessionGoal(sessionId, directory, nextGoal);
     if (nextGoal.managedWorktree) {
@@ -562,6 +547,7 @@ export const createSessionGoalRuntime = ({
   // runs on whatever the session was already using. v1 had to repeat the
   // selection on every request; there is nothing to repeat here.
   const sendContinuation = async ({ sessionId, directory, goal }) => {
+    if (isLegacyRecoveryHold(await readGoal(sessionId)) || await hasUnresolvedManagedRecovery(sessionId, managedWorktreeOptions)) return;
     await openCodeFetch(`/api/session/${encodeURIComponent(sessionId)}/prompt`, {
       directory,
       method: 'POST',
@@ -571,6 +557,7 @@ export const createSessionGoalRuntime = ({
 
   const tick = async (sessionId, directory) => {
     if (!isEnabled()) return;
+    if (await hasUnresolvedManagedRecovery(sessionId, managedWorktreeOptions)) return;
 
     const session = await openCodeFetch(`/api/session/${encodeURIComponent(sessionId)}`, { directory })
       .catch((error) => {
@@ -583,12 +570,12 @@ export const createSessionGoalRuntime = ({
 
     const goal = await readGoal(sessionId);
     if (!goal || goal.status !== 'active') return;
+    if (isLegacyRecoveryHold(goal)) return;
     if (
       goal.managedWorktree
       && (
         goal.statusReason === 'worktree-moving'
         || goal.statusReason === 'worktree-resume-dispatching'
-        || goal.statusReason.startsWith('stale-recovery:')
       )
     ) return;
 
@@ -636,6 +623,7 @@ export const createSessionGoalRuntime = ({
 
     const messages = await fetchRecentMessages(sessionId, directory);
     if (!messages) return;
+    if (messages.some((message) => message.info?.hasNonterminalChildTool)) return;
 
     let lastAssistant = null;
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -853,6 +841,13 @@ export const createSessionGoalRuntime = ({
       }
     }
 
+    // Recheck the tail before accounting. An audit must not spend a turn or
+    // continue while a subagent tool became nonterminal in the meantime.
+    const latest = await fetchRecentMessages(sessionId, directory);
+    const latestLastInfo = latest && latest.length > 0 ? latest[latest.length - 1]?.info : null;
+    if (!latestLastInfo || latestLastInfo.id !== lastMessageInfo?.id
+      || latest.some((message) => message.info?.hasNonterminalChildTool)) return;
+
     // --- Continue: persist accounting first, then re-prompt ---
     // Order matters: if the write lands and the prompt fails, the goal just
     // waits for the next idle tick; the reverse could double-charge a turn.
@@ -864,19 +859,11 @@ export const createSessionGoalRuntime = ({
       turnsUsed: current.turnsUsed + 1,
       auditFailStreak,
       statusReason: '',
+      ...(goal.managedWorktree && audit?.note ? { note: audit.note } : {}),
       ...(audit ? { evaluationProviderID: audit.evaluationProviderID ?? '', evaluationModelID: audit.evaluationModelID ?? '' } : {}),
     }));
     if (!written) {
       console.log('[session-goal] goal changed during tick, dropping continuation');
-      return;
-    }
-
-    // The tail may have moved while auditing (user sent a message) — a
-    // continuation now would collide with the user's own turn.
-    const latest = await fetchRecentMessages(sessionId, directory);
-    const latestLastInfo = latest && latest.length > 0 ? latest[latest.length - 1]?.info : null;
-    if (!latestLastInfo || latestLastInfo.id !== lastMessageInfo?.id) {
-      console.log('[session-goal] tail moved on, dropping continuation');
       return;
     }
 
@@ -918,6 +905,18 @@ export const createSessionGoalRuntime = ({
 
   const isWired = () => typeof persistSessionGoal === 'function' && typeof readSessionMetadata === 'function';
 
+  const enforceManagedGoal = async (sessionId, directory, liveGoal) => {
+    if (stopped || isLegacyRecoveryHold(liveGoal) || await hasUnresolvedManagedRecovery(sessionId, managedWorktreeOptions)) return liveGoal;
+    const record = await readManagedWorktreeGoalRecord(sessionId, managedWorktreeOptions);
+    if (!record?.protected || isLegacyRecoveryHold(record.goal)) return liveGoal;
+    if (liveGoal?.id === record.goal.id && liveGoal.managedWorktree && liveGoal.status !== 'complete') return liveGoal;
+    const nextGoal = liveGoal?.id === record.goal.id && liveGoal.managedWorktree
+      ? { ...liveGoal, status: 'active', statusReason: 'resumed', note: 'Finish the managed worktree lifecycle before completing this goal.', updatedAt: Date.now() }
+      : { ...record.goal, status: 'active', statusReason: 'resumed', note: 'The managed worktree goal cannot be cleared or replaced before lifecycle completion.', updatedAt: Date.now() };
+    await persistSessionGoal(sessionId, directory, nextGoal);
+    return nextGoal;
+  };
+
   /**
    * A goal is created, edited or resumed through OpenChamber's own metadata
    * route, not through an OpenCode event, so the write tells this runtime
@@ -925,8 +924,13 @@ export const createSessionGoalRuntime = ({
    */
   const notifyGoalChanged = async (sessionId, directory, metadata) => {
     if (stopped || !isWired()) return;
-    const goal = parseGoalMetadata({ metadata });
+    let goal = parseGoalMetadata({ metadata });
+    if (isLegacyRecoveryHold(goal) || await hasUnresolvedManagedRecovery(sessionId, managedWorktreeOptions)) {
+      clearTimer(sessionId);
+      return;
+    }
     staleRecovery.observe({ sessionId, directory, goal });
+    goal = await enforceManagedGoal(sessionId, directory, goal);
     if (goal?.managedWorktree) {
       await writeManagedWorktreeGoalProgress(sessionId, goal, managedWorktreeOptions).catch((error) => {
         console.warn('[session-goal] managed worktree progress event write failed:', error?.message || error);
@@ -997,23 +1001,17 @@ export const createSessionGoalRuntime = ({
     // quiescence check keeps this safe if the session is actually busy.
     const update = extractSessionUpdate(payload);
     if (update && !update.parentID && !goalEnforcementPending.has(update.sessionId)) {
-      const enforceManagedGoal = async () => {
-        const record = await readManagedWorktreeGoalRecord(update.sessionId, managedWorktreeOptions);
-        if (!record?.protected) return;
-        const directory = update.directory || directoryHint;
-        const liveGoal = await readGoal(update.sessionId);
-        if (liveGoal?.id === record.goal.id && liveGoal.managedWorktree && liveGoal.status !== 'complete') return;
-        const nextGoal = liveGoal?.id === record.goal.id && liveGoal.managedWorktree
-          ? { ...liveGoal, status: 'active', statusReason: 'resumed', note: 'Finish the managed worktree lifecycle before completing this goal.', updatedAt: Date.now() }
-          : { ...record.goal, status: 'active', statusReason: 'resumed', note: 'The managed worktree goal cannot be cleared or replaced before lifecycle completion.', updatedAt: Date.now() };
-        await persistSessionGoal(update.sessionId, directory, nextGoal);
-      };
+      const enforceUpdate = async () => notifyGoalChanged(update.sessionId, update.directory || directoryHint, await readSessionMetadata(update.sessionId));
       const runEnforcement = (attempt = 0) => {
+        if (stopped) {
+          goalEnforcementPending.delete(update.sessionId);
+          return;
+        }
         if (inflight.has(update.sessionId)) {
           setTimeout(() => runEnforcement(attempt), RESUME_KICKOFF_MS);
           return;
         }
-        enforceManagedGoal()
+        enforceUpdate()
           .then(() => goalEnforcementPending.delete(update.sessionId))
           .catch((error) => {
             if (attempt < 5) {
@@ -1028,11 +1026,6 @@ export const createSessionGoalRuntime = ({
       runEnforcement();
     }
 
-    if (update && !update.parentID && !timers.has(update.sessionId) && !inflight.has(update.sessionId)) {
-      void readSessionMetadata(update.sessionId)
-        .then((metadata) => notifyGoalChanged(update.sessionId, update.directory || directoryHint, metadata))
-        .catch(() => undefined);
-    }
   };
 
   const stop = () => {

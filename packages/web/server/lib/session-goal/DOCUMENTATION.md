@@ -125,10 +125,8 @@ before touching the filesystem). Rationale: metadata rides every
 
 1. `createSessionGoalRuntime` subscribes to the global SSE hub (same pattern
    as session-assist — it needs the envelope's `directory`).
-   Managed goals are also discovered from the authoritative global session list
-   every five minutes because a vanished upstream stream may emit no terminal
-   event. The watchdog checks known roots every minute and stops with the goal
-   runtime.
+   The legacy managed-goal watchdog is disabled on OpenCode v2. There is no
+   discovery interval or recovery replay.
 2. `session.status: idle` arms a 15s per-session timer; `busy`/`retry` clears
    it. A `session.updated` carrying a fresh active goal (`turnsUsed === 0` or
    `statusReason === 'resumed'`) arms a kickoff timer — 3s for fresh goals,
@@ -240,63 +238,40 @@ before touching the filesystem). Rationale: metadata rides every
    Pausing a goal from the UI also aborts the running turn (and vice versa —
    an abort pauses the goal), so "stop" means stop on both axes.
 
-## Conservative stale-stream recovery
+## Legacy stale-stream recovery is unavailable on OpenCode v2
 
-The managed-goal watchdog only examines active, non-held root goals. A candidate
-must have an incomplete assistant message with no recorded error and no activity
-for at least 15 minutes. Session status fetch failure is unknown and performs no
-recovery. A `retry` status is never aborted. Pending tools also block recovery,
-except for one running foreground `task` whose linked child is known, no longer
-busy/retrying, and has a terminal assistant message.
+Pinned OpenCode 2.0.21 has no assistant tool-part PATCH. Its interrupt operation
+affects the current execution asynchronously and does not prove that a persisted
+orphaned task has settled. The v2 tool is `subagent`, with `metadata.sessionID`,
+rather than the v1 `task` and `metadata.sessionId` contract. OpenCode owns restart
+recovery; OpenChamber does not substitute interrupt or background operations.
 
-Recovery walks the bounded session tree, at most 1,000 sessions, and handles
-stale children before their parent. A child is eligible only when the root's
-latest assistant message has exactly one running foreground `task` bound to that
-child. Abort attempts and exponential retry deadlines are stored atomically in
-`<rootSessionId>.goal-recovery.json` beside the managed-worktree controller
-record. A server restart therefore cannot reset the five-attempt limit.
-Missing state and invalid or unreadable state are distinct: malformed,
-unsupported-version, or unreadable journals remain untouched for inspection and
-block recovery instead of being replaced with a fresh retry budget.
+`createManagedGoalStaleRecovery()` returns `supported: false`. Every worker
+entry point is inert, including explicit `discoverNow` and `scanNow` calls.
+It starts no timers, reads no journals, sends no requests, and cannot replay
+persisted `aborting` or `delivery` records. It does not clear holds, rewrite
+messages, spend continuation turns, or send recovery prompts.
 
-After every abort, recovery rereads the exact assistant message. HTTP success is
-not settlement. If the message remains incomplete after the bounded attempts,
-the watchdog preserves that unknown child outcome and uses OpenCode's supported
-part-update route to mark only the exactly bound parent task as interrupted with
-an unknown outcome. It does not edit SQLite, create child output, or report tool
-success. The watchdog rechecks the goal ID, root and child message IDs, task part
-and child binding, workspace, complete session tree, status map, pending tools,
-and user-visible tail before each write.
+Ordinary goal functionality remains enabled. `legacy-recovery-compatibility.js`
+prevents it from bypassing unresolved recovery:
 
-The continuation is also durable. Recovery holds the goal with a deterministic
-recovery message ID, increments the turn once, and records the pending delivery
-before calling `prompt_async`. Startup discovers pending recovery files even when
-the abort event already paused the goal. It reconciles the exact user message ID
-and text before retrying or clearing the hold, so a crash or lost HTTP response
-cannot silently lose the continuation or create a second one. Explicit pause,
-goal replacement, a new user message, workspace movement, busy or retrying
-descendants, ordinary pending tools, and unavailable status all stop or defer
-the write without being treated as successful recovery.
+- Any existing `<sessionId>.goal-recovery.json` blocks automatic goal mutation
+  and continuation. Malformed, unsupported-version, or unreadable journals also
+  block; only a missing journal permits ordinary work. Records stay untouched.
+- A `stale-recovery:` hold remains intact even without its journal.
+- Nonterminal `subagent` tools in the recent v2 assistant content block audits
+  and continuation, even when the session reports idle. The continuation path
+  checks the tail again before incrementing its turn counter.
+- Metadata notifications, legacy translated session events, abort events, and
+  managed-goal identity enforcement respect the same journal and hold guards.
 
-Recovery applies the same token-budget and auto-continuation hard stops before
-delivery. Reaching either limit terminalizes the goal without incrementing its
-turn or sending a prompt. Exhausting the bounded delivery attempts, or finding
-the deterministic message ID attached to different content, visibly blocks the
-goal and clears the owned recovery hold instead of leaving an active goal
-stranded. A newly admitted user message may temporarily exist without its text
-part; that partial state is not classified as an identity collision, but each
-reconciliation attempt and deadline is persisted and the same delivery bound
-eventually blocks the goal if the text never appears.
+The former v1 real-restart fixture is replaced by an explicit unsupported-worker
+contract test. That test is not proof of v2 restart recovery. Workflow changes
+to remove the old 1.18.29 fixture provisioning are a separate follow-up.
 
-Deployment verification for this recovery must inspect the installed canonical
-`packages/web/server/lib/session-goal` code, then reproduce a foreground task
-restart against an isolated real OpenCode server. The proof must show the child
-assistant remains preserved as incomplete, the exact parent task becomes an
-interrupted unknown outcome through the API, and one recovery user message
-continues the root goal.
-Both pull-request validation workflows provision the pinned OpenCode 1.18.29
-binary and require this real restart test to pass in a dedicated isolated step
-rather than relying on the ordinary suite's environment-gated skip.
+Protocol evidence supplied during recovery:
+`anomalyco/opencode@8a8bd622a3d7dc29ccf30ec17f84e363ed95ed72`,
+`packages/protocol/src/groups/session.ts` and the session-message schema.
 
 ## Continuation prompt
 

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -35,9 +35,7 @@ const activeGoal = (extra = {}) => ({
   ...extra,
 });
 
-const requestPath = (input) => new URL(typeof input === 'string' ? input : input.url).pathname;
-
-const createManagedStateDirectory = async ({ phase = 'attached', managedGoal = goal } = {}) => {
+const createManagedStateDirectory = async ({ phase = 'attached', managedGoal = activeGoal({ managedWorktree: true }) } = {}) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'session-goal-runtime-'));
   await writeFile(path.join(directory, `${SESSION_ID}.json`), JSON.stringify({
     version: 1,
@@ -51,23 +49,10 @@ const createManagedStateDirectory = async ({ phase = 'attached', managedGoal = g
 };
 
 const managedGoal = (overrides = {}) => ({
-  ...goal,
+  ...activeGoal(),
   managedWorktree: true,
   ...overrides,
 });
-
-const assistantMessages = [{
-  info: {
-    id: 'msg_assistant',
-    sessionID: SESSION_ID,
-    role: 'assistant',
-    providerID: 'provider',
-    modelID: 'model',
-    time: { completed: 2 },
-    tokens: { input: 1, output: 1, cache: { read: 0 } },
-  },
-  parts: [{ type: 'text', text: 'All requested work is verified complete.' }],
-}];
 
 const makeRuntime = (overrides = {}) => {
   const buildOpenCodeUrl = vi.fn((fetchPath) => `http://opencode.test${fetchPath}`);
@@ -528,27 +513,12 @@ describe('session goal runtime', () => {
   });
 
   it('preserves managedWorktree metadata and holds ticks during worktree movement', async () => {
-    const paths = [];
-    const heldSession = {
-      ...session,
-      metadata: {
-        openchamber: {
-          goal: {
-            ...goal,
-            managedWorktree: true,
-            statusReason: 'worktree-moving',
-          },
-        },
-      },
-    };
-    const { runtime, getSmallModelService } = await startIdleTick(vi.fn(async (input) => {
-      const pathname = requestPath(input);
-      paths.push(pathname);
-      if (pathname === `/session/${SESSION_ID}`) return jsonResponse(heldSession);
-      throw new Error(`Unexpected request: ${pathname}`);
-    }));
-
-    expect(paths).toEqual([`/session/${SESSION_ID}`]);
+    const { calls } = v2OpenCode({ messages: [assistantRecord()] });
+    const seam = wired({ openchamber: { goal: managedGoal({ statusReason: 'worktree-moving' }) } });
+    const { runtime, getSmallModelService } = makeRuntime(seam);
+    await runTick(runtime);
+    expect(calls.some((call) => call.method === 'POST')).toBe(false);
+    expect(seam.persistSessionGoal).not.toHaveBeenCalled();
     expect(getSmallModelService).not.toHaveBeenCalled();
     runtime.stop();
   });
@@ -557,81 +527,83 @@ describe('session goal runtime', () => {
 describe('managed worktree goal runtime integration', () => {
   const stateDirectories = [];
 
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
   afterEach(async () => {
     vi.unstubAllGlobals();
-    vi.useRealTimers();
     for (const directory of stateDirectories.splice(0)) {
       await rm(directory, { recursive: true, force: true });
     }
   });
 
-  const createRuntime = ({ fetchImpl, stateDirectory, service }) => {
-    vi.stubGlobal('fetch', vi.fn((input, init) => (
-      requestPath(input) === '/experimental/session'
-        ? jsonResponse([])
-        : fetchImpl(input, init)
-    )));
-    return createSessionGoalRuntime({
-      buildOpenCodeUrl: (pathname) => `http://opencode.test${pathname}`,
-      getOpenCodeAuthHeaders: () => ({}),
-      getSmallModelService: async () => service,
-      isEnabled: () => true,
-      idleQuietMs: 10,
-      kickoffQuietMs: 10,
-      managedWorktreeStateDirectory: stateDirectory,
+  it.each(['aborting', 'delivery', 'malformed'])('does not bypass a persisted %s recovery through ordinary goal events', async (phase) => {
+    const goal = managedGoal();
+    const stateDirectory = await createManagedStateDirectory({ managedGoal: goal });
+    stateDirectories.push(stateDirectory);
+    const journal = phase === 'malformed' ? '{broken' : JSON.stringify({
+      version: 1, rootId: SESSION_ID, goalId: goal.id, directory: '/repo', phase,
+      target: { sessionId: SESSION_ID, messageId: 'msg_a1', taskPartId: '', taskCallId: '', taskChildSessionId: '', parentSessionId: '', parentMessageId: '' },
+      attempts: 1, nextAttemptAt: 0, deliveryMessageId: 'msg_recovery', deliveryPrompt: 'Continue', deliveryAttemptedAt: 0, deliveryAttempts: 0,
     });
-  };
+    const file = path.join(stateDirectory, `${SESSION_ID}.goal-recovery.json`);
+    await writeFile(file, journal);
+    const { calls } = v2OpenCode({ messages: [assistantRecord()] });
+    const seam = wired({ openchamber: { goal } });
+    const { runtime, getSmallModelService } = makeRuntime({ ...seam, managedWorktreeStateDirectory: stateDirectory });
+    await runTick(runtime);
+    runtime.processPayload(idle());
+    runtime.processPayload({ type: 'session.updated', properties: { info: { id: SESSION_ID, directory: '/repo' } } });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    runtime.processPayload({ type: 'session.idle', properties: { sessionID: SESSION_ID, aborted: true } });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(seam.persistSessionGoal).not.toHaveBeenCalled();
+    expect(getSmallModelService).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+    expect(await readFile(file, 'utf8')).toBe(journal);
+    runtime.stop();
+  });
+
+  it('preserves a legacy recovery hold even without its journal', async () => {
+    const goal = managedGoal({ statusReason: 'stale-recovery:msg_1' });
+    const stateDirectory = await createManagedStateDirectory({ managedGoal: goal });
+    stateDirectories.push(stateDirectory);
+    const { calls } = v2OpenCode({ messages: [assistantRecord()] });
+    const seam = wired({ openchamber: { goal } });
+    const { runtime } = makeRuntime({ ...seam, managedWorktreeStateDirectory: stateDirectory });
+    await runTick(runtime);
+    runtime.processPayload(idle());
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(seam.persistSessionGoal).not.toHaveBeenCalled();
+    expect(calls.some((call) => call.method === 'POST')).toBe(false);
+    runtime.stop();
+  });
+
+  it('does not account or continue past a running v2 subagent tool on an idle parent', async () => {
+    const { calls } = v2OpenCode({ messages: [assistantRecord({
+      content: [{ type: 'tool', id: 'call_1', name: 'subagent', state: { status: 'running', metadata: { sessionID: 'ses_child' } } }],
+    })] });
+    const seam = wired({ openchamber: { goal: activeGoal() } });
+    const { runtime, getSmallModelService } = makeRuntime(seam);
+    await runTick(runtime);
+    expect(seam.persistSessionGoal).not.toHaveBeenCalled();
+    expect(getSmallModelService).not.toHaveBeenCalled();
+    expect(calls.some((call) => call.method === 'POST')).toBe(false);
+    runtime.stop();
+  });
 
   it('rejects an audit completion until the managed lifecycle gate is complete', async () => {
-    const activeGoal = managedGoal();
-    const stateDirectory = await createManagedStateDirectory({ managedGoal: activeGoal });
+    quiet();
+    const goal = managedGoal();
+    const stateDirectory = await createManagedStateDirectory({ managedGoal: goal });
     stateDirectories.push(stateDirectory);
-    let liveSession = { ...session, metadata: { openchamber: { goal: activeGoal } } };
-    const requests = [];
-    const service = {
-      generateSmallModelText: vi.fn(async () => ({
-        text: '{"verdict":"complete","note":"Everything is complete"}',
-        providerID: 'provider',
-        modelID: 'model',
-      })),
-    };
-    const runtime = createRuntime({
-      stateDirectory,
-      service,
-      fetchImpl: vi.fn(async (input, init = {}) => {
-        const pathname = requestPath(input);
-        requests.push({ pathname, method: init.method ?? 'GET', body: init.body });
-        if (pathname === `/session/${SESSION_ID}` && init.method === 'PATCH') {
-          liveSession = { ...liveSession, metadata: JSON.parse(init.body).metadata };
-          return jsonResponse(liveSession);
-        }
-        if (pathname === `/session/${SESSION_ID}`) return jsonResponse(liveSession);
-        if (pathname === '/session/status') return jsonResponse({});
-        if (pathname === `/session/${SESSION_ID}/children`) return jsonResponse([]);
-        if (pathname === `/session/${SESSION_ID}/message`) return jsonResponse(assistantMessages);
-        if (pathname === `/session/${SESSION_ID}/prompt_async`) return jsonResponse({ ok: true });
-        throw new Error(`Unexpected request: ${pathname}`);
-      }),
+    const { calls } = v2OpenCode({ messages: [assistantRecord()] });
+    const seam = wired({ openchamber: { goal } });
+    const { runtime } = makeRuntime({
+      ...seam,
+      managedWorktreeStateDirectory: stateDirectory,
+      getSmallModelService: async () => ({ generateSmallModelText: async () => ({ text: smallModelSays({ all_done: true }) }) }),
     });
-
-    runtime.processPayload({
-      type: 'session.status',
-      properties: { sessionID: SESSION_ID, status: { type: 'idle' }, directory: DIRECTORY },
-    });
-    await vi.advanceTimersByTimeAsync(10);
-    await vi.waitFor(() => {
-      expect(requests.some((request) => request.pathname === `/session/${SESSION_ID}/prompt_async`)).toBe(true);
-    });
-
-    expect(liveSession.metadata.openchamber.goal).toMatchObject({
-      status: 'active',
-      turnsUsed: 2,
-      note: 'Finish implementation and provide verified dev deployment evidence before returning to the primary workspace.',
-    });
+    await runTick(runtime);
+    expect(calls.some((call) => call.path.endsWith('/prompt') && call.method === 'POST')).toBe(true);
+    expect(seam.persistSessionGoal.mock.calls.at(-1)[2]).toMatchObject({ status: 'active', turnsUsed: 1 });
     runtime.stop();
   });
 
@@ -639,31 +611,16 @@ describe('managed worktree goal runtime integration', () => {
     const protectedGoal = managedGoal({ turnsUsed: 4, note: 'Progress retained' });
     const stateDirectory = await createManagedStateDirectory({ managedGoal: protectedGoal });
     stateDirectories.push(stateDirectory);
-    let liveSession = { ...session, metadata: { openchamber: {} } };
-    const patches = [];
-    const runtime = createRuntime({
-      stateDirectory,
-      service: null,
-      fetchImpl: vi.fn(async (input, init = {}) => {
-        const pathname = requestPath(input);
-        if (pathname === `/session/${SESSION_ID}` && init.method === 'PATCH') {
-          const body = JSON.parse(init.body);
-          patches.push(body);
-          liveSession = { ...liveSession, metadata: body.metadata };
-          return jsonResponse(liveSession);
-        }
-        if (pathname === `/session/${SESSION_ID}`) return jsonResponse(liveSession);
-        throw new Error(`Unexpected request: ${pathname}`);
-      }),
-    });
+    const seam = wired({ openchamber: {} });
+    const { runtime } = makeRuntime({ ...seam, managedWorktreeStateDirectory: stateDirectory });
 
     runtime.processPayload({
       type: 'session.updated',
-      properties: { info: liveSession },
+      properties: { info: { id: SESSION_ID, directory: '/repo' } },
     });
-    await vi.waitFor(() => expect(patches).toHaveLength(1));
+    await vi.waitFor(() => expect(seam.persistSessionGoal).toHaveBeenCalledTimes(1));
 
-    expect(liveSession.metadata.openchamber.goal).toMatchObject({
+    expect(seam.persistSessionGoal.mock.calls[0][2]).toMatchObject({
       id: protectedGoal.id,
       managedWorktree: true,
       status: 'active',
@@ -673,24 +630,13 @@ describe('managed worktree goal runtime integration', () => {
     runtime.stop();
   });
 
-  it('persists managed progress from a session.updated event', async () => {
+  it('persists managed progress through the v2 metadata notification', async () => {
     const progressGoal = managedGoal({ turnsUsed: 7, tokensUsed: 123, note: 'Tests running' });
     const stateDirectory = await createManagedStateDirectory({ phase: 'goal-completion-pending', managedGoal: progressGoal });
     stateDirectories.push(stateDirectory);
-    const runtime = createRuntime({
-      stateDirectory,
-      service: null,
-      fetchImpl: vi.fn(async (input) => {
-        throw new Error(`Unexpected request: ${requestPath(input)}`);
-      }),
-    });
-
-    runtime.processPayload({
-      type: 'session.updated',
-      properties: {
-        info: { ...session, metadata: { openchamber: { goal: progressGoal } } },
-      },
-    });
+    const metadata = { openchamber: { goal: progressGoal } };
+    const { runtime } = makeRuntime({ ...wired(metadata), managedWorktreeStateDirectory: stateDirectory });
+    await runtime.notifyGoalChanged(SESSION_ID, '/repo', metadata);
     const progressPath = path.join(stateDirectory, `${SESSION_ID}.goal.json`);
     await vi.waitFor(async () => {
       expect(JSON.parse(await readFile(progressPath, 'utf8'))).toMatchObject({
@@ -707,29 +653,15 @@ describe('managed worktree goal runtime integration', () => {
     const heldGoal = managedGoal({ turnsUsed: 0, statusReason: 'worktree-resume-dispatching' });
     const stateDirectory = await createManagedStateDirectory({ phase: 'moving-to-worktree', managedGoal: heldGoal });
     stateDirectories.push(stateDirectory);
-    const requestPaths = [];
-    const runtime = createRuntime({
-      stateDirectory,
-      service: null,
-      fetchImpl: vi.fn(async (input) => {
-        requestPaths.push(requestPath(input));
-        throw new Error(`Unexpected request: ${requestPath(input)}`);
-      }),
-    });
-
-    runtime.processPayload({
-      type: 'session.updated',
-      properties: {
-        info: { ...session, metadata: { openchamber: { goal: heldGoal } } },
-      },
-    });
+    const metadata = { openchamber: { goal: heldGoal } };
+    const { runtime, buildOpenCodeUrl } = makeRuntime({ ...wired(metadata), managedWorktreeStateDirectory: stateDirectory });
+    await runtime.notifyGoalChanged(SESSION_ID, '/repo', metadata);
     const progressPath = path.join(stateDirectory, `${SESSION_ID}.goal.json`);
     await vi.waitFor(async () => {
       expect(JSON.parse(await readFile(progressPath, 'utf8')).statusReason).toBe('worktree-resume-dispatching');
     });
-    await vi.advanceTimersByTimeAsync(30_000);
-
-    expect(requestPaths).toEqual([]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(buildOpenCodeUrl).not.toHaveBeenCalled();
     runtime.stop();
   });
 });

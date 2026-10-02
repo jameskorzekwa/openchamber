@@ -28,8 +28,9 @@ describe('PTY waiting indicator integration', () => {
     expect(bannerSource).not.toContain('animate-spin');
   });
 
-  test('shows waiting only while live busy and retry status are absent', () => {
-    expect(sidebarSource).toContain("const isStreaming = statusType === 'busy' || statusType === 'retry';");
+  test('shows waiting only while upstream reports no active turn or background work', () => {
+    expect(sidebarSource).toContain('const turnActivity = useSessionTurnActivity(session.id);');
+    expect(sidebarSource).toContain('const isStreaming = turnActivity !== null;');
     expect(sidebarSource).toContain('const isPtyWaiting = !isStreaming && ptyWaiting.count > 0;');
     expect(sidebarSource).toContain('const showStatusMarker = isStreaming || isPtyWaiting || showUnreadStatus;');
     expect(sidebarSource).toContain("? 'bg-[var(--status-warning)]'");
