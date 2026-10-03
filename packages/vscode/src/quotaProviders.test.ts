@@ -8,8 +8,15 @@ import type { CredentialEntry } from '@opencode/client';
 import { configureOpenCodeCredentials } from './opencodeAuth';
 
 const previousQuotaDataDirectory = process.env.OPENCHAMBER_DATA_DIR;
+const previousConfigDirectory = process.env.OPENCODE_CONFIG_DIR;
+const previousConfigFile = process.env.OPENCODE_CONFIG;
 const temporaryQuotaDataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-vscode-quota-'));
+const temporaryConfigDirectory = path.join(temporaryQuotaDataDirectory, 'config');
+const temporaryConfigFile = path.join(temporaryConfigDirectory, 'opencode.json');
+fs.mkdirSync(temporaryConfigDirectory);
 process.env.OPENCHAMBER_DATA_DIR = temporaryQuotaDataDirectory;
+process.env.OPENCODE_CONFIG_DIR = temporaryConfigDirectory;
+delete process.env.OPENCODE_CONFIG;
 // Credentials come from the running OpenCode; serve a fixed list so the
 // providers treat themselves as configured and go straight to fetch.
 const key = (integrationID: string): CredentialEntry => ({ id: `cred_${integrationID}`, integrationID, label: 'default', active: true, value: { type: 'key', key: 'test-token' } });
@@ -36,7 +43,6 @@ configureOpenCodeCredentials({
   ],
 });
 
-import { fetchClinePassQuota, fetchHyperQuota, fetchKimiQuota, fetchOllamaCloudQuota, fetchQuotaForProvider } from './quotaProviders';
 import { validateCredential } from './quotaCredentials';
 
 type MockResponseInit = { ok?: boolean; status?: number };
@@ -44,8 +50,15 @@ type MockResponseInit = { ok?: boolean; status?: number };
 after(() => {
   if (previousQuotaDataDirectory === undefined) delete process.env.OPENCHAMBER_DATA_DIR;
   else process.env.OPENCHAMBER_DATA_DIR = previousQuotaDataDirectory;
+  if (previousConfigDirectory === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+  else process.env.OPENCODE_CONFIG_DIR = previousConfigDirectory;
+  if (previousConfigFile === undefined) delete process.env.OPENCODE_CONFIG;
+  else process.env.OPENCODE_CONFIG = previousConfigFile;
   fs.rmSync(temporaryQuotaDataDirectory, { recursive: true, force: true });
 });
+
+// Config paths are captured at import time; resolve them only after isolation.
+const { fetchClinePassQuota, fetchHyperQuota, fetchKimiQuota, fetchOllamaCloudQuota, fetchQuotaForProvider } = await import('./quotaProviders');
 
 const mockResponse = (body: unknown, init: MockResponseInit = {}): Response => ({
   ok: 'ok' in init ? init.ok! : true,
@@ -164,18 +177,12 @@ describe('OpenRouter quota provider (VS Code parity)', () => {
     assert.ok(typeof result.usage!.windows.daily!.resetAt === 'number');
   });
 
-  const withStubbedConfigFile = async (configJson: string, run: () => Promise<void>): Promise<void> => {
-    // SAFETY: the reassignment widens the bound readFileSync to the text-only
-    // signature the config reader actually calls.
-    const configurableFs = fs as { readFileSync: (filePath: fs.PathOrFileDescriptor, options?: BufferEncoding) => string };
-    const realRead = configurableFs.readFileSync;
-    configurableFs.readFileSync = (filePath: fs.PathOrFileDescriptor, options?: BufferEncoding): string => (
-      String(filePath).includes('opencode.json') ? configJson : realRead(filePath, options)
-    );
+  const withConfigFile = async (configJson: string, run: () => Promise<void>): Promise<void> => {
     try {
+      fs.writeFileSync(temporaryConfigFile, configJson);
       await run();
     } finally {
-      configurableFs.readFileSync = realRead;
+      fs.rmSync(temporaryConfigFile, { force: true });
     }
   };
 
@@ -190,7 +197,7 @@ describe('OpenRouter quota provider (VS Code parity)', () => {
 
   test('reads the key endpoint from the configured v2 provider baseURL', async () => {
     const requested = { url: '' };
-    await withStubbedConfigFile(
+    await withConfigFile(
       JSON.stringify({
         providers: {
           openrouter: { settings: { baseURL: 'https://gateway.example.com/v1' } },
@@ -207,7 +214,7 @@ describe('OpenRouter quota provider (VS Code parity)', () => {
 
   test('reads the key endpoint from the legacy provider options baseURL', async () => {
     const requested = { url: '' };
-    await withStubbedConfigFile(
+    await withConfigFile(
       JSON.stringify({
         provider: {
           openrouter: { options: { baseURL: 'https://legacy.example.com/v1' } },
@@ -224,7 +231,7 @@ describe('OpenRouter quota provider (VS Code parity)', () => {
 
   test('reads the key endpoint from the legacy provider api field', async () => {
     const requested = { url: '' };
-    await withStubbedConfigFile(
+    await withConfigFile(
       JSON.stringify({
         provider: {
           openrouter: { api: 'https://legacy-api.example.com/v1' },
@@ -241,7 +248,7 @@ describe('OpenRouter quota provider (VS Code parity)', () => {
 
   test('strips trailing slashes from the configured baseURL', async () => {
     const requested = { url: '' };
-    await withStubbedConfigFile(
+    await withConfigFile(
       JSON.stringify({
         providers: {
           openrouter: { settings: { baseURL: 'https://gateway.example.com/v1/' } },
@@ -258,11 +265,22 @@ describe('OpenRouter quota provider (VS Code parity)', () => {
 
   test('keeps the default key endpoint when the config cannot be parsed', async () => {
     const requested = { url: '' };
-    await withStubbedConfigFile('{ not json', async () => {
+    await withConfigFile('{ not json', async () => {
       stubFetchCapturingUrl(mockResponse(documentedPayload), requested);
       await fetchQuotaForProvider('openrouter');
     });
 
+    assert.equal(requested.url, 'https://openrouter.ai/api/v1/key');
+  });
+
+  test('keeps the default key endpoint when the config file is absent', async () => {
+    assert.equal(fs.existsSync(temporaryConfigFile), false);
+    const requested = { url: '' };
+    stubFetchCapturingUrl(mockResponse(documentedPayload), requested);
+
+    const result = await fetchQuotaForProvider('openrouter');
+
+    assert.equal(result.ok, true);
     assert.equal(requested.url, 'https://openrouter.ai/api/v1/key');
   });
 
