@@ -130,11 +130,11 @@ test('desktop release remains exact-six and publishes before stable web', () => 
   assert.match(desktopWorkflow, /run-packaged-macos-updater-smoke\.mjs/);
 });
 
-test('conflicts create OPM recovery without touching release refs', () => {
+test('conflicts create a recovery issue without touching release refs', () => {
   assert.match(syncWorkflow, /UPSTREAM_SYNC_TOKEN/);
   assert.match(syncWorkflow, /push_release_ref/);
   assert.match(syncWorkflow, /upstream-recovery\.mjs/);
-  assert.match(syncWorkflow, /--label opm:ready/);
+  assert.doesNotMatch(syncWorkflow, /opm:ready/);
   const conflictPath = syncWorkflow.slice(syncWorkflow.indexOf('if ! git rebase'), syncWorkflow.indexOf('push_release_ref "HEAD:refs/heads/$branch"'));
   assert.doesNotMatch(conflictPath, /refs\/heads\/j2k\/current|gh release|refs\/tags/);
   assert.match(conflictPath, /git\/refs/);
@@ -151,7 +151,7 @@ test('semantic release failures use the same recovery contract', () => {
   assert.match(recoveryWorkflow, /patchSeriesSourceCommit \|\| ``/);
   assert.match(releaseWorkflow, /commit="\$\(git rev-parse refs\/remotes\/origin\/recovery-source\)"/);
   assert.match(recoveryWorkflow, /upstream-recovery\.mjs/);
-  assert.match(recoveryWorkflow, /--label opm:ready/);
+  assert.doesNotMatch(recoveryWorkflow, /opm:ready/);
   assert.doesNotMatch(recoveryWorkflow, /contents: write/);
   assert.doesNotMatch(recoveryWorkflow, /UPSTREAM_SYNC_TOKEN/);
   assert.match(recoveryWorkflow, /issues: write/);

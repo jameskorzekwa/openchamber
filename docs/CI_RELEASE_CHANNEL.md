@@ -37,8 +37,8 @@ If `main` has diverged, the workflow opens a mirror-divergence issue and stops.
 It never force-pushes `main`. Divergence has exactly one cause: something was
 merged into `main` directly. Every pull request in this fork targets
 `j2k/current`; a change merged to `main` is not released, breaks the sync, and
-must be ported. OPM is configured with `defaultBranch: j2k/current` for this
-repository and refuses to merge a change whose base is any other branch. If the series conflicts, it pushes a recovery
+must be ported. Merges are owner-approved per exact head and must target
+`j2k/current`. If the series conflicts, it pushes a recovery
 branch at the pre-rebase series head, opens `Rebase conflict: patch series vs
 vX.Y.Z`, and stops without publishing.
 
@@ -97,11 +97,11 @@ both binaries before the smoke uses `node-pty`'s normal deterministic loader.
 This isolated smoke sets `OPENCODE_HOST` to its local stub and
 `OPENCODE_SKIP_START=true`. It proves that the packaged server boots in external
 OpenCode mode without spawning OpenCode. It also compares the packaged CLI,
-agent-tool runtime, OPM status routes, and session-goal runtime byte-for-byte
+agent-tool runtime, legacy OPM status routes, and session-goal runtime byte-for-byte
 with the reviewed source. The stub does not emulate the OpenCode API or plugin
 protocol. These gates therefore do not claim compatibility with a separately
-deployed OpenCode process, live plugin registration or execution, OPM
-supervision, or automatic goal/effect processing. Those remain host-activation
+deployed OpenCode process, live plugin registration or execution, or
+automatic goal/effect processing. Those remain host-activation
 checks and are not part of artifact publication.
 
 Finally, the release smoke proves the configured update channel. It first

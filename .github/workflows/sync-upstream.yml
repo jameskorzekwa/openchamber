@@ -53,11 +53,10 @@ jobs:
       - name: Fast-forward mirror main
         env:
           # Recovery issues are filed with the owner's token, not GITHUB_TOKEN:
-          # OPM acts only on owner-authored work items, and an issue authored
-          # by github-actions[bot] is invisible to it. The scoped job token
-          # also could not create issues here (GraphQL createIssue: resource
-          # not accessible), which left a mirror divergence unreported for
-          # two days.
+          # the scoped job token could not create issues here (GraphQL
+          # createIssue: resource not accessible), which left a mirror
+          # divergence unreported for two days. The issue is for the owner or
+          # an interactive session to act on; no automation consumes it.
           GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
           UPSTREAM_SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
         run: |
@@ -207,15 +206,14 @@ jobs:
             node tools/desktop-release/upstream-recovery.mjs --input "$recovery" --body "$body" --title "$title_file"
             title="$(<"$title_file")"
 
-            # Owner token for the recovery issue: it carries opm:ready and OPM
-            # admits only owner-authored work items, so an issue authored by
-            # github-actions[bot] would never be picked up.
+            # Owner token for the recovery issue (see the fast-forward step);
+            # the issue is acted on by the owner or an interactive session.
             issue_number="$(GH_TOKEN="$UPSTREAM_SYNC_TOKEN" gh issue list --repo "${{ github.repository }}" --state open --search "in:title $title" \
               --json number,title --jq "map(select(.title == \"$title\")) | first | .number // empty")"
             if [[ -z "$issue_number" ]]; then
-              GH_TOKEN="$UPSTREAM_SYNC_TOKEN" gh issue create --repo "${{ github.repository }}" --title "$title" --body-file "$body" --label opm:ready
+              GH_TOKEN="$UPSTREAM_SYNC_TOKEN" gh issue create --repo "${{ github.repository }}" --title "$title" --body-file "$body"
             else
-              GH_TOKEN="$UPSTREAM_SYNC_TOKEN" gh issue edit "$issue_number" --repo "${{ github.repository }}" --body-file "$body" --add-label opm:ready
+              GH_TOKEN="$UPSTREAM_SYNC_TOKEN" gh issue edit "$issue_number" --repo "${{ github.repository }}" --body-file "$body"
               GH_TOKEN="$UPSTREAM_SYNC_TOKEN" gh issue reopen "$issue_number" --repo "${{ github.repository }}" 2>/dev/null || true
             fi
             exit 1
