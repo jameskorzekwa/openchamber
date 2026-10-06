@@ -106,8 +106,8 @@ jobs:
           issue_number="$(gh issue list --repo "${{ github.repository }}" --state all --search "in:title $title" \
             --json number,title --jq "map(select(.title == \"$title\")) | first | .number // empty")"
           if [[ -z "$issue_number" ]]; then
-            gh issue create --repo "${{ github.repository }}" --title "$title" --body-file "$body" --label opm:ready
+            gh issue create --repo "${{ github.repository }}" --title "$title" --body-file "$body"
           else
-            gh issue edit "$issue_number" --repo "${{ github.repository }}" --body-file "$body" --add-label opm:ready
+            gh issue edit "$issue_number" --repo "${{ github.repository }}" --body-file "$body"
             gh issue reopen "$issue_number" --repo "${{ github.repository }}" 2>/dev/null || true
           fi
