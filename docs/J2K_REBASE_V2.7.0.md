@@ -47,6 +47,13 @@ fork shipped nothing newer than `1.24.2-j2k.*`.
 | Tests both sides added | Upstream file kept; fork tests moved to `cli-startup.managed.test.js`, `config-entity-routes.guards.test.js`, `useUpdateStore.lifecycle.test.ts`. |
 | Translations | Fork strings added for the new `ar` and `he` locales; stale Dutch keys of the removed PTY banner dropped. |
 
+## Node 24
+
+Upstream requires Node >= 24.14.0 since v2.3.0. The J2K validate and
+release pipelines, channel tooling and installer target moved from Node
+22.22.0 / modules ABI 127 to Node 24.22.3 / ABI 137. Installs still running
+Node 22 find no matching validated artifact and stay where they are.
+
 ## Not verified here
 
 No real OpenCode v2 service, packaged Electron update, signed macOS build, or
@@ -56,4 +63,5 @@ OpenChamber 2.7.0 refuses OpenCode older than 2.2.4
 (`server/lib/opencode/compatibility.js`). bee2 ran OpenCode 1.19.5 when this
 port was prepared (2026-11-11), so deploying it there requires upgrading
 OpenCode to v2 first, including its data migration. Publishing a release does
-not make an older running OpenCode compatible.
+not make an older running OpenCode compatible. The OpenChamber runtime itself
+must also move to Node >= 24.14 (bee2's launcher used Node 22.23.4).
