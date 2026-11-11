@@ -86,7 +86,7 @@ test('release smoke uses the strict channel and stage-version has no misplaced c
   assert.match(smokeStep, /OPENCHAMBER_UPDATE_GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
 });
 
-test('native candidate jobs build and smoke exact Node 22 ABI 127 targets without write credentials', () => {
+test('native candidate jobs build and smoke exact Node 24 ABI 137 targets without write credentials', () => {
   const jobs = YAML.parse(release).jobs;
   const darwin = JSON.stringify(jobs['validate-release']);
   const linux = JSON.stringify(jobs['validate-release-linux']);
@@ -101,22 +101,22 @@ test('native candidate jobs build and smoke exact Node 22 ABI 127 targets withou
   }
   assert.match(darwin, /process\.platform.*darwin/);
   assert.match(darwin, /process\.arch.*arm64/);
-  assert.match(darwin, /process\.versions\.modules.*127/);
+  assert.match(darwin, /process\.versions\.modules.*137/);
   assert.match(darwin, /xcrun --find clang/);
   assert.match(darwin, /bun install --frozen-lockfile/);
-  assert.match(darwin, /pack-package[\s\S]*--archive-name[\s\S]*darwin-arm64-abi127/);
+  assert.match(darwin, /pack-package[\s\S]*--archive-name[\s\S]*darwin-arm64-abi137/);
   assert.equal((darwin.match(/smoke-installed-package\.mjs/g) ?? []).length, 2);
   assert.match(linux, /process\.platform.*linux/);
   assert.match(linux, /process\.arch.*x64/);
-  assert.match(linux, /process\.versions\.modules.*127/);
+  assert.match(linux, /process\.versions\.modules.*137/);
   assert.match(linux, /command -v gcc/);
   assert.match(linux, /command -v g\+\+/);
   assert.match(linux, /bun install --frozen-lockfile/);
-  assert.match(linux, /pack-package[\s\S]*--archive-name[\s\S]*linux-x64-abi127/);
+  assert.match(linux, /pack-package[\s\S]*--archive-name[\s\S]*linux-x64-abi137/);
   assert.equal((linux.match(/smoke-installed-package\.mjs/g) ?? []).length, 1);
   assert.match(assembly, /assemble-bundle/);
-  assert.match(assembly, /channel-release-target-.*darwin-arm64-abi127/);
-  assert.match(assembly, /channel-release-target-.*linux-x64-abi127/);
+  assert.match(assembly, /channel-release-target-.*darwin-arm64-abi137/);
+  assert.match(assembly, /channel-release-target-.*linux-x64-abi137/);
 });
 
 test('validation pins its native Linux target and exercises installed native dependencies', () => {
@@ -125,7 +125,7 @@ test('validation pins its native Linux target and exercises installed native dep
   assert.equal(job['runs-on'], 'ubuntu-latest');
   assert.match(source, /process\.platform.*linux/);
   assert.match(source, /process\.arch.*x64/);
-  assert.match(source, /process\.versions\.modules.*127/);
+  assert.match(source, /process\.versions\.modules.*137/);
   assert.match(source, /smoke-installed-package\.mjs/);
   assert.match(source, /--platform.*TARGET_PLATFORM/);
   assert.match(source, /--arch.*TARGET_ARCH/);
@@ -138,8 +138,8 @@ test('companion release is immutable schema 2 while canonical stable stays exact
   assert.match(release, /git tag --list "web-v\$base_version-j2k\.\*"/);
   assert.match(release, /refs\+=\("refs\/tags\/\$WEB_RELEASE_TAG:refs\/tags\/\$WEB_RELEASE_TAG"\)/);
   assert.match(publish, /-f tag_name="\$WEB_RELEASE_TAG"[\s\S]*-F draft=true -F prerelease=true -f make_latest=false/);
-  assert.match(publish, /`openchamber-web-\$\{process\.env\.VERSION\}-darwin-arm64-abi127\.tgz`/);
-  assert.match(publish, /`openchamber-web-\$\{process\.env\.VERSION\}-linux-x64-abi127\.tgz`/);
+  assert.match(publish, /`openchamber-web-\$\{process\.env\.VERSION\}-darwin-arm64-abi137\.tgz`/);
+  assert.match(publish, /`openchamber-web-\$\{process\.env\.VERSION\}-linux-x64-abi137\.tgz`/);
   assert.match(publish, /Multi-target web release inventory differs/);
   assert.match(publish, /Existing multi-target web asset \$asset differs; refusing overwrite/);
   assert.match(publish, /Uploaded multi-target web asset \$asset differs from validated bytes/);

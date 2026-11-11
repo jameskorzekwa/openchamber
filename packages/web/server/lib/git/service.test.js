@@ -1244,8 +1244,14 @@ describe('getStatus', () => {
     runGit(repo, ['init', '-b', 'main']);
     // Git's own switch for a repository owned by someone else, as a drive
     // formatted elsewhere looks on Windows.
+    // A host-wide `safe.directory = *` (GitHub's Ubuntu images set one) would
+    // trust it anyway, so the probe reads no system or global configuration.
     const previous = process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER;
+    const previousNoSystem = process.env.GIT_CONFIG_NOSYSTEM;
+    const previousGlobal = process.env.GIT_CONFIG_GLOBAL;
     process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER = '1';
+    process.env.GIT_CONFIG_NOSYSTEM = '1';
+    process.env.GIT_CONFIG_GLOBAL = '/dev/null';
     try {
       await expect(isGitRepository(repo, { failOnGitError: true })).rejects.toMatchObject({
         code: 'GIT_REPOSITORY_UNREADABLE',
@@ -1258,6 +1264,10 @@ describe('getStatus', () => {
     } finally {
       if (previous === undefined) delete process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER;
       else process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER = previous;
+      if (previousNoSystem === undefined) delete process.env.GIT_CONFIG_NOSYSTEM;
+      else process.env.GIT_CONFIG_NOSYSTEM = previousNoSystem;
+      if (previousGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = previousGlobal;
     }
     await expect(isGitRepository(repo, { failOnGitError: true })).resolves.toBe(true);
   });

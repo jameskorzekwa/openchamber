@@ -271,13 +271,13 @@ The install instructions at the top of this README describe public upstream
 OpenChamber. The validated J2K channel is fork-specific and does not change
 public upstream package-manager behavior.
 
-The J2K web channel supports Darwin arm64 and Ubuntu x86_64 on Node 22 with
-modules ABI 127. Canonical stable `vVERSION` remains the exact three-asset
+The J2K web channel supports Darwin arm64 and Ubuntu x86_64 on Node 24 with
+modules ABI 137. Canonical stable `vVERSION` remains the exact three-asset
 schema 1 Darwin release. New consumers resolve that identity first, then select
 the exact target from schema 2 prerelease `web-vVERSION`. It contains the Darwin
 arm64 and Linux x64 archives plus `SHA256SUMS` and `channel.json`. Missing,
 duplicate, ambiguous, malformed, or wrong-target entries stop before download.
-Only exact Darwin arm64 ABI 127 may fall back to schema 1 when the companion is
+Only exact Darwin arm64 ABI 137 may fall back to schema 1 when the companion is
 absent.
 
 ### New J2K installation on headless Ubuntu x86_64
@@ -285,7 +285,7 @@ absent.
 This is supported only on Ubuntu x86_64. It is new-install-only and fails when
 `~/.local/share/openchamber/current` exists, including as a broken symlink. It
 uses public GitHub APIs without a token and does not read or start production
-OpenChamber auth or state. Install Node 22 with modules ABI 127, `curl`, `jq`,
+OpenChamber auth or state. Install Node 24 with modules ABI 137, `curl`, `jq`,
 `git`, `tar`, `sha256sum`, and a working systemd user service first. Bun and
 npm are not runtime requirements.
 
@@ -306,7 +306,7 @@ test "$(uname -m)" = 'x86_64'
 test "$(node -p 'process.versions.node.split(".")[0]')" = '22'
 test "$(node -p 'process.platform')" = 'linux'
 test "$(node -p 'process.arch')" = 'x64'
-test "$(node -p 'process.versions.modules')" = '127'
+test "$(node -p 'process.versions.modules')" = '137'
 for command in curl jq git tar sha256sum systemctl; do command -v "$command" >/dev/null; done
 systemctl --user show-environment >/dev/null
 test ! -e "$CURRENT" && test ! -L "$CURRENT"
@@ -336,7 +336,7 @@ jq -e --arg tag "$STABLE_TAG" --arg version "$VERSION" --arg archive "$LEGACY_AR
   .version == (.baseVersion + "-j2k." + (.channelRevision | tostring)) and
   .upstreamTag == ("v" + .baseVersion) and .tarball == $archive and
   .assets == [$archive, "SHA256SUMS", "channel.json"] and
-  .platform == "darwin" and .arch == "arm64" and .nodeAbi == "127" and
+  .platform == "darwin" and .arch == "arm64" and .nodeAbi == "137" and
   .minNode == "22" and .seriesHead == .sourceCommit and
   (.sourceCommit | test("^[0-9a-f]{40}$"))
 ' "$WORK/stable-channel.json" >/dev/null
@@ -368,8 +368,8 @@ jq -e --arg upstream "$UPSTREAM_COMMIT" --arg source "$SOURCE_COMMIT" '
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
   "https://api.github.com/repos/$REPOSITORY/releases/tags/$COMPANION_TAG" \
   --output "$WORK/companion-release.json"
-DARWIN_ARCHIVE="openchamber-web-$VERSION-darwin-arm64-abi127.tgz"
-LINUX_ARCHIVE="openchamber-web-$VERSION-linux-x64-abi127.tgz"
+DARWIN_ARCHIVE="openchamber-web-$VERSION-darwin-arm64-abi137.tgz"
+LINUX_ARCHIVE="openchamber-web-$VERSION-linux-x64-abi137.tgz"
 jq -e --arg tag "$COMPANION_TAG" --arg source "$SOURCE_COMMIT" --arg darwin "$DARWIN_ARCHIVE" --arg linux "$LINUX_ARCHIVE" '
   .draft == false and .prerelease == true and .tag_name == $tag and
   .target_commitish == $source and (.assets | length == 4) and

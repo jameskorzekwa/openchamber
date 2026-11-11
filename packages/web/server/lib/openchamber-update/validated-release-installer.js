@@ -20,10 +20,10 @@ const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const PACKAGE_NAME_PATTERN = /^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/i;
 const BASE_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const CHANNEL_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-j2k\.([1-9]\d*)$/;
-const LEGACY_TARGET = Object.freeze({ platform: 'darwin', arch: 'arm64', nodeAbi: '127' });
+const LEGACY_TARGET = Object.freeze({ platform: 'darwin', arch: 'arm64', nodeAbi: '137' });
 const MULTI_TARGETS = Object.freeze([
   LEGACY_TARGET,
-  Object.freeze({ platform: 'linux', arch: 'x64', nodeAbi: '127' }),
+  Object.freeze({ platform: 'linux', arch: 'x64', nodeAbi: '137' }),
 ]);
 const MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES = 512 * 1024 * 1024;

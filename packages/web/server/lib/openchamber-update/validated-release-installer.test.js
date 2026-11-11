@@ -381,7 +381,7 @@ describe('validated release installation', () => {
     expect(fetchImpl.mock.calls.some(([url]) => String(url) === `${RELEASE_ROOT}/${ARCHIVE_NAME}`)).toBe(false);
   });
 
-  it('allows schema-1 fallback only for Darwin arm64 ABI 127', async () => {
+  it('allows schema-1 fallback only for Darwin arm64 ABI 137', async () => {
     const linuxFetch = makeFetch();
     const linux = await makeHarness(linuxFetch, undefined, { platform: 'linux', arch: 'x64', nodeAbi: NODE_ABI });
     await expect(linux.installer.checkForUpdate()).rejects.toThrow('No validated OpenChamber companion release matches linux/x64');

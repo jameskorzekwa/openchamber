@@ -24,8 +24,8 @@ test('fork bundle assembly requires both native web builds and fails on missing 
   }
   const downloads = assembly.steps.filter((step) => step.uses?.startsWith('actions/download-artifact@'));
   assert.deepEqual(downloads.map((step) => step.with.name), [
-    'channel-release-target-${{ needs.metadata.outputs.release_tag }}-darwin-arm64-abi127',
-    'channel-release-target-${{ needs.metadata.outputs.release_tag }}-linux-x64-abi127',
+    'channel-release-target-${{ needs.metadata.outputs.release_tag }}-darwin-arm64-abi137',
+    'channel-release-target-${{ needs.metadata.outputs.release_tag }}-linux-x64-abi137',
   ]);
   const upload = assembly.steps.find((step) => step.uses?.startsWith('actions/upload-artifact@'));
   assert.equal(upload.with['if-no-files-found'], 'error');

@@ -7,7 +7,7 @@ import test from 'node:test';
 
 const tool = resolve('tools/channel-release/channel-release.mjs');
 const sourceCommit = '0123456789abcdef0123456789abcdef01234567';
-const targetArgs = ['--platform', 'darwin', '--arch', 'arm64', '--node-abi', '127'];
+const targetArgs = ['--platform', 'darwin', '--arch', 'arm64', '--node-abi', '137'];
 
 test('verify-release accepts an exact, relocatable channel artifact set', () => {
   const root = mkdtempSync(join(tmpdir(), 'channel-release-test-'));
@@ -148,13 +148,13 @@ test('packs and verifies the exact ordered schema-2 web release contract', () =>
       [darwinOutput, 'darwin', 'arm64'],
       [linuxOutput, 'linux', 'x64'],
     ]) {
-      const archive = `openchamber-web-1.21.0-j2k.7-${platform}-${arch}-abi127.tgz`;
+      const archive = `openchamber-web-1.21.0-j2k.7-${platform}-${arch}-abi137.tgz`;
       execFileSync(process.execPath, [tool, 'pack-package',
         '--version', '1.21.0-j2k.7',
         '--source-commit', sourceCommit,
         '--platform', platform,
         '--arch', arch,
-        '--node-abi', '127',
+        '--node-abi', '137',
         '--archive-name', archive,
         '--output-dir', output,
       ], { cwd: root });
@@ -170,12 +170,12 @@ test('packs and verifies the exact ordered schema-2 web release contract', () =>
     assert.equal(manifest.schema, 2);
     assert.equal(manifest.releaseTag, 'web-v1.21.0-j2k.7');
     assert.deepEqual(manifest.artifacts.map(({ platform, arch, nodeAbi }) => ({ platform, arch, nodeAbi })), [
-      { platform: 'darwin', arch: 'arm64', nodeAbi: '127' },
-      { platform: 'linux', arch: 'x64', nodeAbi: '127' },
+      { platform: 'darwin', arch: 'arm64', nodeAbi: '137' },
+      { platform: 'linux', arch: 'x64', nodeAbi: '137' },
     ]);
     const checksumLines = readFileSync(join(releaseOutput, 'SHA256SUMS'), 'utf8').trimEnd().split('\n');
-    assert.match(checksumLines[0], /darwin-arm64-abi127\.tgz$/);
-    assert.match(checksumLines[1], /linux-x64-abi127\.tgz$/);
+    assert.match(checksumLines[0], /darwin-arm64-abi137\.tgz$/);
+    assert.match(checksumLines[1], /linux-x64-abi137\.tgz$/);
 
     const canonicalManifest = readFileSync(join(releaseOutput, 'channel.json'), 'utf8');
     const canonicalChecksums = readFileSync(join(releaseOutput, 'SHA256SUMS'), 'utf8');
@@ -192,7 +192,7 @@ test('packs and verifies the exact ordered schema-2 web release contract', () =>
     writeFileSync(join(releaseOutput, 'channel.json'), JSON.stringify(wrongTarget));
     rejected = verify();
     assert.notEqual(rejected.status, 0);
-    assert.match(rejected.stderr, /must target darwin\/arm64\/ABI-127/);
+    assert.match(rejected.stderr, /must target darwin\/arm64\/ABI-137/);
 
     writeFileSync(join(releaseOutput, 'channel.json'), canonicalManifest);
     writeFileSync(join(releaseOutput, 'SHA256SUMS'), `${checksumLines.reverse().join('\n')}\n`);
@@ -205,7 +205,7 @@ test('packs and verifies the exact ordered schema-2 web release contract', () =>
   }
 });
 
-test('schema-1 release rejects targets outside the canonical Darwin ABI-127 contract', () => {
+test('schema-1 release rejects targets outside the canonical Darwin ABI-137 contract', () => {
   const rejected = spawnSync(process.execPath, [tool, 'verify-release',
     '--base-version', '1.21.0',
     '--revision', '1',
@@ -213,9 +213,9 @@ test('schema-1 release rejects targets outside the canonical Darwin ABI-127 cont
     '--source-commit', sourceCommit,
     '--platform', 'linux',
     '--arch', 'x64',
-    '--node-abi', '127',
+    '--node-abi', '137',
     '--output-dir', '/missing',
   ], { encoding: 'utf8' });
   assert.notEqual(rejected.status, 0);
-  assert.match(rejected.stderr, /Schema-1 release must target darwin\/arm64\/ABI-127/);
+  assert.match(rejected.stderr, /Schema-1 release must target darwin\/arm64\/ABI-137/);
 });

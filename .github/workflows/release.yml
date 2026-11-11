@@ -25,7 +25,7 @@ defaults:
     shell: bash
 
 env:
-  NODE_VERSION: 22.22.0
+  NODE_VERSION: 24.22.3
   NPM_VERSION: 11.6.2
 
 jobs:
@@ -342,7 +342,7 @@ jobs:
           node_abi="$(node -p 'process.versions.modules')"
           test "$platform" = 'darwin'
           test "$arch" = 'arm64'
-          test "$node_abi" = '127'
+          test "$node_abi" = '137'
           {
             printf 'platform=%s\n' "$platform"
             printf 'arch=%s\n' "$arch"
@@ -362,7 +362,7 @@ jobs:
           test "$(node --version)" = "v$NODE_VERSION"
           test "$(node -p 'process.arch')" = 'arm64'
           test "$(node -p 'process.platform')" = 'darwin'
-          test "$(node -p 'process.versions.modules')" = '127'
+          test "$(node -p 'process.versions.modules')" = '137'
           xcrun --find clang >/dev/null
           command -v make >/dev/null
           command -v python3 >/dev/null
@@ -422,7 +422,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir darwin-target-artifact
-          archive="openchamber-web-${{ needs.metadata.outputs.version }}-darwin-arm64-abi127.tgz"
+          archive="openchamber-web-${{ needs.metadata.outputs.version }}-darwin-arm64-abi137.tgz"
           node tools/channel-release/channel-release.mjs pack-package \
             --version "${{ needs.metadata.outputs.version }}" \
             --source-commit "${{ needs.metadata.outputs.source_commit }}" \
@@ -442,7 +442,7 @@ jobs:
       - name: Upload immutable canonical stable candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: channel-release-legacy-${{ needs.metadata.outputs.release_tag }}-darwin-arm64-abi127
+          name: channel-release-legacy-${{ needs.metadata.outputs.release_tag }}-darwin-arm64-abi137
           path: legacy-artifacts/
           if-no-files-found: error
           retention-days: 7
@@ -450,7 +450,7 @@ jobs:
       - name: Upload immutable Darwin arm64 companion candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: channel-release-target-${{ needs.metadata.outputs.release_tag }}-darwin-arm64-abi127
+          name: channel-release-target-${{ needs.metadata.outputs.release_tag }}-darwin-arm64-abi137
           path: darwin-target-artifact/
           if-no-files-found: error
           retention-days: 7
@@ -500,7 +500,7 @@ jobs:
           node_abi="$(node -p 'process.versions.modules')"
           test "$platform" = 'linux'
           test "$arch" = 'x64'
-          test "$node_abi" = '127'
+          test "$node_abi" = '137'
           test "$(uname -m)" = 'x86_64'
           command -v gcc >/dev/null
           command -v g++ >/dev/null
@@ -547,7 +547,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir linux-target-artifact
-          archive="openchamber-web-${{ needs.metadata.outputs.version }}-linux-x64-abi127.tgz"
+          archive="openchamber-web-${{ needs.metadata.outputs.version }}-linux-x64-abi137.tgz"
           node tools/channel-release/channel-release.mjs pack-package \
             --version "${{ needs.metadata.outputs.version }}" \
             --source-commit "${{ needs.metadata.outputs.source_commit }}" \
@@ -567,7 +567,7 @@ jobs:
       - name: Upload immutable Linux x64 companion candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: channel-release-target-${{ needs.metadata.outputs.release_tag }}-linux-x64-abi127
+          name: channel-release-target-${{ needs.metadata.outputs.release_tag }}-linux-x64-abi137
           path: linux-target-artifact/
           if-no-files-found: error
           retention-days: 7
@@ -595,13 +595,13 @@ jobs:
       - name: Download Darwin arm64 companion candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: channel-release-target-${{ needs.metadata.outputs.release_tag }}-darwin-arm64-abi127
+          name: channel-release-target-${{ needs.metadata.outputs.release_tag }}-darwin-arm64-abi137
           path: multi-web-artifacts
 
       - name: Download Linux x64 companion candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: channel-release-target-${{ needs.metadata.outputs.release_tag }}-linux-x64-abi127
+          name: channel-release-target-${{ needs.metadata.outputs.release_tag }}-linux-x64-abi137
           path: multi-web-artifacts
 
       - name: Assemble schema 2 multi-target bundle
@@ -666,7 +666,7 @@ jobs:
       - name: Download validated canonical stable assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: channel-release-legacy-${{ needs.metadata.outputs.release_tag }}-darwin-arm64-abi127
+          name: channel-release-legacy-${{ needs.metadata.outputs.release_tag }}-darwin-arm64-abi137
           path: legacy-web-artifacts
 
       - name: Download validated multi-target companion assets
@@ -940,16 +940,16 @@ jobs:
           if (release.tag_name !== process.env.WEB_RELEASE_TAG || release.target_commitish !== process.env.SOURCE_COMMIT) throw new Error('Multi-target web release source identity differs');
           if (!release.prerelease) throw new Error('Multi-target web release must remain a prerelease');
           const expected = new Set([
-            `openchamber-web-${process.env.VERSION}-darwin-arm64-abi127.tgz`,
-            `openchamber-web-${process.env.VERSION}-linux-x64-abi127.tgz`,
+            `openchamber-web-${process.env.VERSION}-darwin-arm64-abi137.tgz`,
+            `openchamber-web-${process.env.VERSION}-linux-x64-abi137.tgz`,
             'SHA256SUMS', 'channel.json',
           ]);
           for (const asset of release.assets) if (!expected.has(asset.name)) throw new Error(`Unexpected multi-target web release asset ${asset.name}`);
           NODE
           web_release_id="$(WEB_RELEASE_JSON="$web_release_json" node -p 'JSON.parse(process.env.WEB_RELEASE_JSON).id')"
           web_release_draft="$(WEB_RELEASE_JSON="$web_release_json" node -p 'JSON.parse(process.env.WEB_RELEASE_JSON).draft')"
-          for asset in "openchamber-web-$VERSION-darwin-arm64-abi127.tgz" \
-            "openchamber-web-$VERSION-linux-x64-abi127.tgz" SHA256SUMS channel.json; do
+          for asset in "openchamber-web-$VERSION-darwin-arm64-abi137.tgz" \
+            "openchamber-web-$VERSION-linux-x64-abi137.tgz" SHA256SUMS channel.json; do
             asset_id="$(WEB_RELEASE_JSON="$web_release_json" ASSET="$asset" node -p 'JSON.parse(process.env.WEB_RELEASE_JSON).assets.find((item) => item.name === process.env.ASSET)?.id || ``')"
             if [[ -n "$asset_id" ]]; then
               existing="$RUNNER_TEMP/existing-multi-web-$asset"
@@ -965,8 +965,8 @@ jobs:
           const { statSync } = require('node:fs');
           const release = JSON.parse(process.env.WEB_RELEASE_JSON);
           const expected = [
-            `openchamber-web-${process.env.VERSION}-darwin-arm64-abi127.tgz`,
-            `openchamber-web-${process.env.VERSION}-linux-x64-abi127.tgz`,
+            `openchamber-web-${process.env.VERSION}-darwin-arm64-abi137.tgz`,
+            `openchamber-web-${process.env.VERSION}-linux-x64-abi137.tgz`,
             'SHA256SUMS', 'channel.json',
           ].sort();
           const actual = release.assets.map((asset) => asset.name).sort();
@@ -1042,8 +1042,8 @@ jobs:
             gh api "repos/${{ github.repository }}/releases/assets/$asset_id" -H 'Accept: application/octet-stream' > "$remote"
             cmp -s "$remote" "legacy-web-artifacts/$asset" || { echo "Uploaded web asset $asset differs from validated bytes." >&2; exit 1; }
           done
-          for asset in "openchamber-web-$VERSION-darwin-arm64-abi127.tgz" \
-            "openchamber-web-$VERSION-linux-x64-abi127.tgz" SHA256SUMS channel.json; do
+          for asset in "openchamber-web-$VERSION-darwin-arm64-abi137.tgz" \
+            "openchamber-web-$VERSION-linux-x64-abi137.tgz" SHA256SUMS channel.json; do
             asset_id="$(WEB_RELEASE_JSON="$web_release_json" ASSET="$asset" node -p 'JSON.parse(process.env.WEB_RELEASE_JSON).assets.find((item) => item.name === process.env.ASSET).id')"
             remote="$RUNNER_TEMP/uploaded-multi-web-$asset"
             gh api "repos/${{ github.repository }}/releases/assets/$asset_id" -H 'Accept: application/octet-stream' > "$remote"

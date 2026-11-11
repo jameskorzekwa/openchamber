@@ -64,8 +64,8 @@ does not repair a shallow history boundary.
 requests targeting `j2k/current`, and manual dispatches. It has `contents: read` only
 and cancels superseded validation for the same ref.
 
-The Ubuntu x86_64 job pins Node 22.22.0 and the Bun release named by `packageManager`, requires Node modules
-ABI 127, then runs:
+The Ubuntu x86_64 job pins Node 24.22.3 and the Bun release named by `packageManager`, requires Node modules
+ABI 137, then runs:
 
 ```bash
 bun install --frozen-lockfile
@@ -95,11 +95,11 @@ source commit in `dist/build-revision.json`, a served `index.html`, and HTTP 200
 for every referenced built asset.
 
 Validation and release packaging have native gates for both supported web
-targets. The Ubuntu x86_64 gate builds the Linux x64 ABI 127 archive on Ubuntu,
+targets. The Ubuntu x86_64 gate builds the Linux x64 ABI 137 archive on Ubuntu,
 checks native `.node` files and helper executables as x86-64 ELF, spawns a
 bounded shell through extracted `node-pty`, and resolves the Linux x64
 `sherpa-onnx-node` binding without loading a model. The Darwin arm64 gate builds
-the Darwin arm64 ABI 127 archive on macOS and requires native `.node` and
+the Darwin arm64 ABI 137 archive on macOS and requires native `.node` and
 `.dylib` files to be arm64 Mach-O. It also runs the bounded `node-pty` and
 `sherpa-onnx-node` smoke. Each job starts its extracted archive with the same
 pinned Node runtime used to package that target. If `node-pty` contains both its
@@ -159,8 +159,8 @@ The release pipeline resolves the branch tip to one 40-character source commit,
 checks that `vX.Y.Z` is its ancestor, and confirms that the package version is
 `X.Y.Z`. It calculates the next unused `j2k.N` revision. Native Ubuntu x86_64
 and macOS arm64 jobs build and smoke their own frozen dependency closures for
-the staged version. Both fail closed unless Node 22.22.0 reports modules ABI
-127 and the expected platform and architecture. A package built on one target
+the staged version. Both fail closed unless Node 24.22.3 reports modules ABI
+137 and the expected platform and architecture. A package built on one target
 is never relabeled for another target.
 
 Only the downstream publish job receives `contents: write`. It does not check
@@ -213,16 +213,16 @@ The canonical stable release remains schema 1 with exactly these three assets:
 - `SHA256SUMS`
 - `channel.json`
 
-Its archive remains Darwin arm64 ABI 127. The schema 2 companion prerelease has
+Its archive remains Darwin arm64 ABI 137. The schema 2 companion prerelease has
 exactly these four assets:
 
-- `openchamber-web-X.Y.Z-j2k.N-darwin-arm64-abi127.tgz`
-- `openchamber-web-X.Y.Z-j2k.N-linux-x64-abi127.tgz`
+- `openchamber-web-X.Y.Z-j2k.N-darwin-arm64-abi137.tgz`
+- `openchamber-web-X.Y.Z-j2k.N-linux-x64-abi137.tgz`
 - `SHA256SUMS`
 - `channel.json`
 
 The web channel does not publish to npm and does not use npm, Apple, VS Code,
-or other repository secrets. CI pins Node 22.22.0, npm 11.6.2, and the Bun release named by `packageManager`.
+or other repository secrets. CI pins Node 24.22.3, npm 11.6.2, and the Bun release named by `packageManager`.
 Web companion assets never enter the Desktop release.
 
 ## Manifest contract
@@ -232,11 +232,11 @@ tool rejects missing or extra keys. It binds the base version, channel revision,
 full version, release tag, upstream tag, source commit, tarball, checksum,
 complete asset list, and minimum Node major. `seriesHead` and `sourceCommit`
 must be the same 40-character commit. Its target remains `platform: "darwin"`,
-`arch: "arm64"`, and `nodeAbi: "127"`.
+`arch: "arm64"`, and `nodeAbi: "137"`.
 
 The `web-vVERSION` companion `channel.json` uses schema 2. Its ordered
-`artifacts` array contains exactly one Darwin arm64 ABI 127 entry and one Linux
-x64 ABI 127 entry. Each has exactly `platform`, `arch`, `nodeAbi`, `tarball`,
+`artifacts` array contains exactly one Darwin arm64 ABI 137 entry and one Linux
+x64 ABI 137 entry. Each has exactly `platform`, `arch`, `nodeAbi`, `tarball`,
 and `sha256`; archive names contain the target identity. The top-level `assets`
 array contains both target-qualified tarballs in deterministic order followed
 by `SHA256SUMS` and `channel.json`. `SHA256SUMS` has exactly one ordered line per
@@ -247,7 +247,7 @@ New consumers first resolve and validate GitHub's canonical latest stable
 They then resolve exact tag `web-vVERSION`, require its common identity to equal
 the stable release, and select exactly one artifact matching the running
 platform, architecture, and Node ABI. If the companion is absent, a consumer
-may use schema 1 only for an exact Darwin arm64 ABI 127 runtime. Missing,
+may use schema 1 only for an exact Darwin arm64 ABI 137 runtime. Missing,
 duplicate, ambiguous, malformed, or wrong-target companion entries fail closed
 before checksum or archive download. Linux never falls back to Darwin.
 

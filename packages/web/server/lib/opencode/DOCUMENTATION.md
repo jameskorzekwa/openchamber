@@ -1199,8 +1199,8 @@ within a ten-minute overall deadline.
   - `POST /api/openchamber/update-install`
     - When the embedding host started the server with `selfUpdate: false` (see `StartWebUiServerOptions`), the host owns OpenChamber's lifecycle and updates: `update-check` for web clients answers `available: false` with `updateOwner: 'external'` without contacting the update channel, and `update-install` answers `409 UPDATE_OWNER_EXTERNAL`. Non-web client checks (mobile) are unaffected. The default keeps the in-app updater.
     - Desktop-managed hosts delegate authenticated Web update requests to the Electron main process, which checks, downloads, and applies the update through `electron-updater` before restarting the host. An install the host must run on its own screen (`installBlocked: 'desktop-host'`) answers 409 `DESKTOP_UPDATE_LOCAL_ONLY` without restarting.
-    - Downloads only the configured J2K repository, defaulting to `jameskorzekwa/openchamber`. It first resolves GitHub's canonical latest stable `vX.Y.Z-j2k.N`, requires its strict schema 1 Darwin arm64 ABI 127 identity and exact three-asset inventory, resolves both source and upstream tag commits, and requires GitHub's compare API to prove exact upstream ancestry.
-    - It then resolves prerelease `web-vX.Y.Z-j2k.N`. Schema 2 contains exact target-qualified Darwin arm64 and Linux x64 ABI 127 tarballs plus `SHA256SUMS` and `channel.json`. The companion's version and source identity must equal stable. Exactly one artifact must match `process.platform`, `process.arch`, and `process.versions.modules`. Missing, duplicate, ambiguous, malformed, or wrong-target entries fail before checksum or archive download. If the companion is absent, only exact Darwin arm64 ABI 127 may use schema 1; Ubuntu x86_64 never falls back.
+    - Downloads only the configured J2K repository, defaulting to `jameskorzekwa/openchamber`. It first resolves GitHub's canonical latest stable `vX.Y.Z-j2k.N`, requires its strict schema 1 Darwin arm64 ABI 137 identity and exact three-asset inventory, resolves both source and upstream tag commits, and requires GitHub's compare API to prove exact upstream ancestry.
+    - It then resolves prerelease `web-vX.Y.Z-j2k.N`. Schema 2 contains exact target-qualified Darwin arm64 and Linux x64 ABI 137 tarballs plus `SHA256SUMS` and `channel.json`. The companion's version and source identity must equal stable. Exactly one artifact must match `process.platform`, `process.arch`, and `process.versions.modules`. Missing, duplicate, ambiguous, malformed, or wrong-target entries fail before checksum or archive download. If the companion is absent, only exact Darwin arm64 ABI 137 may use schema 1; Ubuntu x86_64 never falls back.
     - It verifies exact inventories, redirect destinations, sizes, checksum metadata, and archive SHA-256. A `404` canonical latest response becomes `no-validated-release`. `OPENCHAMBER_UPDATE_CHANNEL_REPO` is for deterministic validation environments and rejects malformed repository identities.
     - Archives a non-channel current install, preserves the prior target through the `previous` symlink, and atomically switches `current`. Rollback archives recursively include required production dependencies and required peer dependencies; optional dependencies and optional peers remain optional. A failed restart handoff restores `current`.
     - Installation never invokes npm or requests root, and never reuses an old dependency tree. The artifact must be relocatable and include `package/node_modules` with every recursively required production dependency. Missing dependencies fail before selection.
@@ -1219,8 +1219,8 @@ within a ten-minute overall deadline.
 
 Workflow tooling emits one native gzip archive per supported target with one
 `package/` root and no duplicate paths. The companion supports Darwin arm64 ABI
-127 and Linux x64 ABI 127, with Linux supported on Ubuntu x86_64 only. Native
-macOS and Ubuntu jobs build and execute their own archive under Node 22.22.0.
+137 and Linux x64 ABI 137, with Linux supported on Ubuntu x86_64 only. Native
+macOS and Ubuntu jobs build and execute their own archive under Node 24.22.3.
 Required files include `package/package.json`, `package/bin/cli.js`,
 `package/server/index.js`, `package/dist/index.html`, and
 `package/dist/build-revision.json`. Package version, target, and revision must

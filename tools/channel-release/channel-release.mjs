@@ -61,10 +61,10 @@ const WEB_MANIFEST_KEYS = [
   'minNode',
 ];
 const WEB_ARTIFACT_KEYS = ['platform', 'arch', 'nodeAbi', 'tarball', 'sha256'];
-const LEGACY_TARGET = Object.freeze({ platform: 'darwin', arch: 'arm64', nodeAbi: '127' });
+const LEGACY_TARGET = Object.freeze({ platform: 'darwin', arch: 'arm64', nodeAbi: '137' });
 const WEB_TARGETS = Object.freeze([
   LEGACY_TARGET,
-  Object.freeze({ platform: 'linux', arch: 'x64', nodeAbi: '127' }),
+  Object.freeze({ platform: 'linux', arch: 'x64', nodeAbi: '137' }),
 ]);
 
 function fail(message) {

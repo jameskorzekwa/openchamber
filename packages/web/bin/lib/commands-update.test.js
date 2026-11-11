@@ -316,7 +316,7 @@ describe('update command', () => {
     const readFileSync = vi.fn(() => JSON.stringify({
       name: '@openchamber/web',
       version: '2.0.0-j2k.1',
-      openchamberArtifact: { platform: 'linux', arch: 'x64', nodeAbi: '127' },
+      openchamberArtifact: { platform: 'linux', arch: 'x64', nodeAbi: '137' },
     }));
     const selected = `${root}/releases/2.0.0-j2k.1/bin/cli.js`;
     const realpathSync = vi.fn((value) => value.includes('/current/') ? selected : value);

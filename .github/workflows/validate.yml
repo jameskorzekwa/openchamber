@@ -22,7 +22,7 @@ defaults:
     shell: bash
 
 env:
-  NODE_VERSION: 22.22.0
+  NODE_VERSION: 24.22.3
   NPM_VERSION: 11.6.2
 
 jobs:
@@ -69,7 +69,7 @@ jobs:
           set -euo pipefail
           test "$(node -p 'process.platform')" = 'linux'
           test "$(node -p 'process.arch')" = 'x64'
-          test "$(node -p 'process.versions.modules')" = '127'
+          test "$(node -p 'process.versions.modules')" = '137'
           test "$(uname -m)" = 'x86_64'
           {
             printf 'TARGET_PLATFORM=%s\n' "$(node -p 'process.platform')"

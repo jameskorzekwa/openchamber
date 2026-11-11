@@ -165,7 +165,7 @@ test('rejects links, devices, fifos, traversal, duplicates, and oversized entrie
 });
 
 test('validates Linux x86-64 ELF identity without host tooling', () => {
-  const linuxTarget = { platform: 'linux', arch: 'x64', nodeAbi: '127' };
+  const linuxTarget = { platform: 'linux', arch: 'x64', nodeAbi: '137' };
   const elf = Buffer.alloc(64);
   Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]).copy(elf);
   elf.writeUInt16LE(62, 18);
@@ -178,7 +178,7 @@ test('discovers nested native packages and accepts valid node-pty build and preb
   const root = mkdtempSync(join(tmpdir(), 'channel-linux-native-test-'));
   const packageRoot = join(root, 'package');
   const archive = join(root, 'linux.tgz');
-  const linuxTarget = { platform: 'linux', arch: 'x64', nodeAbi: '127' };
+  const linuxTarget = { platform: 'linux', arch: 'x64', nodeAbi: '137' };
   const elf = Buffer.alloc(64);
   Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]).copy(elf);
   elf.writeUInt16LE(62, 18);
