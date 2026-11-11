@@ -95,14 +95,20 @@ describe('VS Code git service with a bare repository', () => {
 
     const repo = createSourceRepository();
     expect(await checkIsGitRepository(path.join(createTempDir(), 'missing'))).toBe(false);
-    // Git's own switch for a repository owned by someone else.
+    // Git's own switch for a repository owned by someone else. A host-wide
+    // `safe.directory = *` (GitHub's Ubuntu images set one) would trust it
+    // anyway, so the probe reads no system or global configuration here.
     process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER = '1';
+    process.env.GIT_CONFIG_NOSYSTEM = '1';
+    process.env.GIT_CONFIG_GLOBAL = '/dev/null';
     try {
       const error = await checkIsGitRepository(repo).catch((caught) => caught);
       expect(error).toMatchObject({ code: 'GIT_REPOSITORY_UNREADABLE' });
       expect(error.message).toContain('safe.directory');
     } finally {
       delete process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER;
+      delete process.env.GIT_CONFIG_NOSYSTEM;
+      delete process.env.GIT_CONFIG_GLOBAL;
     }
   });
 });
