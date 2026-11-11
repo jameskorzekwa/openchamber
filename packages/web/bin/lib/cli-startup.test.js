@@ -5,6 +5,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  buildManagedLauncher,
   buildSystemdUserService,
   enableStartupService,
   findStartupServiceInstance,
@@ -57,10 +58,14 @@ describe('buildSystemdUserService', () => {
       // pnpm's shim runs `node "$basedir/../global/v11/<link>/node_modules/..."`.
       process.argv[1] = join(pnpmHome, 'bin', '..', 'global', 'v11', '16cc9c3f', packageEntry);
 
+      // J2K: the unit runs the managed launcher, whose bootstrap fallback is
+      // the CLI entry point this resolves.
       const unit = buildSystemdUserService({ port: 3000 });
+      const launcher = buildManagedLauncher({ installRoot: join(pnpmHome, 'managed'), launcherPath: join(pnpmHome, 'managed', 'bin', 'openchamber-managed') });
 
-      expect(unit).toContain(`"${join(globalDir, '16cc9c3f', packageEntry)}" "serve"`);
-      expect(unit).not.toContain('3e0-install');
+      expect(unit).toContain('openchamber-managed" "serve"');
+      expect(launcher).toContain(join(globalDir, '16cc9c3f', packageEntry));
+      expect(launcher).not.toContain('3e0-install');
     } finally {
       process.argv[1] = previousEntry;
       fs.rmSync(pnpmHome, { recursive: true, force: true });

@@ -15,7 +15,6 @@ const {
   checkForUpdates,
   detectPackageManager,
   executeUpdate,
-  getUpdateCommand,
   getCurrentVersion,
   getUpdateCommand,
   readUpdateChannel,

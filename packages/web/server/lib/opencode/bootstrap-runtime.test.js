@@ -21,7 +21,7 @@ describe('bootstrap runtime OpenChamber version wiring', () => {
       express,
     });
     const sessionRuntime = new Proxy({}, { get: () => vi.fn() });
-    const mockApp = { post: vi.fn() };
+    const mockApp = { post: vi.fn(), use: vi.fn(), get: vi.fn() };
     runtime.setupBaseRoutes(mockApp, {
       process: {},
       openchamberVersion: '1.21.0-j2k.7',
