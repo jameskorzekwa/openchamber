@@ -15,7 +15,7 @@ describe('background work indicator integration', () => {
   test('mounts the banner directly after the session error notice in the list footer', () => {
     const errorNoticeIndex = chatContainerSource.indexOf('<SessionErrorNotice');
     const bannerIndex = chatContainerSource.indexOf('<BackgroundWorkBanner', errorNoticeIndex);
-    const footerSpacerIndex = chatContainerSource.indexOf('className="flex-shrink-0"', bannerIndex);
+    const footerSpacerIndex = chatContainerSource.indexOf('{/* Tail spacer.', bannerIndex);
 
     expect(errorNoticeIndex).toBeGreaterThan(-1);
     expect(bannerIndex).toBeGreaterThan(errorNoticeIndex);
@@ -35,9 +35,9 @@ describe('background work indicator integration', () => {
     expect(bannerSource).toContain('openSubagentSession(subtask.id, label)');
   });
 
-  test('cleans up its live elapsed timer and uses only opacity animation', () => {
+  test('cleans up its live elapsed timer and runs no infinite animation', () => {
     expect(bannerSource).toContain('window.clearInterval(timer)');
-    expect(bannerSource).toContain('animate-pulse');
+    expect(bannerSource).not.toContain('animate-pulse');
     expect(bannerSource).not.toContain('animate-spin');
   });
 

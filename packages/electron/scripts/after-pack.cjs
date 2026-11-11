@@ -30,7 +30,15 @@ const resolveAppUpdateConfig = ({ j2kBuild, platform }) => {
   return DEFAULT_APP_UPDATE_CONFIG;
 };
 
-module.exports = (context) => {
+// Writes app-update.yml, which tells electron-updater where to check for
+// updates. Without it, the download step fails with ENOENT when the user
+// clicks "Download Update".
+const writeAppUpdateConfig = ({ resourcesPath, platform, j2kBuild }) => {
+  const appUpdateYml = serializeToYaml(resolveAppUpdateConfig({ j2kBuild, platform }));
+  fs.writeFileSync(path.join(resourcesPath, 'app-update.yml'), appUpdateYml, 'utf8');
+};
+
+const afterPack = (context) => {
   const { appInfo } = context.packager;
   const contentsPath = path.join(context.appOutDir, `${appInfo.productFilename}.app`, 'Contents');
   const resourcesPath = context.electronPlatformName === 'darwin'
@@ -60,14 +68,12 @@ module.exports = (context) => {
 
   fs.copyFileSync(sourceAssetsPath, path.join(resourcesPath, 'Assets.car'));
 
-  // Generate and write app-update.yml for electron-updater. This file tells
-  // the updater where to check for updates. Without it, the download step
-  // fails with ENOENT when the user clicks "Download Update".
-  const j2kBuild = process.env.OPENCHAMBER_J2K_DESKTOP_BUILD === '1';
-  const appUpdateConfig = resolveAppUpdateConfig({
-    j2kBuild,
+  writeAppUpdateConfig({
+    resourcesPath,
     platform: context.electronPlatformName,
+    j2kBuild: process.env.OPENCHAMBER_J2K_DESKTOP_BUILD === '1',
   });
-  const appUpdateYml = serializeToYaml(appUpdateConfig);
-  fs.writeFileSync(path.join(resourcesPath, 'app-update.yml'), appUpdateYml, 'utf8');
 };
+
+module.exports = afterPack;
+module.exports.writeAppUpdateConfig = writeAppUpdateConfig;

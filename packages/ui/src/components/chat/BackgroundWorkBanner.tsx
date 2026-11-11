@@ -35,7 +35,7 @@ function useRunningSubtasks(sessionId: string | null | undefined, directory: str
   }, [sessionId, sessions, statuses]);
 }
 
-const ROW_CLASS = 'flex h-7 w-full min-w-0 items-center gap-2 rounded-md px-1 text-left';
+const ROW_CLASS = 'flex h-7 w-full min-w-0 items-center gap-2 rounded-md px-1 text-start';
 
 const BackgroundWorkRow: React.FC<{
   icon: 'ai-agent' | 'terminal';
@@ -106,7 +106,7 @@ export const BackgroundWorkBanner: React.FC<BackgroundWorkBannerProps> = ({ sess
         aria-label={t('chat.backgroundWork.ariaLabel', { summary })}
       >
         <div className="flex items-center gap-2 px-1 pb-1">
-          <span className="h-2 w-2 flex-shrink-0 animate-pulse rounded-full bg-[var(--status-warning)]" aria-hidden="true" />
+          <span className="h-2 w-2 flex-shrink-0 rounded-full bg-[var(--status-warning)]" aria-hidden="true" />
           <span className="flex-shrink-0 typography-ui-label text-[var(--status-warning)]">
             {t('chat.backgroundWork.label')}
           </span>

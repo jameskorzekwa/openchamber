@@ -122,9 +122,19 @@ describe('BackgroundWorkBanner', () => {
 
     const button = container.querySelector<HTMLButtonElement>('button[aria-label="Open Title child"]');
     if (!button) throw new Error('Expected subtask row button');
+    // The real selection also admits the session's project over the network;
+    // the banner's contract is only that it selects the child in place.
     const { useSessionUIStore } = await import('@/sync/session-ui-store');
-    await act(async () => button.click());
-    expect(useSessionUIStore.getState().currentSessionId).toBe('child');
+    const selected: Array<[string | null, string | null | undefined]> = [];
+    const originalSetCurrentSession = useSessionUIStore.getState().setCurrentSession;
+    await act(async () => useSessionUIStore.setState({
+      setCurrentSession: (id: string | null, directory?: string | null) => { selected.push([id, directory]); },
+    }));
+    const target = container.querySelector<HTMLButtonElement>('button[aria-label="Open Title child"]');
+    if (!target) throw new Error('Expected subtask row button after re-render');
+    await act(async () => target.click());
+    useSessionUIStore.setState({ setCurrentSession: originalSetCurrentSession });
+    expect(selected).toEqual([['child', directory]]);
     // Selecting a session switches the active directory, which re-targets the
     // banner's store subscription; unmount inside the test so that follow-up
     // render is accounted for before the DOM is torn down.

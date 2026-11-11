@@ -66,12 +66,11 @@ test('stages a macOS updater fixture from the exact ZIP payload', () => {
     assert.equal(result.manifestName, 'latest-mac.yml');
     assert.deepEqual(verifyUpdateManifest({
       manifestPath: path.join(root, 'feed', 'latest-mac.yml'),
-      artifactPath: result.artifactPath,
+      artifactPaths: [result.artifactPath],
       expectedVersion: '1.21.0-j2k.27',
     }), {
-      name: path.basename(source),
-      size: 18,
       version: '1.21.0-j2k.27',
+      artifacts: [{ name: path.basename(source), size: 18 }],
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

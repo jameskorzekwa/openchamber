@@ -1621,7 +1621,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
             className="inline-flex flex-shrink-0 items-center gap-1 rounded bg-[var(--status-warning)]/10 px-1 py-0.5 text-[0.7rem] text-[var(--status-warning)]"
             aria-label={ptyWaitingLabel}
           >
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--status-warning)]" aria-hidden="true" />
+            <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-warning)]" aria-hidden="true" />
             <span className="leading-none">
               {ptyWaiting.count === 1
                 ? t('sessions.sidebar.session.status.waitingBadgeSingle')
