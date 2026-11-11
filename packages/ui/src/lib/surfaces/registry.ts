@@ -17,7 +17,8 @@ export type BuiltInContextSurfaceId =
   | 'notes'
   | 'context'
   | 'browser'
-  | 'chat';
+  | 'chat'
+  | 'pty';
 
 export type ContextSurfaceId = BuiltInContextSurfaceId | `plugin:${string}`;
 
@@ -157,6 +158,17 @@ export const CONTEXT_SURFACES: readonly ContextSurfaceDescriptor[] = [
     mode: 'chat',
     icon: 'chat-4',
     labelKey: 'contextPanel.mode.chat',
+    availability: 'has-content',
+  },
+  {
+    // Output of a PTY the agent spawned (opencode-pty); opened from the
+    // transcript's background-work card, never empty from the rail.
+    id: 'pty',
+    descriptionKey: 'contextRail.surface.pty.description',
+    defaultWidthFraction: 0.45,
+    mode: 'pty',
+    icon: 'terminal-window',
+    labelKey: 'contextPanel.mode.pty',
     availability: 'has-content',
   },
 ];

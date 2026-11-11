@@ -74,6 +74,7 @@ import {
   type StartSessionWorktreeMenuLoadResult,
 } from '../sessionWorktreeMenu';
 import { arePtyWaitingStatesEqual, getPtyWaitingState } from '@/lib/ptyWaitingState';
+import { useOpenPtyInspector } from '@/components/chat/useOpenPtyInspector';
 
 type SecondaryMeta = {
   projectLabel?: string | null;
@@ -490,6 +491,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
   const isStreaming = statusType === 'busy' || statusType === 'retry';
   const ptyWaiting = getPtyWaitingState(resolvedSession);
   const isPtyWaiting = !isStreaming && ptyWaiting.count > 0;
+  const openPtyInspector = useOpenPtyInspector(sessionDirectory);
   // Read as a boolean, not as the value: the row must not re-render on every
   // tick of the counter it only decides to mount.
   const hasActivityDuration = useHasSessionActivityDuration(session.id, isStreaming);
@@ -1560,10 +1562,20 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                         </div>
                       ) : null}
                       {isPtyWaiting ? (
-                        <span
-                          className="inline-flex flex-shrink-0 items-center gap-1 rounded bg-[var(--status-warning)]/10 px-1 py-0.5 text-[0.7rem] text-[var(--status-warning)]"
+                        // One job: the badge opens that process's output
+                        // directly. Several: it selects the session, whose
+                        // background-work card lists them.
+                        <button
+                          type="button"
+                          className="inline-flex flex-shrink-0 items-center gap-1 rounded bg-[var(--status-warning)]/10 px-1 py-0.5 text-[0.7rem] text-[var(--status-warning)] transition-colors hover:bg-[var(--status-warning)]/20"
                           title={statusMarkerLabel}
                           aria-label={statusMarkerLabel}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleSessionSelect(session.id, sessionDirectory);
+                            const job = ptyWaiting.jobs.length === 1 ? ptyWaiting.jobs[0] : null;
+                            if (job && openPtyInspector) openPtyInspector(job.id, job.description ?? t('chat.ptyWaiting.backgroundProcess'));
+                          }}
                         >
                           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--status-warning)]" aria-hidden="true" />
                           <span className="leading-none">
@@ -1571,7 +1583,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                               ? t('sessions.sidebar.session.status.waitingBadgeSingle')
                               : t('sessions.sidebar.session.status.waitingBadgeMany', { count: ptyWaiting.count })}
                           </span>
-                        </span>
+                        </button>
                       ) : null}
                       {pendingPermissionCount > 0 ? (
                         <span className={cn('inline-flex items-center gap-1 rounded bg-destructive/10 px-1 py-0.5 text-[0.7rem] text-destructive flex-shrink-0', badgeVisibilityClass)} title={t('sessions.sidebar.session.status.permissionRequired')} aria-label={t('sessions.sidebar.session.status.permissionRequired')}>

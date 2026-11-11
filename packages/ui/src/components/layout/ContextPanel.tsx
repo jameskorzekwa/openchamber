@@ -52,6 +52,7 @@ import {
   type EmbeddedSessionRuntimeBootstrap,
 } from './contextPanelEmbeddedChat';
 const PluginPane = React.lazy(() => import('./PluginPane').then((module) => ({ default: module.PluginPane })));
+const PtyInspectorPane = React.lazy(() => import('@/components/pty-inspector/PtyInspectorPane').then((module) => ({ default: module.PtyInspectorPane })));
 import { useGuestsStore } from '@/lib/guests/store';
 import { FALLBACK_GUEST_ICON } from '@/lib/guests/icon';
 import { isPluginContextPanelMode, pluginIdFromMode } from '@/lib/surfaces/modes';
@@ -143,6 +144,7 @@ const getModeLabel = (
   if (mode === 'linear') return t('contextPanel.mode.linear');
   if (mode === 'notes') return t('contextRail.surface.notes');
   if (mode === 'terminal') return t('layout.mainTab.terminal');
+  if (mode === 'pty') return t('contextPanel.mode.pty');
   if (isPluginContextPanelMode(mode)) {
     const guest = useGuestsStore.getState().guests.find((entry) => entry.id === pluginIdFromMode(mode));
     return guest?.name ?? t('contextRail.surface.plugin');
@@ -255,6 +257,10 @@ const getTabIcon = (
 
   if (tab.mode === 'terminal') {
     return <Icon name="terminal-box" className="h-3.5 w-3.5" />;
+  }
+
+  if (tab.mode === 'pty') {
+    return <Icon name="terminal-window" className="h-3.5 w-3.5" />;
   }
 
   if (tab.mode === 'plan') {
@@ -992,7 +998,7 @@ export const ContextPanel: React.FC = () => {
   // The rail switches between surfaces (modes); the in-panel strip only lists
   // instances of the active multi-instance surface (open files, split chats,
   // browser targets).
-  const isMultiInstanceMode = activeTab?.mode === 'file' || activeTab?.mode === 'chat' || activeTab?.mode === 'browser';
+  const isMultiInstanceMode = activeTab?.mode === 'file' || activeTab?.mode === 'chat' || activeTab?.mode === 'browser' || activeTab?.mode === 'pty';
   const activeModeTabs = React.useMemo(
     () => (activeTab ? tabs.filter((tab) => tab.mode === activeTab.mode) : []),
     [activeTab, tabs],
@@ -1036,6 +1042,10 @@ export const ContextPanel: React.FC = () => {
   );
   const diffTabs = React.useMemo(
     () => tabs.filter((tab) => tab.mode === 'diff'),
+    [tabs],
+  );
+  const ptyTabs = React.useMemo(
+    () => tabs.filter((tab) => tab.mode === 'pty'),
     [tabs],
   );
   const terminalTab = React.useMemo(
@@ -1372,6 +1382,16 @@ export const ContextPanel: React.FC = () => {
             </React.Suspense>
           </div>
         ))}
+        {ptyTabs.map((tab) => (
+          <div
+            key={tab.id}
+            className={cn('absolute inset-0', activeTab?.id !== tab.id && 'hidden')}
+          >
+            <React.Suspense fallback={null}>
+              <PtyInspectorPane ptyId={tab.dedupeKey} visible={isOpen && activeTab?.id === tab.id} />
+            </React.Suspense>
+          </div>
+        ))}
         {terminalTab ? (
           <div className={cn('absolute inset-0', activeTab?.mode === 'terminal' ? 'block' : 'hidden')}>
             <TerminalView visible={isOpen && activeTab?.mode === 'terminal'} directory={terminalTab.targetDirectory} />
@@ -1397,7 +1417,7 @@ export const ContextPanel: React.FC = () => {
             </div>
           );
         })}
-        {activeTab?.mode !== 'chat' && !isFileTabActive && activeTab?.mode !== 'browser' && activeTab?.mode !== 'diff' && activeTab?.mode !== 'terminal' && activeTab?.mode !== 'walkthrough' && !(activeTab && isPluginContextPanelMode(activeTab.mode)) ? activeNonChatContent : null}
+        {activeTab?.mode !== 'chat' && !isFileTabActive && activeTab?.mode !== 'browser' && activeTab?.mode !== 'diff' && activeTab?.mode !== 'pty' && activeTab?.mode !== 'terminal' && activeTab?.mode !== 'walkthrough' && !(activeTab && isPluginContextPanelMode(activeTab.mode)) ? activeNonChatContent : null}
       </div>
       </div>
     </aside>

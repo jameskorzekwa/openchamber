@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 const chatContainerSource = readFileSync(join(testDirectory, '..', 'ChatContainer.tsx'), 'utf8');
+const chatInputSource = readFileSync(join(testDirectory, '..', 'ChatInput.tsx'), 'utf8');
 const bannerSource = readFileSync(join(testDirectory, '..', 'BackgroundWorkBanner.tsx'), 'utf8');
 const sidebarSource = readFileSync(
   join(testDirectory, '..', '..', 'session', 'sidebar', 'sessions', 'SessionNodeItem.tsx'),
@@ -12,20 +13,11 @@ const sidebarSource = readFileSync(
 );
 
 describe('background work indicator integration', () => {
-  test('mounts the banner directly after the session error notice in the list footer', () => {
-    const errorNoticeIndex = chatContainerSource.indexOf('<SessionErrorNotice');
-    const bannerIndex = chatContainerSource.indexOf('<BackgroundWorkBanner', errorNoticeIndex);
-    const footerSpacerIndex = chatContainerSource.indexOf('className="flex-shrink-0"', bannerIndex);
-
-    expect(errorNoticeIndex).toBeGreaterThan(-1);
-    expect(bannerIndex).toBeGreaterThan(errorNoticeIndex);
-    expect(footerSpacerIndex).toBeGreaterThan(bannerIndex);
-  });
-
-  test('the viewport memo skips re-renders unless a PTY job row would change', () => {
-    expect(chatContainerSource).toContain(
-      'arePtyWaitingStatesEqual(getPtyWaitingState(prev.currentSession), getPtyWaitingState(next.currentSession))',
-    );
+  test('docks the banner above the composer with the queue and BTW panels, not in the transcript footer', () => {
+    expect(chatInputSource).toContain('<BackgroundWorkBanner');
+    expect(chatInputSource).toContain('hidden={newSessionDraftOpen || isBtwActive || isBtwPanelVisible || hasQueuedMessages}');
+    expect(chatContainerSource).not.toContain('BackgroundWorkBanner');
+    expect(bannerSource).toContain('<ComposerFloatingPanel');
   });
 
   test('lists subtasks from live child status and PTY jobs from session metadata', () => {
@@ -33,6 +25,7 @@ describe('background work indicator integration', () => {
     expect(bannerSource).toContain('state.session_status');
     expect(bannerSource).toContain('waiting.jobs.map(');
     expect(bannerSource).toContain('openSubagentSession(subtask.id, label)');
+    expect(bannerSource).toContain('openPtyInspector(job.id, label)');
   });
 
   test('cleans up its live elapsed timer and uses only opacity animation', () => {

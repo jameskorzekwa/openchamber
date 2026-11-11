@@ -392,9 +392,12 @@ a repeat press work.
 Opening a subagent takes the same branch as the transcript's Task tool: an
 embedded panel, mobile, or VS Code navigates to the session instead of nesting
 a tab. That branch lives in `chat/useOpenSubagentSession.ts`, shared with the
-transcript's background-work banner (`chat/BackgroundWorkBanner.tsx`), which
-lists the same busy children plus hosted PTY jobs at the end of the transcript
-so a session with nothing streaming still shows what it is waiting on.
+composer's background-work card (`chat/BackgroundWorkBanner.tsx`), which lists
+the same busy children plus hosted PTY jobs. The card is docked above the
+composer through `ComposerFloatingPanel` (it yields to the queue and BTW
+panels) rather than mounted in the transcript footer, so streaming output does
+not move it. A PTY row opens the read-only `pty` context-panel tab
+(`pty-inspector/PtyInspectorPane.tsx`, see `chat/useOpenPtyInspector.ts`).
 
 ## Context sources
 

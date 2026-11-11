@@ -4,6 +4,7 @@ export const createStartupPipelineRuntime = (dependencies) => {
   const {
     createTerminalRuntime,
     createDictationRuntime,
+    createPtyInspectorRuntime,
     createMessageStreamWsRuntime,
     createServerStartupRuntime,
   } = dependencies;
@@ -58,6 +59,7 @@ export const createStartupPipelineRuntime = (dependencies) => {
       attachSignals,
       apiOnly,
       dictationModelsDir,
+      resolvePtyInspectorUrl,
     } = options;
 
     const terminalRuntime = createTerminalRuntime({
@@ -85,6 +87,15 @@ export const createStartupPipelineRuntime = (dependencies) => {
       isRequestOriginAllowed,
       rejectWebSocketUpgrade,
       modelsDir: dictationModelsDir,
+    });
+
+    const ptyInspectorRuntime = createPtyInspectorRuntime({
+      app,
+      server,
+      uiAuthController,
+      isRequestOriginAllowed,
+      rejectWebSocketUpgrade,
+      resolveInspectorUrl: resolvePtyInspectorUrl,
     });
 
     const messageStreamRuntime = createMessageStreamWsRuntime({
@@ -145,6 +156,7 @@ export const createStartupPipelineRuntime = (dependencies) => {
     return {
       terminalRuntime,
       dictationRuntime,
+      ptyInspectorRuntime,
       messageStreamRuntime,
     };
   };
