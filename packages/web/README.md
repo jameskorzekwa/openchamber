@@ -457,10 +457,10 @@ surviving journal blocks another update until recovery completes.
 
 Release CI boots the extracted Linux archive with `OPENCODE_HOST` pointed at a
 local synthetic HTTP stub and `OPENCODE_SKIP_START=true`. It checks native PTY
-and speech bindings and compares the packaged CLI, agent-tool, OPM status, and
+and speech bindings and compares the packaged CLI, agent-tool, and
 session-goal files with the reviewed source. This proves artifact parity and
 external-mode startup selection. It does not test a real external OpenCode API,
-live plugin registration or execution, OPM supervision, automatic goal/effect
+live plugin registration or execution, automatic goal/effect
 processing, deployment, or bee2 activation.
 
 ## License

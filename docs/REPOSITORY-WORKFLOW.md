@@ -6,8 +6,7 @@ than assuming upstream's `main` is the fork's release branch.
 
 ## Worktree and review ownership
 
-opencode-project-manager (OPM) was decommissioned on 2026-10-06; there is no
-controller, `opm:ready` enrolment, or workspace wrapper. The interactive
+There is no automated controller or workspace wrapper. The interactive
 session implements, reviews, and prepares the merge itself. The primary
 checkout is read-only for implementation; every writing session needs its own
 branch and worktree from a freshly fetched remote default branch.
@@ -42,7 +41,4 @@ authorization and evidence requirements.
 Repository commands execute on bee2 unless a supported procedure explicitly
 names another host. Mac laptop, Electron signing and iOS build instructions
 remain platform-specific. A Linux server does not inherit the laptop's
-credentials or display. Read the
-[notifier boundary](../packages/web/server/lib/opm-status/DOCUMENTATION.md#host-and-credential-boundary)
-of the legacy OPM status surface before claiming that a working dashboard
-proves Pushover delivery; the OPM runtime it displayed no longer exists on bee2.
+credentials or display.

@@ -97,7 +97,7 @@ both binaries before the smoke uses `node-pty`'s normal deterministic loader.
 This isolated smoke sets `OPENCODE_HOST` to its local stub and
 `OPENCODE_SKIP_START=true`. It proves that the packaged server boots in external
 OpenCode mode without spawning OpenCode. It also compares the packaged CLI,
-agent-tool runtime, legacy OPM status routes, and session-goal runtime byte-for-byte
+agent-tool runtime and session-goal runtime byte-for-byte
 with the reviewed source. The stub does not emulate the OpenCode API or plugin
 protocol. These gates therefore do not claim compatibility with a separately
 deployed OpenCode process, live plugin registration or execution, or

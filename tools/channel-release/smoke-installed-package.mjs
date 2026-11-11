@@ -119,7 +119,6 @@ export function assertPackagedForkParity(installRoot, packageRoot = resolve('pac
   for (const relativePath of [
     'bin/cli.js',
     'server/lib/agent-tool/runtime.js',
-    'server/lib/opm-status/routes.js',
     'server/lib/session-goal/runtime.js',
   ]) {
     const installed = readFileSync(join(installRoot, relativePath));
