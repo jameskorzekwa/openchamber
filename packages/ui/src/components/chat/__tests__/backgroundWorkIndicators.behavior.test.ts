@@ -5,21 +5,34 @@ import { fileURLToPath } from 'node:url';
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 const chatContainerSource = readFileSync(join(testDirectory, '..', 'ChatContainer.tsx'), 'utf8');
-const bannerSource = readFileSync(join(testDirectory, '..', 'PtyWaitingBanner.tsx'), 'utf8');
+const bannerSource = readFileSync(join(testDirectory, '..', 'BackgroundWorkBanner.tsx'), 'utf8');
 const sidebarSource = readFileSync(
   join(testDirectory, '..', '..', 'session', 'sidebar', 'sessions', 'SessionNodeItem.tsx'),
   'utf8',
 );
 
-describe('PTY waiting indicator integration', () => {
-  test('mounts the focused banner directly after the session error notice in the list footer', () => {
+describe('background work indicator integration', () => {
+  test('mounts the banner directly after the session error notice in the list footer', () => {
     const errorNoticeIndex = chatContainerSource.indexOf('<SessionErrorNotice');
-    const bannerIndex = chatContainerSource.indexOf('<PtyWaitingBanner', errorNoticeIndex);
+    const bannerIndex = chatContainerSource.indexOf('<BackgroundWorkBanner', errorNoticeIndex);
     const footerSpacerIndex = chatContainerSource.indexOf('className="flex-shrink-0"', bannerIndex);
 
     expect(errorNoticeIndex).toBeGreaterThan(-1);
     expect(bannerIndex).toBeGreaterThan(errorNoticeIndex);
     expect(footerSpacerIndex).toBeGreaterThan(bannerIndex);
+  });
+
+  test('the viewport memo skips re-renders unless a PTY job row would change', () => {
+    expect(chatContainerSource).toContain(
+      'arePtyWaitingStatesEqual(getPtyWaitingState(prev.currentSession), getPtyWaitingState(next.currentSession))',
+    );
+  });
+
+  test('lists subtasks from live child status and PTY jobs from session metadata', () => {
+    expect(bannerSource).toContain('listRunningSubtasks(sessions, statuses, sessionId)');
+    expect(bannerSource).toContain('state.session_status');
+    expect(bannerSource).toContain('waiting.jobs.map(');
+    expect(bannerSource).toContain('openSubagentSession(subtask.id, label)');
   });
 
   test('cleans up its live elapsed timer and uses only opacity animation', () => {
@@ -28,7 +41,7 @@ describe('PTY waiting indicator integration', () => {
     expect(bannerSource).not.toContain('animate-spin');
   });
 
-  test('shows waiting only while live busy and retry status are absent', () => {
+  test('sidebar shows waiting only while live busy and retry status are absent', () => {
     expect(sidebarSource).toContain("const isStreaming = statusType === 'busy' || statusType === 'retry';");
     expect(sidebarSource).toContain('const isPtyWaiting = !isStreaming && ptyWaiting.count > 0;');
     expect(sidebarSource).toContain('const showStatusMarker = isStreaming || isPtyWaiting || showUnreadStatus;');

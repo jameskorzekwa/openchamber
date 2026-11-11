@@ -87,8 +87,8 @@ import { resolveChatPromptReadOnly } from './chatPromptReadOnly';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { createFirstVisibleSessionPerformanceTracker } from '@/sync/session-load-performance';
 import { isChatDirectoryPath } from '@/lib/chatDirectories';
-import { PtyWaitingBanner } from './PtyWaitingBanner';
-import { getPtyWaitingState } from '@/lib/ptyWaitingState';
+import { BackgroundWorkBanner } from './BackgroundWorkBanner';
+import { arePtyWaitingStatesEqual, getPtyWaitingState } from '@/lib/ptyWaitingState';
 
 const EMPTY_MESSAGES: Array<{ info: Message; parts: Part[] }> = [];
 const IDLE_SESSION_STATUS = { type: 'idle' as const };
@@ -393,7 +393,7 @@ const ChatViewport = React.memo(({
 
             <SessionErrorNotice sessionId={currentSessionId} directory={directory} />
 
-            <PtyWaitingBanner session={currentSession} />
+            <BackgroundWorkBanner session={currentSession} directory={directory} />
 
             {/* Tail spacer. With a floating composer it reserves the band the
                 composer covers, plus any panel docked above it (queue, BTW),
@@ -560,7 +560,7 @@ const ChatViewport = React.memo(({
 }, (prev, next) => {
     return prev.currentSessionId === next.currentSessionId
         && prev.currentSessionKey === next.currentSessionKey
-        && arePtyWaitingStatesEqual(prev.currentSession, next.currentSession)
+        && arePtyWaitingStatesEqual(getPtyWaitingState(prev.currentSession), getPtyWaitingState(next.currentSession))
         && prev.isDesktopExpandedInput === next.isDesktopExpandedInput
         && prev.isMobile === next.isMobile
         && prev.floatingComposer === next.floatingComposer
@@ -593,17 +593,6 @@ const ChatViewport = React.memo(({
 });
 
 ChatViewport.displayName = 'ChatViewport';
-
-const arePtyWaitingStatesEqual = (
-    previous: Session | null | undefined,
-    next: Session | null | undefined,
-): boolean => {
-    const previousWaiting = getPtyWaitingState(previous);
-    const nextWaiting = getPtyWaitingState(next);
-    return previousWaiting.count === nextWaiting.count
-        && previousWaiting.oldestCreatedAt === nextWaiting.oldestCreatedAt
-        && previousWaiting.description === nextWaiting.description;
-};
 
 const HYDRATING_SKELETON_ITEMS: Array<{
     id: number;
