@@ -16,6 +16,9 @@ import { z } from 'zod';
 import { trackedItemRecordsSchema } from './trackedItems/model';
 import type { SyncEvent } from './opencode/events';
 import { classifyStreamPayload } from '@/sync/event-pipeline';
+import { shouldReloadForBuildRevision } from './buildRevision';
+
+declare const __BUILD_REVISION__: string | undefined;
 
 type ScheduledTaskRanEvent = {
   type: 'scheduled-task-ran';
@@ -351,6 +354,7 @@ let readyEvent: Extract<OpenChamberEvent, { type: 'event-stream-ready' }> | null
 
 const MAX_RECONNECT_DELAY_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 45_000;
+const CLIENT_BUILD_REVISION = typeof __BUILD_REVISION__ === 'string' ? __BUILD_REVISION__ : '';
 
 const clearHeartbeatTimer = () => {
   if (!heartbeatTimer) {
@@ -512,6 +516,16 @@ const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) =
 
   if (envelope.type === 'openchamber:event-stream-ready') {
     reconnectAttempt = 0;
+    const properties = getEventProperties(envelope.properties);
+    const serverRevision = typeof properties?.buildRevision === 'string' ? properties.buildRevision : '';
+    try {
+      if (shouldReloadForBuildRevision(serverRevision, CLIENT_BUILD_REVISION, window.sessionStorage)) {
+        window.location.reload();
+      }
+    } catch {
+      // Storage can be unavailable in embedded/private contexts. Reconnecting
+      // without a reload is safer than creating an unguarded reload loop.
+    }
     const ready = eventStreamReadySchema.safeParse(envelope.properties);
     const connectionId = ready.success ? ready.data.connectionId ?? null : null;
     const event = { type: 'event-stream-ready', connectionId } as const;

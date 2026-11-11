@@ -62,6 +62,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   'quota.family.zen': 'Zen 模型',
@@ -239,6 +240,7 @@ export const dict: Record<I18nKey, string> = {
   ...tooltipsWorkspaceI18n['zh-TW'],
   ...tooltipsPanelI18n['zh-TW'],
   ...tooltipsChatI18n['zh-TW'],
+  ...updateStatusI18n['zh-TW'],
   'terminalView.actions.attachSelection': '附加所選輸出',
   'terminalView.actions.copySelection': '複製所選輸出',
   'terminalView.toast.selectionCopied': '已複製輸出',
@@ -847,6 +849,11 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.export.dialog.includeSubtasks': '包含子 Agent 任務',
   'sessions.sidebar.session.export.dialog.confirm': '匯出',
   'sessions.sidebar.session.status.active': '會話活躍中',
+  'sessions.sidebar.session.status.waitingSingleDescription': '等待：{description}',
+  'sessions.sidebar.session.status.waitingSingleDefault': '正在等待背景程序',
+  'sessions.sidebar.session.status.waitingMany': '正在等待 {count} 個背景程序',
+  'sessions.sidebar.session.status.waitingBadgeSingle': '等待中',
+  'sessions.sidebar.session.status.waitingBadgeMany': '等待中 · {count}',
   'sessions.sidebar.session.status.unread': '有未讀更新',
   'sessions.sidebar.session.status.backgroundSubagent': '子代理程式正在背景執行',
   'sessions.sidebar.session.status.backgroundCommand': '指令正在背景執行',
@@ -858,6 +865,14 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.status.questionPending': '待回答問題',
   'sessions.sidebar.session.status.activeFor': '已活動 {duration}',
   'sessions.sidebar.session.status.lastTurnDuration': '上一輪耗時 {duration}',
+  'chat.ptyWaiting.backgroundProcess': '背景程序',
+  'chat.backgroundWork.label': '背景執行中',
+  'chat.backgroundWork.ariaLabel': '背景執行中：{summary}',
+  'chat.backgroundWork.subtaskCountOne': '1 個子任務',
+  'chat.backgroundWork.subtaskCountMany': '{count} 個子任務',
+  'chat.backgroundWork.processCountOne': '1 個程序',
+  'chat.backgroundWork.processCountMany': '{count} 個程序',
+  'chat.backgroundWork.subtaskUntitled': '子任務',
   'sessions.sidebar.session.subsessions.collapse': '摺疊子會話',
   'sessions.sidebar.session.subsessions.expand': '展開子會話',
   'sessions.sidebar.dialogs.deleteSession.title': '刪除會話？',

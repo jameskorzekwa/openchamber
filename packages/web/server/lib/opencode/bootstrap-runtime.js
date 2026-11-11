@@ -18,6 +18,7 @@ export const createBootstrapRuntime = (dependencies) => {
     const {
       process,
       openchamberVersion,
+      openchamberBuildRevision,
       runtimeName,
       serverStartedAt,
       gracefulShutdown,
@@ -25,6 +26,8 @@ export const createBootstrapRuntime = (dependencies) => {
       readOpenCodeLoad,
       getServerPort,
       getTunnelUrl,
+      updateTransactionPath,
+      runtimePackageRoot,
       verboseRequestLogs,
       uiPassword,
       tunnelAuthController,
@@ -72,6 +75,7 @@ export const createBootstrapRuntime = (dependencies) => {
       pluginNotificationEmitter,
       desktopUpdater,
       skipBodyParsing,
+      selfUpdate,
     } = options;
 
     registerHttpResponseDiagnostics(app);
@@ -89,13 +93,16 @@ export const createBootstrapRuntime = (dependencies) => {
       express,
       process,
       openchamberVersion,
-      runtimeName,
+      openchamberBuildRevision,
       serverStartedAt,
+      runtimeName,
       gracefulShutdown,
       getHealthSnapshot,
       getServerId,
       getServerPort,
       getTunnelUrl,
+      updateTransactionPath,
+      runtimePackageRoot,
       tunnelAuthController,
       uiAuthController,
       readOpenCodeLoad,
@@ -167,12 +174,16 @@ export const createBootstrapRuntime = (dependencies) => {
       server,
       __dirname,
       openchamberDataDir,
+      openchamberVersion,
+      openchamberBuildRevision,
+      serverStartedAt,
       modelsDevApiUrl,
       modelsMetadataCacheTtl,
       readSettingsFromDiskMigrated,
       fetchFreeZenModels,
       getCachedZenModels,
       desktopUpdater,
+      selfUpdate,
     });
 
     return {

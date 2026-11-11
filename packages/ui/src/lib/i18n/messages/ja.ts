@@ -62,6 +62,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   'quota.family.zen': 'Zen モデル',
@@ -239,6 +240,7 @@ export const dict: Record<I18nKey, string> = {
   ...tooltipsWorkspaceI18n['ja'],
   ...tooltipsPanelI18n['ja'],
   ...tooltipsChatI18n['ja'],
+  ...updateStatusI18n.ja,
   'terminalView.actions.attachSelection': '選択した出力を添付',
   'terminalView.actions.copySelection': '選択した出力をコピー',
   'terminalView.toast.selectionCopied': '出力をコピーしました',
@@ -827,6 +829,11 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.export.dialog.includeSubtasks': 'サブエージェントタスクを含める',
   'sessions.sidebar.session.export.dialog.confirm': 'エクスポート',
   'sessions.sidebar.session.status.active': 'セッションアクティブ',
+  'sessions.sidebar.session.status.waitingSingleDescription': '待機中：{description}',
+  'sessions.sidebar.session.status.waitingSingleDefault': 'バックグラウンドプロセスを待機中',
+  'sessions.sidebar.session.status.waitingMany': '{count}件のバックグラウンドプロセスを待機中',
+  'sessions.sidebar.session.status.waitingBadgeSingle': '待機中',
+  'sessions.sidebar.session.status.waitingBadgeMany': '待機中 · {count}',
   'sessions.sidebar.session.status.unread': '未読の更新',
   'sessions.sidebar.session.status.backgroundSubagent': 'サブエージェントがバックグラウンドで実行中',
   'sessions.sidebar.session.status.backgroundCommand': 'コマンドがバックグラウンドで実行中',
@@ -838,6 +845,14 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.status.questionPending': '保留中の質問',
   'sessions.sidebar.session.status.activeFor': 'アクティブ時間 {duration}',
   'sessions.sidebar.session.status.lastTurnDuration': '前回のターンの所要時間 {duration}',
+  'chat.ptyWaiting.backgroundProcess': 'バックグラウンドプロセス',
+  'chat.backgroundWork.label': 'バックグラウンドで実行中',
+  'chat.backgroundWork.ariaLabel': 'バックグラウンドで実行中：{summary}',
+  'chat.backgroundWork.subtaskCountOne': 'サブタスク1件',
+  'chat.backgroundWork.subtaskCountMany': 'サブタスク{count}件',
+  'chat.backgroundWork.processCountOne': 'プロセス1件',
+  'chat.backgroundWork.processCountMany': 'プロセス{count}件',
+  'chat.backgroundWork.subtaskUntitled': 'サブタスク',
   'sessions.sidebar.session.subsessions.collapse': 'サブセッションを折りたたむ',
   'sessions.sidebar.session.subsessions.expand': 'サブセッションを展開',
   'sessions.sidebar.dialogs.deleteSession.title': 'セッションを削除しますか？',

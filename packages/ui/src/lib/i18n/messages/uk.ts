@@ -62,6 +62,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   'quota.family.zen': 'Моделі Zen',
@@ -249,6 +250,7 @@ export const dict: Record<I18nKey, string> = {
   ...tooltipsWorkspaceI18n['uk'],
   ...tooltipsPanelI18n['uk'],
   ...tooltipsChatI18n['uk'],
+  ...updateStatusI18n.uk,
   'terminalView.actions.attachSelection': 'Прикріпити вибраний вивід',
   'terminalView.actions.copySelection': 'Скопіювати вибраний вивід',
   'terminalView.toast.selectionCopied': 'Вивід скопійовано',
@@ -831,6 +833,11 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.session.export.dialog.includeSubtasks": "Додати завдання під-агентів",
   "sessions.sidebar.session.export.dialog.confirm": "Експортувати",
   "sessions.sidebar.session.status.active": "Сесія активна",
+  "sessions.sidebar.session.status.waitingSingleDescription": "Очікування: {description}",
+  "sessions.sidebar.session.status.waitingSingleDefault": "Очікування фонового процесу",
+  "sessions.sidebar.session.status.waitingMany": "Очікування {count} фонових процесів",
+  "sessions.sidebar.session.status.waitingBadgeSingle": "Очікування",
+  "sessions.sidebar.session.status.waitingBadgeMany": "Очікування · {count}",
   "sessions.sidebar.session.status.unread": "Непрочитані оновлення",
   "sessions.sidebar.session.status.backgroundSubagent": "Субагент працює у фоні",
   "sessions.sidebar.session.status.backgroundCommand": "Команда працює у фоні",
@@ -842,6 +849,14 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.session.status.questionPending": "Запитання очікує відповіді",
   "sessions.sidebar.session.status.activeFor": "Активна вже {duration}",
   "sessions.sidebar.session.status.lastTurnDuration": "Останній хід тривав {duration}",
+  "chat.ptyWaiting.backgroundProcess": "Фоновий процес",
+  "chat.backgroundWork.label": "Виконується у фоні",
+  "chat.backgroundWork.ariaLabel": "Виконується у фоні: {summary}",
+  "chat.backgroundWork.subtaskCountOne": "1 підзадача",
+  "chat.backgroundWork.subtaskCountMany": "Підзадач: {count}",
+  "chat.backgroundWork.processCountOne": "1 процес",
+  "chat.backgroundWork.processCountMany": "Процесів: {count}",
+  "chat.backgroundWork.subtaskUntitled": "Підзадача",
   "sessions.sidebar.session.subsessions.collapse": "Згорнути підсесії",
   "sessions.sidebar.session.subsessions.expand": "Розгорнути підсесії",
   "sessions.sidebar.dialogs.deleteSession.title": "Видалити сесію?",

@@ -113,6 +113,7 @@ import { createServerStartupRuntime } from './lib/opencode/server-startup-runtim
 import { createTunnelWiringRuntime } from './lib/opencode/tunnel-wiring-runtime.js';
 import { createStartupPipelineRuntime } from './lib/opencode/startup-pipeline-runtime.js';
 import { runCliEntryIfMain } from './lib/opencode/cli-entry-runtime.js';
+import { resolveManagedInstallRoot } from './lib/openchamber-update/validated-release-installer.js';
 import { registerNotificationRoutes } from './lib/notifications/routes.js';
 import { createNotificationEmitterRuntime } from './lib/notifications/emitter-runtime.js';
 import { createNotificationTriggerRuntime } from './lib/notifications/runtime.js';
@@ -149,6 +150,7 @@ import { setHostCallbackRoute } from './lib/guests/host-callback.js';
 import { createOutboundHandles } from './lib/source-control/outbound-handles.js';
 import { createNotificationChannelAccounts, notificationChannelsPersistPath } from './lib/notifications/channel-accounts.js';
 import { createExtensionNotificationChannels } from './lib/notifications/extension-channels.js';
+import { resolveRuntimeBuildRevision } from './lib/opencode/build-revision.js';
 import { createProjectConfigRuntime } from './lib/projects/project-config.js';
 import { ensureChatsDir, migrateLegacyUserDirs } from './lib/data-dir-migration.js';
 import { createProjectContextRuntime } from './lib/project-context/runtime.js';
@@ -296,6 +298,7 @@ const OPENCHAMBER_VERSION = (() => {
   }
   return 'unknown';
 })();
+const OPENCHAMBER_BUILD_REVISION = resolveRuntimeBuildRevision({ packageVersion: OPENCHAMBER_VERSION });
 
 const isEnvFlagEnabled = (value) => {
   if (value === true || value === 1) return true;
@@ -2616,6 +2619,9 @@ async function main(options = {}) {
     && typeof options.desktopUpdater.restart === 'function'
     ? options.desktopUpdater
     : null;
+  // An embedding host that owns updates opts out explicitly; absence keeps
+  // the in-app updater, so existing CLI and desktop starts are unchanged.
+  const selfUpdate = options.selfUpdate !== false;
 
   console.log(`Starting OpenChamber on port ${port === 0 ? 'auto' : port}`);
 
@@ -2763,6 +2769,7 @@ async function main(options = {}) {
   const bootstrapResult = bootstrapRuntime.setupBaseRoutes(app, {
     process,
     openchamberVersion: OPENCHAMBER_VERSION,
+    openchamberBuildRevision: OPENCHAMBER_BUILD_REVISION,
     runtimeName: process.env.OPENCHAMBER_RUNTIME || 'web',
     serverStartedAt,
     gracefulShutdown,
@@ -2808,6 +2815,8 @@ async function main(options = {}) {
       return Number.isFinite(port) && port > 0 ? port : null;
     },
     getTunnelUrl: () => tunnelRuntimeContextHolder?.tunnelService?.getPublicUrl?.() ?? null,
+    updateTransactionPath: path.join(resolveManagedInstallRoot(process.env.OPENCHAMBER_MANAGED_INSTALL_ROOT), 'restart-transaction.json'),
+    runtimePackageRoot: path.resolve(__dirname, '..'),
     verboseRequestLogs: OPENCHAMBER_VERBOSE_REQUEST_LOGS,
     uiPassword,
     tunnelAuthController,
@@ -2876,6 +2885,7 @@ async function main(options = {}) {
     limitFailoverRuntime,
     desktopUpdater,
     skipBodyParsing: (req) => spacesHost?.skipsBodyParsing(req) === true,
+    selfUpdate,
   });
   uiAuthController = bootstrapResult.uiAuthController;
   // After the API auth gate, before every route that reads a directory, before the OpenCode proxy.
@@ -3116,6 +3126,7 @@ async function main(options = {}) {
     openChamberControlService,
     waitForOpenCodeReady,
     emitSessionCreatedEvent,
+    openchamberBuildRevision: OPENCHAMBER_BUILD_REVISION,
     getOpenChamberEventClients: () => uiOpenChamberEventClients,
     writeSseEvent,
     globalEventHub: globalMessageStreamHub,

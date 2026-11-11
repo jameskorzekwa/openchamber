@@ -150,7 +150,10 @@ export const registerConfigEntityRoutes = (app, dependencies) => {
       ));
     } catch (error) {
       console.error('Failed to create agent:', error);
-      res.status(500).json({ error: error.message || 'Failed to create agent' });
+      res.status(error.statusCode || 500).json({
+        error: error.message || 'Failed to create agent',
+        ...(error.code ? { code: error.code } : {}),
+      });
     }
   });
 
@@ -178,7 +181,10 @@ export const registerConfigEntityRoutes = (app, dependencies) => {
     } catch (error) {
       console.error('[Server] Failed to update agent:', error);
       console.error('[Server] Error stack:', error.stack);
-      res.status(500).json({ error: error.message || 'Failed to update agent' });
+      res.status(error.statusCode || 500).json({
+        error: error.message || 'Failed to update agent',
+        ...(error.code ? { code: error.code } : {}),
+      });
     }
   });
 
@@ -197,7 +203,10 @@ export const registerConfigEntityRoutes = (app, dependencies) => {
       ));
     } catch (error) {
       console.error('Failed to delete agent:', error);
-      res.status(500).json({ error: error.message || 'Failed to delete agent' });
+      res.status(error.statusCode || 500).json({
+        error: error.message || 'Failed to delete agent',
+        ...(error.code ? { code: error.code } : {}),
+      });
     }
   });
 

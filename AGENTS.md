@@ -87,6 +87,11 @@ implementation skills unless a specialized subsystem has to be interpreted.
 
 ## Pull Request Handoff
 
+For this fork, read [repository workflow](docs/REPOSITORY-WORKFLOW.md) before
+preparing or merging a PR. There is no automated merge pipeline; every merge
+requires explicit informed owner approval for the exact head. Respect
+preparation-only review holds.
+
 Before creating or updating a pull request, read `CONTRIBUTING.md` (*Pull Requests*) and fill `.github/PULL_REQUEST_TEMPLATE.md` with evidence for the final HEAD.
 
 A **product decision** belongs to the maintainer and is settled before the code,

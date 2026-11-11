@@ -62,6 +62,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   'quota.family.zen': 'Modelos Zen',
@@ -249,6 +250,7 @@ export const dict: Record<I18nKey, string> = {
   ...tooltipsWorkspaceI18n['pt-BR'],
   ...tooltipsPanelI18n['pt-BR'],
   ...tooltipsChatI18n['pt-BR'],
+  ...updateStatusI18n['pt-BR'],
   'terminalView.actions.attachSelection': 'Anexar saída selecionada',
   'terminalView.actions.copySelection': 'Copiar saída selecionada',
   'terminalView.toast.selectionCopied': 'Saída copiada',
@@ -831,6 +833,11 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.session.export.dialog.includeSubtasks": "Incluir tarefas de subagente",
   "sessions.sidebar.session.export.dialog.confirm": "Exportar",
   "sessions.sidebar.session.status.active": "Sessão ativa",
+  "sessions.sidebar.session.status.waitingSingleDescription": "Aguardando: {description}",
+  "sessions.sidebar.session.status.waitingSingleDefault": "Aguardando um processo em segundo plano",
+  "sessions.sidebar.session.status.waitingMany": "Aguardando {count} processos em segundo plano",
+  "sessions.sidebar.session.status.waitingBadgeSingle": "Aguardando",
+  "sessions.sidebar.session.status.waitingBadgeMany": "Aguardando · {count}",
   "sessions.sidebar.session.status.unread": "Atualizações não lidas",
   "sessions.sidebar.session.status.backgroundSubagent": "Subagente em execução em segundo plano",
   "sessions.sidebar.session.status.backgroundCommand": "Comando em execução em segundo plano",
@@ -842,6 +849,14 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.session.status.questionPending": "Pergunta pendente",
   "sessions.sidebar.session.status.activeFor": "Ativa há {duration}",
   "sessions.sidebar.session.status.lastTurnDuration": "O último turno levou {duration}",
+  "chat.ptyWaiting.backgroundProcess": "Processo em segundo plano",
+  "chat.backgroundWork.label": "Em segundo plano",
+  "chat.backgroundWork.ariaLabel": "Em segundo plano: {summary}",
+  "chat.backgroundWork.subtaskCountOne": "1 subtarefa",
+  "chat.backgroundWork.subtaskCountMany": "{count} subtarefas",
+  "chat.backgroundWork.processCountOne": "1 processo",
+  "chat.backgroundWork.processCountMany": "{count} processos",
+  "chat.backgroundWork.subtaskUntitled": "Subtarefa",
   "sessions.sidebar.session.subsessions.collapse": "Recolher subsessões",
   "sessions.sidebar.session.subsessions.expand": "Expandir subsessões",
   "sessions.sidebar.dialogs.deleteSession.title": "Excluir sessão?",

@@ -2,6 +2,14 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { adoptRelayTunnel, deactivateRelayTunnel } from './relay/runtime-tunnel';
 import type { RelayTunnelClient } from './relay/tunnel-client';
 import { setRuntimeBearerToken, setRuntimeExtraHeaders } from './runtime-auth';
+import { shouldReloadForBuildRevision } from './buildRevision';
+
+declare global {
+  var __BUILD_REVISION__: string | undefined;
+}
+
+// The real runtime-switch fans endpoint changes out through this window event.
+const RUNTIME_ENDPOINT_CHANGED_EVENT = 'openchamber:runtime-endpoint-changed';
 
 class MockEventSource {
   static CLOSED = 2;
@@ -30,6 +38,7 @@ describe('openchamber events', () => {
       writable: true,
     });
     Object.defineProperty(globalThis, 'EventSource', { value: MockEventSource, configurable: true, writable: true });
+    globalThis.__BUILD_REVISION__ = 'client-revision';
   });
 
   afterEach(() => {
@@ -38,6 +47,7 @@ describe('openchamber events', () => {
     setRuntimeExtraHeaders(null);
     Reflect.deleteProperty(globalThis, 'window');
     Reflect.deleteProperty(globalThis, 'EventSource');
+    delete globalThis.__BUILD_REVISION__;
   });
 
   test('does not open the server-only event stream in VS Code', async () => {
@@ -545,5 +555,87 @@ describe('openchamber events', () => {
       { type: 'plan-open-request', projectId: 'path_repo', planId: 'p1', title: 'Plan', directory: '/repo', sessionId: 'ses_1' },
     ]);
     unsubscribe();
+  });
+
+  test('reloads exactly once when ready reports a different build across reconnects', async () => {
+    const values = new Map<string, string>();
+    let reloadCount = 0;
+    const reload = () => {
+      reloadCount += 1;
+    };
+    Object.assign(globalThis.window, {
+      location: { reload },
+      sessionStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+      },
+    });
+    const { subscribeOpenchamberEvents } = await import('./openchamberEvents');
+    const unsubscribe = subscribeOpenchamberEvents(() => undefined);
+    const source = MockEventSource.instances[0];
+    const ready = JSON.stringify({
+      type: 'openchamber:event-stream-ready',
+      properties: { buildRevision: 'server-revision' },
+    });
+
+    source.onmessage?.({ data: ready });
+    window.dispatchEvent(new CustomEvent(RUNTIME_ENDPOINT_CHANGED_EVENT, {
+      detail: { apiBaseUrl: 'http://runtime.test', previousApiBaseUrl: 'http://runtime.test', runtimeKey: 'local', previousRuntimeKey: 'local' },
+    }));
+    MockEventSource.instances[1].onmessage?.({ data: ready });
+
+    expect(reloadCount).toBe(1);
+    unsubscribe();
+  });
+
+  test('does not reload when session storage rejects the guard write', async () => {
+    let reloadCount = 0;
+    const reload = () => {
+      reloadCount += 1;
+    };
+    Object.assign(globalThis.window, {
+      location: { reload },
+      sessionStorage: {
+        getItem: () => null,
+        setItem: () => {
+          throw new Error('storage unavailable');
+        },
+      },
+    });
+    const { subscribeOpenchamberEvents } = await import('./openchamberEvents');
+    const unsubscribe = subscribeOpenchamberEvents(() => undefined);
+    const source = MockEventSource.instances[0];
+    const ready = JSON.stringify({
+      type: 'openchamber:event-stream-ready',
+      properties: { buildRevision: 'server-revision' },
+    });
+
+    source.onmessage?.({ data: ready });
+    source.onmessage?.({ data: ready });
+
+    expect(reloadCount).toBe(0);
+    unsubscribe();
+  });
+});
+
+describe('build revision reload guard', () => {
+  test('reloads once for a different server revision', () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    };
+
+    expect(shouldReloadForBuildRevision('1.22.0-j2k.1', '1.21.0-j2k.1', storage)).toBe(true);
+    expect(shouldReloadForBuildRevision('1.22.0-j2k.1', '1.21.0-j2k.1', storage)).toBe(false);
+  });
+
+  test('does not reload matching or missing revisions', () => {
+    const storage = { getItem: () => null, setItem: () => undefined };
+
+    expect(shouldReloadForBuildRevision('1.21.0', '1.21.0', storage)).toBe(false);
+    expect(shouldReloadForBuildRevision('', '1.21.0', storage)).toBe(false);
+    expect(shouldReloadForBuildRevision('1.21.0', '', storage)).toBe(false);
+    expect(shouldReloadForBuildRevision('../unsafe', '1.21.0', storage)).toBe(false);
   });
 });

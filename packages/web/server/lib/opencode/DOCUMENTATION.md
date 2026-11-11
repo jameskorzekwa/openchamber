@@ -35,6 +35,7 @@ OpenCode 2 loads the user config, then `OPENCODE_CONFIG`, then project `opencode
 - `packages/web/server/lib/opencode/managed-process-stop.js`: how the lifecycle stops its managed OpenCode on Windows: closes the `serve --stdio` lease, waits a bounded grace period, then force-kills the tree (see the teardown paragraph below). Also owns `hasChildProcessExited` and `waitForChildProcessClose`.
 - `packages/web/server/lib/opencode/shutdown-runtime.js`: graceful shutdown orchestration runtime for watcher/session/guest-services/terminal/process/server teardown.
 - `packages/web/server/lib/opencode/npm-registry-config.js`: resolves npm package metadata requests from inherited npm registry settings or the user's `.npmrc`, including scoped registries and matching bearer/basic HTTP authentication.
+- `packages/web/server/lib/opencode/build-revision.js`: validates and resolves the runtime build revision from `OPENCHAMBER_BUILD_REVISION`, the generated `dist/build-revision.json`, or the package version. Vite uses the same validation and precedence helper when injecting `__BUILD_REVISION__` and emitting the revision asset.
 - `packages/web/server/lib/opencode/server-startup-runtime.js`: server listen/startup tunnel flow and process/signal handler orchestration runtime.
 - `packages/web/server/lib/opencode/static-routes-runtime.js`: static asset/SPA fallback route registration and manifest route wiring.
 - `packages/web/server/lib/opencode/feature-routes-runtime.js`: feature route composition runtime for dynamic import-backed config/skill/provider route registration. Source-control provider registration is delegated to `lib/source-control/routes.js`. One exact persisted-credential resolver, including optional revision pinning, is shared by transport binding, clone planning, contributor transfer, execution, and safe HTTPS binding-read presentation. The managed SSH inventory supplies the matching verified-fingerprint projection without exposing its key record or path. Server composition supplies one durable worktree-bootstrap store to both Git and OpenChamber-session routes; the runtime exposes a lazy bound-checkout hydration adapter so session-created worktrees use the same local inspection and exact parent authority rules as Git-route worktrees.
@@ -79,6 +80,8 @@ in that user's sessions. On the fallback path the same rules are merged into
 - `packages/web/server/lib/opencode/server-utils-runtime.js`: shared server runtime utilities for OpenCode proxy wiring, OpenCode port/readiness helpers, and snapshot fetchers.
 - `packages/web/server/lib/opencode/openchamber-routes.js`: OpenChamber update and models metadata route registration.
 - `packages/web/server/lib/opencode/model-discovery.js`: bounded custom-provider `/models` discovery and optional models.dev enrichment. It accepts only http(s), does not follow redirects, filters transport headers, never returns credentials, and treats models.dev failure as unenriched success. Edit requests may name the provider so the host can fall back to a stored credential when the form leaves the key blank — the key from OpenCode's credential store or, failing that, the provider's stored config entry (`settings.apiKey`, else the first `env` variable name that is set in the server environment) — but only while the form's base URL still matches the saved one, so a changed URL never receives the stored credential; an explicitly entered replacement key wins.
+- `packages/web/server/lib/openchamber-update/validated-release-installer.js`: J2K canonical stable and target-qualified companion validation, bounded safe archive extraction, staged release storage, atomic current/previous symlink switching, persisted install state, and rollback.
+- `packages/web/server/lib/openchamber-update/restart-transaction.js`: leased external restart transaction shared by systemd and explicit restart-on-exit supervisors. It verifies HMAC-authenticated process, path, version, and revision attestations, fences fallback helpers by transaction ID and owner token, and commits `installed`, `rollback`, or `failed` only after authenticated verification.
 - `packages/web/server/lib/opencode/pwa-manifest-routes.js`: PWA manifest route registration with recent-session shortcut resolution and short-lived caching.
 - `packages/web/server/lib/opencode/project-icon-routes.js`: project icon upload/read/discovery route registration and icon storage orchestration.
 - `packages/web/server/lib/opencode/skill-routes.js`: route registration for skill config CRUD, supporting files, and skills catalog scan/install flows.
@@ -253,7 +256,7 @@ Hard rules, verified against v2.0.8 (the completion stamp against v2.0.16)
 - `getFolderConfigPaths(workingDirectory)`: Every `opencode.json(c)` and `.opencode/opencode.json(c)` OpenCode 2 finds walking up from the project folder to the filesystem root, lowest priority first in OpenCode's order (`core/src/config/discovery.ts`): plain files outermost folder first, `.jsonc` after `.json`, then the `.opencode/` files the same way. Global config files are left out. Only MCP reads use it so far; agents, commands and providers still read the single project file.
 - `getProjectConfigCandidates(workingDirectory)`, `getLayerError(layers, filePath)`: The project folder's own config files, and the parse error `readConfigLayers` recorded for one file.
 - `getAncestors(startDir, stopDir)`, `findWorktreeRoot(startDir)`: Git worktree helpers.
-- `isPromptFileReference(value)`, `resolvePromptFilePath(reference)`, `writePromptFile(filePath, content)`: Prompt file reference handling.
+- `isPromptFileReference(value)`, `resolvePromptFilePath(reference)`, `writePromptFile(filePath, content)`: Prompt file reference handling. Agent updates apply the primary-worktree mutation guard to the resolved prompt target before writing, including absolute targets referenced by user or custom JSON config.
 - `walkSkillMdFiles(rootDir)`: Async. Recursively finds all SKILL.md files at any depth, following links and skipping a link back to its own ancestor. Sibling directories are read in parallel, at most 8 file-system calls at once, and the result keeps depth-first readdir order: discovery lets a later file win a duplicate name, so the order is part of the contract.
 - `pathExists(target)`: Async existence probe shared by the skill walk and source lookup. Returns false when access fails.
 - `addSkillFromMdFile(skillsMap, skillMdPath, parsed, scope, source)`: Indexes an already parsed skill file; `parsed` null (unreadable file) adds nothing.
@@ -1189,55 +1192,50 @@ within a ten-minute overall deadline.
 
 - `registerOpenChamberRoutes(app, dependencies)`: registers OpenChamber endpoints:
   - `GET /api/openchamber/update-check`
-    - A server installed from npm follows the update channel picked in
-      Settings → About (`serverUpdateChannel` in `settings.json`; without a
-      pick, Canary for a Canary build and Stable otherwise). On Canary the
-      target is the `canary` npm dist-tag, published nightly by
-      `.github/workflows/canary.yml`; Stable from a Canary build offers the
-      `latest` dist-tag even though it is older, which is the way back. Both
-      read npm, since the website API serves only the release; it still gets
-      the check-in. The install route and `openchamber update` read the same
-      channel through `checkForUpdates`. The desktop app keeps its own
-      `desktopUpdateChannel`. The Android app ships only as Canary until it
-      has a store release: every Android build, an APK from an earlier release
-      included, is offered the newest APK of the `canary` GitHub pre-release. Other app types stay on releases.
+    - Includes the authoritative installation lifecycle snapshot for web clients.
+  - `GET /api/openchamber/update-status`
+    - Reports `available`, `downloading`, `installing`, `restarting`, `installed`, `failed`, or `rollback`; persisted restart state becomes `installed` only when the restarted server reports the target version.
+    - `installed` stays on disk after a completed update, so a later process boots into it. A check that finds a newer channel release notes `available` in memory, and route reads keep that in-memory state until the status file itself changes (helper writes); the persisted `installed` record does not overwrite it. Clients must treat an `installed` record they did not watch arrive through an active state as idle.
   - `POST /api/openchamber/update-install`
-    - A copy no package manager installed answers 409 before any command
-      runs: a global install would add a second copy and leave the running
-      one as it is. Detection reports such a copy as `unmanaged-install` when
-      no package manager claims it and its path is outside any `node_modules`
-      folder: an unpacked tarball, the Docker image, a source checkout. A copy
-      inside `node_modules` that no check attributes keeps `default-fallback`
-      and the npm install, since a version manager's npm may still own it.
-      The update check marks an
-      unmanaged copy's update `installBlocked: 'manual-install'`, and a
-      foreground server without a service manager `installBlocked:
-      'service-manager'`, so clients show manual steps in place of an Update
-      button.
-    - Desktop-managed hosts delegate authenticated Web update requests to the Electron main process, which checks, downloads, and applies the update through `electron-updater` before restarting the host. A host installed from a Linux `.deb` or `.rpm` asks for the administrator password on its own screen, so its check reports `installBlocked: 'desktop-host'` and the install route answers 409 `DESKTOP_UPDATE_LOCAL_ONLY` before anything stops; clients say to update on that computer.
-    - Foreground servers running under a systemd user unit queue installation in
-      a separate transient unit and restart the configured service afterwards.
-      `OPENCHAMBER_SYSTEMD_UNIT` overrides the default `openchamber.service`.
-    - Foreground servers running under a macOS launchd User LaunchAgent update the
-      package and trigger a `launchctl kickstart` (with a `launchctl bootstrap`
-      fallback, as `openchamber startup enable` uses) against
-      `~/Library/LaunchAgents/dev.openchamber.web.plist`. The server counts as the
-      LaunchAgent only when the plist exists and launchd set `XPC_SERVICE_NAME` to
-      its label, so a manual `serve --foreground` keeps the 409.
-    - On Windows the install-and-restart script is written to
-      `<data dir>/update-install.cmd` before the response and run with
-      `cmd.exe /c <file>`. A newline ends a `cmd.exe /c` command line, so the
-      same script passed as an argument ran nothing and exited 0; the batch
-      file keeps every line. The package-manager line is `call`ed because
-      npm, pnpm and yarn are `.cmd` shims that would otherwise end the script,
-      the pre-install pause is a loopback `ping` because `timeout` rejects a
-      detached child's stdin, and the file deletes itself on its last line
-      because the restart command carries the server's flags. If the file
-      cannot be written the route answers 500 and the server keeps running.
-      The listener is closed before the batch is spawned: on Windows the
-      detached child inherits the listening socket and would hold the port
-      for the whole batch, so the restart inside it failed with "port already
-      in use" and the update ended with no server.
+    - When the embedding host started the server with `selfUpdate: false` (see `StartWebUiServerOptions`), the host owns OpenChamber's lifecycle and updates: `update-check` for web clients answers `available: false` with `updateOwner: 'external'` without contacting the update channel, and `update-install` answers `409 UPDATE_OWNER_EXTERNAL`. Non-web client checks (mobile) are unaffected. The default keeps the in-app updater.
+    - Desktop-managed hosts delegate authenticated Web update requests to the Electron main process, which checks, downloads, and applies the update through `electron-updater` before restarting the host. An install the host must run on its own screen (`installBlocked: 'desktop-host'`) answers 409 `DESKTOP_UPDATE_LOCAL_ONLY` without restarting.
+    - Downloads only the configured J2K repository, defaulting to `jameskorzekwa/openchamber`. It first resolves GitHub's canonical latest stable `vX.Y.Z-j2k.N`, requires its strict schema 1 Darwin arm64 ABI 127 identity and exact three-asset inventory, resolves both source and upstream tag commits, and requires GitHub's compare API to prove exact upstream ancestry.
+    - It then resolves prerelease `web-vX.Y.Z-j2k.N`. Schema 2 contains exact target-qualified Darwin arm64 and Linux x64 ABI 127 tarballs plus `SHA256SUMS` and `channel.json`. The companion's version and source identity must equal stable. Exactly one artifact must match `process.platform`, `process.arch`, and `process.versions.modules`. Missing, duplicate, ambiguous, malformed, or wrong-target entries fail before checksum or archive download. If the companion is absent, only exact Darwin arm64 ABI 127 may use schema 1; Ubuntu x86_64 never falls back.
+    - It verifies exact inventories, redirect destinations, sizes, checksum metadata, and archive SHA-256. A `404` canonical latest response becomes `no-validated-release`. `OPENCHAMBER_UPDATE_CHANNEL_REPO` is for deterministic validation environments and rejects malformed repository identities.
+    - Archives a non-channel current install, preserves the prior target through the `previous` symlink, and atomically switches `current`. Rollback archives recursively include required production dependencies and required peer dependencies; optional dependencies and optional peers remain optional. A failed restart handoff restores `current`.
+    - Installation never invokes npm or requests root, and never reuses an old dependency tree. The artifact must be relocatable and include `package/node_modules` with every recursively required production dependency. Missing dependencies fail before selection.
+    - Extraction streams the bounded download through gzip and tar parsing. Limits are 256 MiB compressed, 512 MiB extracted, 128 MiB per file, 50,000 entries, and 64 KiB per PAX/GNU path metadata entry. The extractor accepts only regular files and directories below `package/`; it rejects traversal, links, devices, FIFOs, duplicate paths, unsupported PAX fields, and malformed headers.
+    - Installation uses `proper-lockfile` with an atomic `update.lock` directory across processes. A contender never mutates release selection. Lock freshness updates while held, and a lock directory older than 30 minutes is recoverable without hostname or PID-owner assumptions. Staged files, state files, and selection directories are fsynced. Startup never promotes an active persisted state to `installed`; only the matching restart transaction may commit a terminal state.
+    - Restart is supported only through an external process manager using `~/.local/share/openchamber/bin/openchamber-managed`, which resolves `current/bin/cli.js` on every launch. Existing writable systemd user services are migrated only from canonical `openchamber serve` or `node .../openchamber/.../cli.js serve` forms; inline `env`, Node flags, and custom wrappers fail closed because replacing them would discard executable-prefix semantics. The complete original `serve` argument suffix remains byte-for-byte intact.
+    - Before changing a systemd service, switching `current`, or persisting `restarting`, the server validates and fsyncs a schema-3 `prepared` transaction containing an immutable UUID, a 256-bit attestation secret, exact target and previous version/revision identities, canonical confined paths, and exact systemd rollback bytes when applicable. It also schedules the delayed fallback before applying a deferred systemd migration or allowing selection. Every managed startup discovers a surviving journal and launches an ID-bound detached fallback, covering machine loss between journal fsync and initial fallback scheduling. A prepared fallback restores service state and fails safely when selection never happened, or activates recovery when `current` already points to the target.
+    - A 15-second renewable lease plus a separate owner token permits one helper to mutate selection, service, launcher, status, or terminal cleanup; a stale fallback fences a resumed old helper. Every helper invocation carries the expected transaction UUID before lease acquisition, so a delayed helper exits when the fixed journal path contains a newer transaction. Terminal cleanup revalidates that UUID immediately before atomically renaming the journal, removes at most 256 regular one-shot termination markers below that UUID, and never removes another transaction's evidence. New update admission remains blocked while the fixed journal exists. Fallbacks retry lease acquisition for a bounded recovery window instead of making one attempt. Every system command has a 10-second timeout.
+    - Systemd queues a primary transient helper and a 90-second fallback unit. A non-systemd foreground supervisor must explicitly set `OPENCHAMBER_UPDATE_RESTART_ON_EXIT=true` and launch the managed launcher; the server starts an ID-bound delayed fallback before selection, then starts the primary helper before exiting. Helpers do not trust public `/health`. They send a fresh random challenge to a loopback attestation endpoint, which reads the mode-0600 journal and returns an HMAC over transaction ID, challenge, PID, startup identity, running release path, selected path, version, revision, and health. The journal secret is never returned, and replayed or spoofed responses fail verification.
+    - On generic rollback the helper persists rollback intent before selecting the previous release. An already-running exact previous release may authenticate and complete recovery immediately. Otherwise the helper uses the last authenticated target process identity to create a one-shot HMAC termination capability. The target validates its exact PID/start identity, version, revision, transaction ID, selected previous path, and capability, atomically consumes that process identity, and terminates itself. Replays cannot schedule another signal; a successor crash-loop process requires a fresh attestation and distinct capability.
+    - `installed` is persisted only after an authenticated target attestation reports the authoritative OpenCode runtime as ready and running with no startup error. This applies to UI, API-only, managed OpenCode, and external OpenCode modes. Rollback intent remains `restarting`; `rollback` is persisted only after an authenticated exact previous version/revision/path attestation. Cancellation restores exact systemd service and launcher bytes and reloads systemd before deleting the journal or persisting terminal rollback; restoration failure retains the journal and persists `failed`. New processes retain `restarting` while a transaction is pending, and route reads synchronize in-memory lifecycle state from helper-written status files without another restart.
+    - Containers, unmanaged daemons, fixed-path managers, noncanonical systemd services, and supervisors that do not assert restart-on-exit ownership fail closed.
+    - `current` selects the active release and `previous` the rollback target. Release paths include version and source identity. Completed release and rollback archive directories are retained without automatic pruning; only temporary downloads and staging directories are cleaned. A surviving restart journal blocks another update.
+
+### Validated web archive runtime contract
+
+Workflow tooling emits one native gzip archive per supported target with one
+`package/` root and no duplicate paths. The companion supports Darwin arm64 ABI
+127 and Linux x64 ABI 127, with Linux supported on Ubuntu x86_64 only. Native
+macOS and Ubuntu jobs build and execute their own archive under Node 22.22.0.
+Required files include `package/package.json`, `package/bin/cli.js`,
+`package/server/index.js`, `package/dist/index.html`, and
+`package/dist/build-revision.json`. Package version, target, and revision must
+match the selected schema 2 artifact.
+
+The schema 1 stable release keeps exactly its Darwin archive, `SHA256SUMS`, and
+`channel.json`. Schema 2 keeps exactly both target archives, `SHA256SUMS`, and
+`channel.json`. Trusted publication revalidates both bundles before exposing
+write credentials, byte-compares resumable assets, and refuses replacement or
+unexpected inventory. It publishes and re-reads the companion and separate
+signed Desktop prereleases, advances the separately leased desktop channel,
+then publishes stable as the final visibility point. Desktop keeps its separate
+signing flow, artifacts, channel, and updater behavior.
+
+`package/node_modules` must be a real directory inside the archive. Every dependency reachable through `dependencies` from the root package and each bundled package must resolve through Node's ancestor `node_modules` rules entirely inside `package/`; optional dependencies may be absent. Archive symlinks and hardlinks are rejected, including `.bin` links, so tooling must omit unused `.bin` entries or materialize them as regular files. Character/block devices and FIFOs are also rejected. PAX metadata may contain exactly one `path` record and no other fields; GNU long-path records are accepted within the metadata limit. The archive and every file must fit the limits above.
   - `GET /api/openchamber/models-metadata`
   - `GET /api/zen/models`
 

@@ -222,7 +222,7 @@ IPC results if its endpoint changes while the read is pending.
 | `scripts/opencode-cli-version.mjs` | Reads the pinned OpenCode CLI version and parses `opencode --version` output |
 | `scripts/bundle-main.mjs` | Bundles Electron main code into `dist-bundle/{entry,main,early-startup}.mjs` for packaging |
 | `scripts/rebuild-native.mjs` | Rebuilds native modules against the Electron runtime |
-| `scripts/package.mjs` | Runs `electron-builder`, with unsigned Windows builds when signing env is missing. With `OPENCHAMBER_DESKTOP_CHANNEL=canary` it passes the configuration from `scripts/canary-build-config.mjs`, which swaps in the Canary icons |
+| `scripts/package.mjs` | Runs `electron-builder`, with unsigned Windows builds when signing env is missing and explicit private macOS signing support. With `OPENCHAMBER_DESKTOP_CHANNEL=canary` it passes the configuration from `scripts/canary-build-config.mjs`, which swaps in the Canary icons |
 | `scripts/windows-signpath.mjs` | Two-pass Windows build for SignPath signing, and the electron-builder sign hook it uses (see *Windows signing through SignPath*) |
 | `resources/` | Packaged web assets, icons, macOS entitlements, and the NSIS include for the Windows installer. Every file in `resources/icons` is written by `bun run brand:generate` (`scripts/brand`); do not edit them by hand. `resources/icons-canary` holds Canary's: its `AppIcon.icon` is hand-made, the rest is generated from it |
 
@@ -314,9 +314,13 @@ That runs, in order:
 3. `prepare:ripgrep` to download/cache the target architecture's ripgrep and copy it into `packages/electron/resources/ripgrep`.
 4. `bundle:main` to create `packages/electron/dist-bundle/{entry,main,early-startup}.mjs`.
 5. `rebuild:native` to rebuild native modules for Electron.
-6. `package.mjs` to run `electron-builder`; its `afterPack` hook stages the compiled macOS icon asset catalog and gives the macOS main executable its own UUID.
+6. `package.mjs` to run `electron-builder`; its `afterPack` hook stages the compiled macOS icon asset catalog and gives the macOS main executable its own UUID, then writes `app-update.yml` from the updater contract before signing or prepackaged artifact creation.
 
 Build output goes to `packages/electron/dist`.
+
+The investigation record for the missing macOS updater configuration in
+`1.21.0-j2k.22` is in
+[`docs/macos-updater-config-incident.md`](./docs/macos-updater-config-incident.md).
 
 Electron Builder copies the `@openchamber/web` workspace package whole, ignoring its `files` field, so `build.files` in `package.json` excludes what the packaged runtime never loads: the web package's `dist` (packaged builds serve `Resources/web-dist` through `OPENCHAMBER_DIST_DIR`), its `src`, configs, tests and stray tarballs; TypeScript sources, source maps and Markdown other than licenses from every dependency; `bun-pty`, which only the Bun runtime imports; luxon builds other than `build/node` (CommonJS, for cron-parser) and `build/es6` (ESM, for the server); and `node-pty` prebuilds other than `${platform}-${arch}` (the Electron-rebuilt `build/Release` binary loads first; `${platform}` is the build host, which matches the target because `rebuild:native` already builds for the host OS). Keep these exclusions in the top-level `files`: Electron Builder treats a platform-level `files` list as its own file set, and one holding only exclusions copies the whole package directory into the archive. The `afterPack` hook then reads the `app.asar` header (`scripts/packaged-app-contents.cjs`) and fails the build when anything outside `node_modules` other than the bundled main files, `preload.mjs` and `package.json` is packed, when the web `dist` is packed, or when the bundled main files, the web server entry and manifest, or the unpacked git helpers are missing.
 
@@ -352,6 +356,51 @@ SignPath refuses a signing request from a run where any job ran on a runner othe
 
 electron-builder compiles the uninstaller and embeds it in the installer within one NSIS step, and SignPath signs only files a workflow step uploads. The `win.signtoolOptions.sign` hook is the one point between those two: in the first pass it copies the uninstaller out, in the second it replaces the freshly compiled uninstaller with the signed copy. Both come from the same NSIS script and version.
 
+### J2K macOS release channel
+
+The customized macOS channel currently supports arm64 only. `J2K Sync Upstream` follows canonical upstream tags and creates an exact `j2k/vX.Y.Z` candidate. After `J2K Validate` succeeds, `J2K Release` runs the web release gate and calls `J2K Desktop Release` as a build-only component for that same candidate SHA. The desktop workflow has no publication permission. The unified publisher can advance `j2k/current`, create both tags, and publish either release only after both artifact sets pass their trusted verifiers.
+
+Desktop versions use canonical SemVer `X.Y.Z-j2k.N` and tags `desktop-vX.Y.Z-j2k.N`. These GitHub Releases are always prereleases with `make_latest=false`, so they never affect the stable web channel or `/releases/latest`. A desktop release has exactly these six assets:
+
+```text
+OpenChamber-X.Y.Z-j2k.N-mac-arm64.dmg
+OpenChamber-X.Y.Z-j2k.N-mac-arm64.zip
+OpenChamber-X.Y.Z-j2k.N-mac-arm64.zip.blockmap
+latest-mac.yml
+SHA256SUMS
+desktop-release.json
+```
+
+The J2K macOS updater reads `latest-mac.yml` from the dedicated `desktop-channel` branch through `https://raw.githubusercontent.com/jameskorzekwa/openchamber/desktop-channel/`. The workflow embeds the J2K channel marker when it bundles Electron. Ordinary macOS builds keep the upstream production provider, so a local or upstream package cannot opt into the private feed at runtime. The manifest's `files[].url` and legacy `path` are absolute URLs under the immutable matching GitHub prerelease tag. Binary resolution therefore never falls back to `raw.githubusercontent.com`. The compile-time-gated E2E build still accepts its credential-free loopback generic feed.
+
+The workflow stages the desktop version in the root, Electron, web, and shared UI package identities. It embeds the exact source SHA in the bundled web assets, rebuilds `node-pty` and `bun-pty` for Electron arm64, bundles the pinned OpenCode CLI, signs with the pinned private identity, and checks the app from staging, the ZIP, and the mounted DMG before publication. Each final app must contain a strictly parsed `app-update.yml` that exactly matches the J2K contract. The release metadata records the verified certificate SHA-256 fingerprint and checksums without storing private key material.
+
+After signing and final ZIP creation, a separate macOS job with read-only repository access launches a lower-version packaged app built through the same `--dir --publish=never` path. Its compile-time-gated updater points to a per-run loopback feed containing the unchanged final release ZIP. The job must discover the release, complete `electron-updater.downloadUpdate()`, and match the downloaded ZIP's SHA-512 before the reusable desktop workflow can succeed. The job uses isolated home, temporary, user-data, cache, feed, and evidence directories. It never calls the install path and receives no signing or publication credentials.
+
+Publication is resumable but immutable. Web and desktop use the same `X.Y.Z-j2k.N` revision and source SHA. A retry may reuse a matching tag and draft release only when every existing asset is byte-identical; it uploads missing draft assets but never overwrites. The unified publisher promotes the candidate with a `j2k/current` force-with-lease, publishes the desktop prerelease before the stable web release, then creates a one-file `desktop-channel` commit with the lease captured before either build. Candidate jobs have read-only repository permissions. The `contents:write` job checks both artifact sets with verifier code from trusted `j2k/current` and never executes candidate files.
+
+Create a protected GitHub Actions environment named `j2k-release`, allow deployment only from `j2k/current`, and define these environment secrets before the workflows can run. Do not store them as repository-level secrets: candidate branches are same-repository branches and can define their own workflows, so repository-level secrets would cross the candidate trust boundary.
+
+- `MACOS_PRIVATE_CERTIFICATE`: Base64 of a password-protected PKCS#12 file containing the private signing certificate and key.
+- `MACOS_PRIVATE_CERTIFICATE_PASSWORD`: The PKCS#12 export password.
+- `MACOS_PRIVATE_CERTIFICATE_SHA256`: The 64-character SHA-256 fingerprint of the public certificate, with or without colons.
+- `UPSTREAM_SYNC_TOKEN`: A narrowly scoped token for GitHub owner `github:38769771` with Contents, Workflows, and Issues read/write access to this repository. The sync workflow uses it for exact mirror and candidate ref writes that can contain workflow files, and to file its recovery issues as the owner: the scoped job token cannot create issues, and a recovery issue authored by `github-actions[bot]` would never be picked up. Artifacts and releases use the job's scoped `GITHUB_TOKEN`.
+
+Create a self-signed root certificate in Keychain Access with the exact common name `Developer ID Application: OpenChamber Private Updates`, certificate type `Code Signing`, a long explicit validity period, digital-signature key usage, and code-signing extended key usage. Export the identity as a password-protected `.p12` for the workflow. Export the public certificate separately for installation on managed Macs. Never copy the private key to client Macs.
+
+The workflow checks the certificate name and pinned fingerprint, imports the identity into a temporary runner Keychain, and adds only the public certificate to the disposable runner's System trust store before normal validated identity discovery. Apple notarization remains disabled. The final app verifier extracts the signing certificate and checks its SHA-256 fingerprint. Cleanup removes the private certificate file and Keychain in an `always()` step, and GitHub destroys the runner after the job. Back up the `.p12` and its password securely. Losing or replacing this identity breaks update continuity for installed versions.
+
+Before the first private build runs, add the three secrets under the repository's Actions secrets. To compute the fingerprint from the login Keychain without exporting private material:
+
+```bash
+security find-certificate -c 'Developer ID Application: OpenChamber Private Updates' -p \
+  | openssl x509 -noout -fingerprint -sha256
+```
+
+Each managed Mac must import and explicitly trust the public certificate before installing the first build. The first download still requires a manual Gatekeeper approval because Apple does not notarize private certificates. Updates work only while every release uses the same identity; validate an actual N-to-N+1 update on each managed Mac before relying on unattended updates.
+
+For an unsigned local arm64 smoke, disable Electron signing and notarization explicitly, set `OPENCHAMBER_BUILD_REVISION` to the source SHA, run the normal package stages, and invoke `tools/desktop-release/verify-macos-app.mjs` with `--unsigned true`. An unsigned smoke proves packaging, bundled UI identity, CLI version, and native architecture. It does not prove private signing, hardened runtime, certificate trust, or updater installation.
+
 ## Platform Notes
 
 macOS packaging needs Xcode/build tools for notarized builds and icon asset compilation.
@@ -380,7 +429,7 @@ Linux updates are supported when the packaged app runs from a writable AppImage 
 
 `desktop_restart` does not answer the renderer before the install is decided. On the apply-update path it calls `quitAndInstall()` and keeps the IPC call open until the app quits or `autoUpdater` emits `error`, which the platform installers do asynchronously (a rejected code signature, or a Squirrel session disabled by an earlier failure). A failed install rejects the IPC call and rolls back the quit/install flags. A failure before backend shutdown leaves the app running; one after it relaunches the current version, because the in-process server does not restart in place. A Linux package install runs its own async install in place of `quitAndInstall()` and detaches the `error` listener first, so an unrelated update-check error during the password prompt cannot relaunch the app under a running install. A still-running app after the grace period resolves the call. The installer grace period starts after backend cleanup, so a slow terminal shutdown cannot remove the error listener before installation begins.
 
-### Updater End-to-End Fixture
+### Updater end-to-end fixture
 
 Updater checks preserve downloaded payloads for the same version. Feed errors
 preserve an existing pending record; a missing feed with no pending record
@@ -391,7 +440,7 @@ A request for another version fails as busy until that promise settles. Both the
 download event and promise completion mark readiness only for their own version,
 so an intervening check for a newer release cannot attach the old installer to it.
 
-A loopback-only updater fixture is available for contributor QA of N-to-N+1 AppImage replacement and restart behavior. It is test infrastructure, not a user-configurable update source. See [`scripts/updater-e2e-fixture.md`](./scripts/updater-e2e-fixture.md) for the controlled test procedure. Unit tests cover feed selection, check failures, no-update results, and fixture generation; actual AppImage replacement and restart remains a manual native N-to-N+1 release boundary because it requires executing two packaged versions on each supported architecture.
+A loopback-only updater fixture is available for contributor QA of N-to-N+1 AppImage replacement and restart behavior. The J2K release workflow also uses its macOS mode for mandatory packaged-app discovery and payload-download evidence. It is test infrastructure, not a user-configurable update source. See [`scripts/updater-e2e-fixture.md`](./scripts/updater-e2e-fixture.md) for the controlled test procedure. Unit tests cover feed selection, check failures, no-update results, and fixture generation; actual AppImage replacement and restart remains a manual native N-to-N+1 release boundary because it requires executing two packaged versions on each supported architecture.
 
 The package supports macOS, Windows, and Linux desktop features. Linux builds include in-app window controls, auto-update, system tray (right-click Show / Hide / Close), and launch-at-login (XDG autostart). Opening files in installed apps, installed-app discovery, and FreeDesktop icon lookup (including the default file manager) work on macOS, Windows, and Linux.
 
@@ -463,6 +512,8 @@ The server (`packages/web/server/lib/fs/ripgrep.js`) looks for ripgrep in this o
 | `OPENCHAMBER_RUNTIME=desktop` | Set by Electron before starting the web server |
 | `OPENCHAMBER_OPENCODE_CLI_VERSION` | Optional packaging override for the bundled OpenCode CLI version; defaults to `opencodeCli.version` in `packages/electron/package.json` |
 | `OPENCHAMBER_TARGET_ARCH` | Explicit desktop package architecture (`x64` or `arm64`); Linux requires it to match the native host |
+| `OPENCHAMBER_J2K_DESKTOP_BUILD` | Build-time-only marker that embeds the private J2K macOS updater channel |
+| `OPENCHAMBER_PRIVATE_MAC_SIGNING` | Requires a persistent private macOS signing identity and disables Apple notarization for that package run |
 | `OPENCHAMBER_DESKTOP_NOTIFY=true` | Enables desktop notification flow in the web server |
 | `OPENCHAMBER_SKIP_API_COMPRESSION=true` | Defaulted by Desktop to reduce local CPU overhead |
 | `OPENCHAMBER_STARTUP_PERF=1` | Enables privacy-safe startup phase timings in Desktop/server logs; disabled by default |

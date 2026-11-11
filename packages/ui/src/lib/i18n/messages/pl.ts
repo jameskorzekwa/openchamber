@@ -62,6 +62,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   'quota.family.zen': 'Modele Zen',
@@ -239,6 +240,7 @@ export const dict: Record<I18nKey, string> = {
   ...tooltipsWorkspaceI18n['pl'],
   ...tooltipsPanelI18n['pl'],
   ...tooltipsChatI18n['pl'],
+  ...updateStatusI18n.pl,
   'terminalView.actions.attachSelection': 'Dołącz zaznaczone dane wyjściowe',
   'terminalView.actions.copySelection': 'Kopiuj zaznaczone dane wyjściowe',
   'terminalView.toast.selectionCopied': 'Skopiowano dane wyjściowe',
@@ -827,6 +829,11 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.export.dialog.includeSubtasks': 'Dołącz pod-agentów',
   'sessions.sidebar.session.export.dialog.confirm': 'Eksportuj',
   'sessions.sidebar.session.status.active': 'Sesja aktywna',
+  'sessions.sidebar.session.status.waitingSingleDescription': 'Oczekiwanie: {description}',
+  'sessions.sidebar.session.status.waitingSingleDefault': 'Oczekiwanie na proces w tle',
+  'sessions.sidebar.session.status.waitingMany': 'Oczekiwanie na {count} procesów w tle',
+  'sessions.sidebar.session.status.waitingBadgeSingle': 'Oczekiwanie',
+  'sessions.sidebar.session.status.waitingBadgeMany': 'Oczekiwanie · {count}',
   'sessions.sidebar.session.status.unread': 'Nieprzeczytane aktualizacje',
   'sessions.sidebar.session.status.backgroundSubagent': 'Subagent działa w tle',
   'sessions.sidebar.session.status.backgroundCommand': 'Polecenie działa w tle',
@@ -838,6 +845,14 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.status.questionPending': 'Oczekujące pytanie',
   'sessions.sidebar.session.status.activeFor': 'Aktywna od {duration}',
   'sessions.sidebar.session.status.lastTurnDuration': 'Ostatnia tura trwała {duration}',
+  'chat.ptyWaiting.backgroundProcess': 'Proces w tle',
+  'chat.backgroundWork.label': 'Działa w tle',
+  'chat.backgroundWork.ariaLabel': 'Działa w tle: {summary}',
+  'chat.backgroundWork.subtaskCountOne': '1 podzadanie',
+  'chat.backgroundWork.subtaskCountMany': 'Podzadania: {count}',
+  'chat.backgroundWork.processCountOne': '1 proces',
+  'chat.backgroundWork.processCountMany': 'Procesy: {count}',
+  'chat.backgroundWork.subtaskUntitled': 'Podzadanie',
   'sessions.sidebar.session.subsessions.collapse': 'Zwiń pod-sesje',
   'sessions.sidebar.session.subsessions.expand': 'Rozwiń pod-sesje',
   'sessions.sidebar.dialogs.deleteSession.title': 'Usunąć sesję?',

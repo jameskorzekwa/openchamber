@@ -61,6 +61,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
   'quota.family.zen': 'Zen-Modelle',
@@ -238,6 +239,7 @@ export const dict = {
   ...tooltipsWorkspaceI18n['de'],
   ...tooltipsPanelI18n['de'],
   ...tooltipsChatI18n['de'],
+  ...updateStatusI18n.de,
   'common.language.german': 'Deutsch',
   'common.loading': 'Wird geladen...',
   'common.image.loading': 'Bild wird geladen',
@@ -728,6 +730,11 @@ export const dict = {
   'sessions.sidebar.session.export.dialog.includeSubtasks': 'Unteraufgaben des Sub-Agents einbeziehen',
   'sessions.sidebar.session.export.dialog.confirm': 'Exportieren',
   'sessions.sidebar.session.status.active': 'Sitzung aktiv',
+  'sessions.sidebar.session.status.waitingSingleDescription': 'Warten auf: {description}',
+  'sessions.sidebar.session.status.waitingSingleDefault': 'Warten auf einen Hintergrundprozess',
+  'sessions.sidebar.session.status.waitingMany': 'Warten auf {count} Hintergrundprozesse',
+  'sessions.sidebar.session.status.waitingBadgeSingle': 'Warten',
+  'sessions.sidebar.session.status.waitingBadgeMany': 'Warten · {count}',
   'sessions.sidebar.session.status.unread': 'Ungelesene Updates',
   'sessions.sidebar.session.status.backgroundSubagent': 'Subagent läuft im Hintergrund',
   'sessions.sidebar.session.status.backgroundCommand': 'Befehl läuft im Hintergrund',
@@ -738,6 +745,14 @@ export const dict = {
   'sessions.sidebar.session.status.questionPending': 'Ausstehende Frage',
   'sessions.sidebar.session.status.activeFor': 'Seit {duration} aktiv',
   'sessions.sidebar.session.status.lastTurnDuration': 'Letzter Durchlauf dauerte {duration}',
+  'chat.ptyWaiting.backgroundProcess': 'Hintergrundprozess',
+  'chat.backgroundWork.label': 'Läuft im Hintergrund',
+  'chat.backgroundWork.ariaLabel': 'Läuft im Hintergrund: {summary}',
+  'chat.backgroundWork.subtaskCountOne': '1 Teilaufgabe',
+  'chat.backgroundWork.subtaskCountMany': '{count} Teilaufgaben',
+  'chat.backgroundWork.processCountOne': '1 Prozess',
+  'chat.backgroundWork.processCountMany': '{count} Prozesse',
+  'chat.backgroundWork.subtaskUntitled': 'Teilaufgabe',
   'sessions.sidebar.session.subsessions.collapse': 'Untersitzungen einklappen',
   'sessions.sidebar.session.subsessions.expand': 'Untersitzungen ausklappen',
   'sessions.sidebar.dialogs.deleteSession.title': 'Sitzung löschen?',

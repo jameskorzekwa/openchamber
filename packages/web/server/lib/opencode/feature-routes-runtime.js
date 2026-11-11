@@ -309,6 +309,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       openchamberVersion,
       // Absent in builds without workflows; their routes are then not served.
       workflowRuntime = null,
+      openchamberBuildRevision,
     } = routeDependencies;
 
     registerSettingsUtilityRoutes(app, {
@@ -370,6 +371,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       scheduledTaskService,
       getOpenChamberEventClients,
       writeSseEvent,
+      openchamberBuildRevision,
     });
 
     registerOpenChamberSessionRoutes(app, {

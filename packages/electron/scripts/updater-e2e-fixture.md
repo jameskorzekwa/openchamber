@@ -1,4 +1,6 @@
-# Linux Updater E2E Fixture
+# Updater E2E fixture
+
+## Linux replacement QA
 
 This local-only harness verifies AppImage N-to-N+1 replacement without changing the
 production GitHub updater provider. It supports native x64 and arm64 hosts.
@@ -34,3 +36,20 @@ The harness binds only `127.0.0.1`. Runtime override activation additionally req
 Normal packages omit the build-time marker and always use `openchamber/openchamber`.
 The renderer, IPC bridge, command-line arguments, and persistent configuration do not
 have access to the feed URL.
+
+## Automated macOS release gate
+
+`J2K Desktop Release` builds a lower-version smoke application through the real
+macOS `--dir --publish=never` path with the compile-time E2E marker. The trusted
+signing job signs that application and the release application with the same pinned
+identity. It then creates the final release ZIP and DMG, strictly checks
+`app-update.yml` in the signed staging app, extracted ZIP, and mounted DMG, and
+passes only the signed smoke app and unchanged final ZIP to a separate job.
+
+The separate job has read-only repository access and no signing or publication
+credentials. `run-packaged-macos-updater-smoke.mjs` creates a per-run loopback feed,
+launches the packaged smoke app, and requires both `checkForUpdates()` discovery and
+the `update-downloaded` event from `downloadUpdate()`. It compares the downloaded
+payload's SHA-512 and completed HTTP byte count with the final release ZIP. The
+harness isolates and removes its home, temporary, user-data, updater-cache, feed,
+and downloaded payload directories. It exits without calling `quitAndInstall()`.

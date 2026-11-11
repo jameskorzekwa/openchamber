@@ -2,6 +2,13 @@
 // so a Canary build (2.5.4-canary.20261030.6) sorts after 2.5.3, before
 // 2.5.4, and Canary builds of one release by day and run.
 
+// J2K fork builds are published as `<upstream version>-j2k.<revision>`. The
+// suffix marks a build of that upstream version plus fork patches, not a
+// semver pre-release: read as one, `2.7.0-j2k.1` would rank below upstream
+// `2.7.0` and every fork install would see a phantom update. Fork revisions
+// of one upstream version order by revision.
+const FORK_CHANNEL_SUFFIX = /^j2k\.(\d+)$/;
+
 function parseVersionForComparison(value) {
   const normalized = String(value || '').replace(/^v/, '').split('+')[0];
   const prereleaseIndex = normalized.indexOf('-');
@@ -11,9 +18,13 @@ function parseVersionForComparison(value) {
     return Number.isFinite(parsed) ? parsed : 0;
   });
 
+  const suffix = prereleaseIndex >= 0 ? normalized.slice(prereleaseIndex + 1) : '';
+  const forkChannel = FORK_CHANNEL_SUFFIX.exec(suffix);
+
   return {
     parts,
-    prerelease: prereleaseIndex >= 0 ? normalized.slice(prereleaseIndex + 1).split('.') : null,
+    prerelease: prereleaseIndex >= 0 && !forkChannel ? suffix.split('.') : null,
+    forkRevision: forkChannel ? Number.parseInt(forkChannel[1], 10) : 0,
   };
 }
 
@@ -51,7 +62,7 @@ export function compareVersions(left, right) {
 
   if (!a.prerelease || !b.prerelease) {
     if (a.prerelease) return -1;
-    return b.prerelease ? 1 : 0;
+    return b.prerelease ? 1 : a.forkRevision - b.forkRevision;
   }
 
   return comparePrerelease(a.prerelease, b.prerelease);

@@ -185,6 +185,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
     installing: s.installing,
     progress: s.progress,
     runtimeType: s.runtimeType,
+    installation: s.installation,
     checkForUpdates: s.checkForUpdates,
     downloadUpdate: s.downloadUpdate,
     restartToUpdate: s.restartToUpdate,
@@ -258,8 +259,11 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
   const [isWebServer, setIsWebServer] = React.useState(false);
   const isNpmServer = updateStore.runtimeType === 'web' && isWebServer && openChamberVersion !== null;
   const [updateChannel, setUpdateChannel] = React.useState<UpdateChannel | null>(null);
+  // J2K fork builds (`<upstream>-j2k.<n>`) update only from the fork's
+  // validated channel, so upstream's Stable/Canary choice is not offered.
+  const isJ2kBuild = /-j2k\.\d+$/.test(openChamberVersion ?? '');
   React.useEffect(() => {
-    if (!isDesktopApp && !isNpmServer) return;
+    if ((!isDesktopApp && !isNpmServer) || isJ2kBuild) return;
     let cancelled = false;
     const load = isDesktopApp ? getDesktopUpdateChannel() : loadServerUpdateChannel(openChamberVersion ?? '');
     void load.then((channel) => {
@@ -268,7 +272,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
     return () => {
       cancelled = true;
     };
-  }, [isDesktopApp, isNpmServer, openChamberVersion]);
+  }, [isDesktopApp, isJ2kBuild, isNpmServer, openChamberVersion]);
   const openCode = useOpenCodeUpgrade(t('opencodeUpdate.toast.failed.description'));
   const openCodeVersion = openCode.status?.currentVersion ?? null;
   const openCodeUpdateVersion = openCode.phase.kind === 'installed' ? null : openCode.status?.availableVersion ?? null;
@@ -514,7 +518,8 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
         // Show toast if check completed with no update available. On a remote
         // host "latest" would be wrong while the server still has an update.
         const remoteHostPending = remoteHostUpdateChecking || remoteHostUpdateAvailable;
-        if (didInitiateCheck.current && !update.available && !update.error && !remoteHostPending) {
+        if (didInitiateCheck.current && !update.available && !update.error && !remoteHostPending
+          && (isNativeApp || updateStore.installation?.state !== 'no-validated-release')) {
           toast.success(isNativeApp
             ? t('settings.openchamber.about.toast.serverLatestVersion')
             : t('settings.openchamber.about.toast.latestVersion'));
@@ -523,9 +528,16 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
       }, MIN_CHECKING_DURATION);
       return () => clearTimeout(timer);
     }
-  }, [t, isNativeApp, update.checking, showChecking, update.available, update.error, remoteHostUpdateChecking, remoteHostUpdateAvailable]);
+  }, [t, isNativeApp, update.checking, showChecking, update.available, update.error, remoteHostUpdateChecking, remoteHostUpdateAvailable, updateStore.installation?.state]);
 
   const isChecking = update.checking || showChecking;
+  // A J2K server found no validated fork release for the newest upstream version.
+  const hasNoValidatedRelease = !isNativeApp && updateStore.installation?.state === 'no-validated-release';
+  const noValidatedReleaseNotice = hasNoValidatedRelease ? (
+    <p className="rounded-xl border border-border px-3 py-2 typography-meta text-muted-foreground">
+      {t('updateDialog.status.noValidatedRelease')}
+    </p>
+  ) : null;
 
   if (isMobile) {
     return (
@@ -557,6 +569,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
         </div>
 
         {updateChannelControl && <div className="flex justify-center">{updateChannelControl}</div>}
+        {noValidatedReleaseNotice}
 
         <div className="flex justify-center">
           {!update.available && !update.error && (
@@ -682,7 +695,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
       <Icon name="download" className="size-4" />
       {openChamberUpdateLabel}
     </Button>
-  ) : !update.available && !update.error ? (
+  ) : !update.available && !update.error && !hasNoValidatedRelease ? (
     <>
       {statusSeparator}
       <span className="typography-meta text-muted-foreground">{t('settings.openchamber.about.state.upToDate')}</span>
@@ -696,6 +709,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
   const valueRow = 'min-h-8 flex-wrap @xl:flex-initial';
   const notes = [
     manualUpdateNotice,
+    noValidatedReleaseNotice,
     remoteHostInstallBlocked ? remoteHostUpdateControls : null,
     openCodeUpdate?.note ?? null,
     ...[update.error, remoteHostUpdate?.error].filter(Boolean).map((error) => (

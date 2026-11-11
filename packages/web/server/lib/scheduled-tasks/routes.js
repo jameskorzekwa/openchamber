@@ -12,6 +12,7 @@ export const registerScheduledTaskRoutes = (app, dependencies) => {
     scheduledTasksRuntime,
     getOpenChamberEventClients,
     writeSseEvent,
+    openchamberBuildRevision,
     scheduledTaskService = createScheduledTaskService(dependencies),
   } = dependencies;
 
@@ -190,6 +191,7 @@ export const registerScheduledTaskRoutes = (app, dependencies) => {
         properties: {
           connectedAt: Date.now(),
           connectionId: res.openchamberConnectionId,
+          buildRevision: openchamberBuildRevision,
         },
       });
     } catch {

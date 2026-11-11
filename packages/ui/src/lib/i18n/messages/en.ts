@@ -61,6 +61,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
   'quota.family.zen': 'Zen Models',
@@ -238,6 +239,7 @@ export const dict = {
   ...tooltipsWorkspaceI18n['en'],
   ...tooltipsPanelI18n['en'],
   ...tooltipsChatI18n['en'],
+  ...updateStatusI18n.en,
   'terminalView.actions.attachSelection': 'Attach selected output',
   'terminalView.actions.copySelection': 'Copy selected output',
   'terminalView.toast.selectionCopied': 'Output copied',
@@ -826,6 +828,11 @@ export const dict = {
   'sessions.sidebar.session.export.dialog.includeSubtasks': 'Include sub-agent tasks',
   'sessions.sidebar.session.export.dialog.confirm': 'Export',
   'sessions.sidebar.session.status.active': 'Session active',
+  'sessions.sidebar.session.status.waitingSingleDescription': 'Waiting: {description}',
+  'sessions.sidebar.session.status.waitingSingleDefault': 'Waiting for a background process',
+  'sessions.sidebar.session.status.waitingMany': 'Waiting on {count} background processes',
+  'sessions.sidebar.session.status.waitingBadgeSingle': 'Waiting',
+  'sessions.sidebar.session.status.waitingBadgeMany': 'Waiting · {count}',
   'sessions.sidebar.session.status.unread': 'Unread updates',
   'sessions.sidebar.session.status.backgroundSubagent': 'Subagent running in the background',
   'sessions.sidebar.session.status.backgroundCommand': 'Command running in the background',
@@ -837,6 +844,14 @@ export const dict = {
   'sessions.sidebar.session.status.questionPending': 'Pending question',
   'sessions.sidebar.session.status.activeFor': 'Active for {duration}',
   'sessions.sidebar.session.status.lastTurnDuration': 'Last turn took {duration}',
+  'chat.ptyWaiting.backgroundProcess': 'Background process',
+  'chat.backgroundWork.label': 'Running in background',
+  'chat.backgroundWork.ariaLabel': 'Running in background: {summary}',
+  'chat.backgroundWork.subtaskCountOne': '1 subtask',
+  'chat.backgroundWork.subtaskCountMany': '{count} subtasks',
+  'chat.backgroundWork.processCountOne': '1 process',
+  'chat.backgroundWork.processCountMany': '{count} processes',
+  'chat.backgroundWork.subtaskUntitled': 'Subtask',
   'sessions.sidebar.session.subsessions.collapse': 'Collapse subsessions',
   'sessions.sidebar.session.subsessions.expand': 'Expand subsessions',
   'sessions.sidebar.dialogs.deleteSession.title': 'Delete session?',

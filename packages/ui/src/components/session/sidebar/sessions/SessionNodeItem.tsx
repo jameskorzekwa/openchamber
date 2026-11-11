@@ -104,6 +104,7 @@ import {
   type SessionWorktreeMenuTarget,
   type StartSessionWorktreeMenuLoadResult,
 } from '../sessionWorktreeMenu';
+import { arePtyWaitingStatesEqual, getPtyWaitingState } from '@/lib/ptyWaitingState';
 
 type SecondaryMeta = {
   projectLabel?: string | null;
@@ -528,6 +529,10 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
   );
   const turnActivity = useSessionTurnActivity(session.id);
   const isStreaming = turnActivity !== null;
+  // Hosted PTY jobs the agent is waiting on (`metadata.openchamber.backgroundJobs`);
+  // only shown while no turn runs, since live activity is authoritative.
+  const ptyWaiting = getPtyWaitingState(resolvedSession);
+  const isPtyWaiting = !isStreaming && ptyWaiting.count > 0;
   // Read as a boolean, not as the value: the row must not re-render on every
   // tick of the counter it only decides to mount.
   const hasActivityDuration = useHasSessionTurnDuration(session.id, isStreaming);
@@ -920,10 +925,21 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
 
   const pendingFormLabel = t('sessions.sidebar.session.status.questionPending');
   const showUnreadStatus = !isSessionActionPending && !isStreaming && needsAttention && !isActive;
-  const showStatusMarker = isStreaming || showUnreadStatus;
+  const showStatusMarker = isStreaming || isPtyWaiting || showUnreadStatus;
+  const ptyWaitingLabel = ptyWaiting.count === 1
+    ? ptyWaiting.description
+      ? t('sessions.sidebar.session.status.waitingSingleDescription', { description: ptyWaiting.description })
+      : t('sessions.sidebar.session.status.waitingSingleDefault')
+    : t('sessions.sidebar.session.status.waitingMany', { count: ptyWaiting.count });
   // Running indicators are static by default; the local appearance preference
   // enables stepped motion without changing the elapsed-turn counter.
-  const statusMarkerContent = <SessionActivityIndicator state={turnActivity ?? 'unread'} tooltip />;
+  const statusMarkerContent = isPtyWaiting ? (
+    <span
+      className="h-1.5 w-1.5 rounded-full bg-[var(--status-warning)]"
+      aria-label={ptyWaitingLabel}
+      title={ptyWaitingLabel}
+    />
+  ) : <SessionActivityIndicator state={turnActivity ?? 'unread'} tooltip />;
   // The settled duration lives exactly as long as the unread marker does, so a
   // session read (or watched) while it finishes never keeps a stale total.
   const showActivityDuration = (isStreaming || showUnreadStatus) && hasActivityDuration;
@@ -1597,8 +1613,23 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
     </RowMarkTooltip>
   ) : null);
   const permissionLabel = t('sessions.sidebar.session.status.permissionRequired');
-  const rowBadges = (hasPendingPermission || hasPendingForm) ? (
+  const rowBadges = (hasPendingPermission || hasPendingForm || isPtyWaiting) ? (
     <>
+      {isPtyWaiting ? (
+        <RowMarkTooltip label={ptyWaitingLabel}>
+          <span
+            className="inline-flex flex-shrink-0 items-center gap-1 rounded bg-[var(--status-warning)]/10 px-1 py-0.5 text-[0.7rem] text-[var(--status-warning)]"
+            aria-label={ptyWaitingLabel}
+          >
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--status-warning)]" aria-hidden="true" />
+            <span className="leading-none">
+              {ptyWaiting.count === 1
+                ? t('sessions.sidebar.session.status.waitingBadgeSingle')
+                : t('sessions.sidebar.session.status.waitingBadgeMany', { count: ptyWaiting.count })}
+            </span>
+          </span>
+        </RowMarkTooltip>
+      ) : null}
       {hasPendingPermission ? (
         <RowMarkTooltip label={permissionLabel}>
           <span className="inline-flex flex-shrink-0 items-center text-status-warning" aria-label={permissionLabel}>
@@ -2133,6 +2164,7 @@ const areSessionRenderSemanticsEqual = (prev: Session, next: Session): boolean =
   && prev.time?.idle === next.time?.idle
   && prev.metadata === next.metadata
   && sameMultiRunIdentity(prev, next)
+  && arePtyWaitingStatesEqual(getPtyWaitingState(prev), getPtyWaitingState(next))
 );
 
 // Returns the name of the first prop whose change requires a render, or null

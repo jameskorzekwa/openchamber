@@ -10,6 +10,7 @@ import {
 } from "@/stores/useGlobalSessionsStore"
 import { getRuntimeKey, subscribeRuntimeEndpointWillChange } from "@/lib/runtime-switch"
 import { streamPerfCount, streamPerfMark } from "@/stores/utils/streamDebug"
+import { useSessionUIStore } from "@/sync/session-ui-store"
 import { stripSessionDiffSnapshots } from "./sanitize"
 import { shouldSkipStaleSessionEvent } from "./session-event-freshness"
 import { publishGlobalSessionMoves, type GlobalSessionMove } from "./session-moves"
@@ -111,6 +112,9 @@ export const applySessionEventsToGlobalSessions = (payloads: readonly SyncEvent[
       const from = patch.directory === undefined ? null : resolveGlobalSessionDirectory(currentSession)
       const to = patch.directory === undefined ? null : resolveGlobalSessionDirectory(session)
       if (from && to && from !== to) moves.push({ sessionId: sessionID, from, to })
+      if (currentSession.directory && session.directory && currentSession.directory !== session.directory) {
+        useSessionUIStore.getState().setSessionDirectory(session.id, session.directory)
+      }
       if (isGlobalSessionRecencyOnlyUpdate(currentSession, session)) {
         scheduleGlobalSessionUpdate(session)
       } else {

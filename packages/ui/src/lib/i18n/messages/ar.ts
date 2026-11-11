@@ -61,6 +61,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
   'quota.family.zen': 'نماذج Zen',
@@ -3964,6 +3965,7 @@ export const dict = {
   ...tooltipsWorkspaceI18n['ar'],
   ...tooltipsPanelI18n['ar'],
   ...tooltipsChatI18n['ar'],
+  ...updateStatusI18n.ar,
   'settings.usage.page.state.claudeSignedOutTitle': 'لم يتم تسجيل الدخول إلى Claude Code',
   'settings.usage.page.state.claudeSignInCommand': 'شغّل هذا الأمر في الطرفية:',
   'settings.openchamber.visual.field.confirmFileTreeMove': 'التأكيد قبل نقل الملفات',
@@ -4029,4 +4031,17 @@ export const dict = {
   'chat.promptHistorySearch.hint': "↑ ↓ للتصفح · Enter للتحميل · Esc للإغلاق",
   'helpDialog.item.searchPromptHistory': "البحث في سجل المطالبات (إدخال الدردشة)",
 
+  'sessions.sidebar.session.status.waitingSingleDescription': 'في الانتظار: {description}',
+  'sessions.sidebar.session.status.waitingSingleDefault': 'في انتظار عملية في الخلفية',
+  'sessions.sidebar.session.status.waitingMany': 'في انتظار {count} من العمليات في الخلفية',
+  'sessions.sidebar.session.status.waitingBadgeSingle': 'في الانتظار',
+  'sessions.sidebar.session.status.waitingBadgeMany': 'في الانتظار · {count}',
+  'chat.ptyWaiting.backgroundProcess': 'عملية في الخلفية',
+  'chat.backgroundWork.label': 'قيد التشغيل في الخلفية',
+  'chat.backgroundWork.ariaLabel': 'قيد التشغيل في الخلفية: {summary}',
+  'chat.backgroundWork.subtaskCountOne': 'مهمة فرعية واحدة',
+  'chat.backgroundWork.subtaskCountMany': '{count} من المهام الفرعية',
+  'chat.backgroundWork.processCountOne': 'عملية واحدة',
+  'chat.backgroundWork.processCountMany': '{count} من العمليات',
+  'chat.backgroundWork.subtaskUntitled': 'مهمة فرعية',
 } as const;

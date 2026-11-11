@@ -110,7 +110,9 @@ import {
   isUpdateChannel,
   normalizeUpdateChannel,
   resolveUpdaterFeed,
+  resolveUpdaterPrereleasePolicy,
 } from './updater-feed.mjs';
+import { runPackagedUpdaterSmoke, shouldRunPackagedUpdaterSmoke } from './packaged-updater-smoke.mjs';
 import {
   buildLinuxInstalledApps,
   buildLinuxOpenSpecs,
@@ -151,6 +153,13 @@ const execFileAsync = promisify(execFile);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const updaterE2eBuild = typeof __OPENCHAMBER_UPDATER_E2E_BUILD__ !== 'undefined'
+  && __OPENCHAMBER_UPDATER_E2E_BUILD__ === true;
+const packagedUpdaterSmokeRequested = shouldRunPackagedUpdaterSmoke({
+  app,
+  environment: process.env,
+  testBuild: updaterE2eBuild,
+});
 // This process runs quota/provider fetches under Node/undici, whose happy-eyeballs
 // default aborts each connect attempt after 250ms — distant provider endpoints
 // routinely need longer handshakes, surfacing as "fetch failed" (#3399). No-op on
@@ -245,7 +254,7 @@ try {
 }
 
 try {
-  if (!app.isDefaultProtocolClient(DEEP_LINK_PROTOCOL)) {
+  if (!packagedUpdaterSmokeRequested && !app.isDefaultProtocolClient(DEEP_LINK_PROTOCOL)) {
     app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL);
   }
 } catch (error) {
@@ -3650,8 +3659,9 @@ const resolveInitialUrl = async ({ onPlainLocalBoot = null } = {}) => {
   return { initialUrl, localOrigin, localUiUrl, bootOutcome, apiBaseUrl, clientToken, requestHeaders };
 };
 
-const UPDATER_E2E_BUILD = typeof __OPENCHAMBER_UPDATER_E2E_BUILD__ !== 'undefined'
-  && __OPENCHAMBER_UPDATER_E2E_BUILD__ === true;
+const UPDATER_E2E_BUILD = updaterE2eBuild;
+// J2K macOS builds update from the fork's private desktop channel.
+const J2K_DESKTOP_BUILD = process.env.OPENCHAMBER_J2K_DESKTOP_BUILD === '1';
 
 const readUpdateChannel = () => normalizeUpdateChannel(readSettingsRoot().desktopUpdateChannel, APP_VERSION);
 
@@ -3666,7 +3676,12 @@ const applyUpdaterChannel = (channel) => {
   // An update found on the other channel is not this channel's; the next
   // check starts clean (a failed feed otherwise keeps it, #5921).
   if (state.updaterChannel !== null) state.pendingUpdate = null;
-  const feed = resolveUpdaterFeed({ testBuild: UPDATER_E2E_BUILD, channel });
+  const feed = resolveUpdaterFeed({
+    testBuild: UPDATER_E2E_BUILD,
+    channel,
+    j2kBuild: J2K_DESKTOP_BUILD,
+    platform: process.platform,
+  });
   // Both published feeds carry the Windows ARM64 manifest; the E2E fixture does not.
   const updaterChannel = feed === PRODUCTION_UPDATER_FEED || feed === CANARY_UPDATER_FEED
     ? resolveUpdaterChannel({ platform: process.platform, architecture: process.arch })
@@ -3692,7 +3707,7 @@ const setupAutoUpdater = () => {
   }
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
-  autoUpdater.allowPrerelease = false;
+  autoUpdater.allowPrerelease = resolveUpdaterPrereleasePolicy({ platform: process.platform, j2kBuild: J2K_DESKTOP_BUILD });
   autoUpdater.fullChangelog = true;
   autoUpdater.disableWebInstaller = false;
   autoUpdater.logger = log;
@@ -6358,6 +6373,11 @@ const scheduleCompileCacheSettle = () => {
 
 app.whenReady().then(async () => {
   if (wasEarlyWindowClosed()) return;
+  if (packagedUpdaterSmokeRequested) {
+    await runPackagedUpdaterSmoke({ app, autoUpdater });
+    app.exit(0);
+    return;
+  }
   const loginItemSettings = readLoginItemSettings();
   const isBackgroundStart = shouldStartInBackground(loginItemSettings);
   // The window goes up before anything else so the splash renders while the

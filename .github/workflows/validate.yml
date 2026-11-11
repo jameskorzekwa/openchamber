@@ -1,0 +1,183 @@
+name: J2K Validate
+
+on:
+  push:
+    branches:
+      - 'j2k/current'
+      - 'j2k/**'
+  pull_request:
+    branches:
+      - 'j2k/current'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: j2k-validate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  NODE_VERSION: 22.22.0
+  NPM_VERSION: 11.6.2
+
+jobs:
+  validate:
+    name: Typecheck, lint, test, build, and smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Resolve pinned Bun from source
+        id: bun
+        run: |
+          set -euo pipefail
+          pin="$(jq -r '.packageManager // ""' package.json)"
+          [[ "$pin" =~ ^bun@([0-9]+\.[0-9]+\.[0-9]+)$ ]] || { echo "package.json packageManager must pin bun@X.Y.Z; got '$pin'" >&2; exit 1; }
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "BUN_VERSION=${BASH_REMATCH[1]}" >> "$GITHUB_ENV"
+
+      - name: Set up pinned Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ steps.bun.outputs.version }}
+
+      - name: Set up exact Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Verify toolchain identity
+        run: |
+          set -euo pipefail
+          test "$(bun --version)" = "$BUN_VERSION"
+          test "$(node --version)" = "v$NODE_VERSION"
+          npm install --global "npm@$NPM_VERSION"
+          test "$(npm --version)" = "$NPM_VERSION"
+          test "$(node -p 'require(`./package.json`).packageManager')" = "bun@$BUN_VERSION"
+
+      - name: Capture exact validation runtime target
+        run: |
+          set -euo pipefail
+          test "$(node -p 'process.platform')" = 'linux'
+          test "$(node -p 'process.arch')" = 'x64'
+          test "$(node -p 'process.versions.modules')" = '127'
+          test "$(uname -m)" = 'x86_64'
+          {
+            printf 'TARGET_PLATFORM=%s\n' "$(node -p 'process.platform')"
+            printf 'TARGET_ARCH=%s\n' "$(node -p 'process.arch')"
+            printf 'TARGET_NODE_ABI=%s\n' "$(node -p 'process.versions.modules')"
+          } >> "$GITHUB_ENV"
+
+      - name: Install locked dependencies
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: |
+          set -euo pipefail
+          bun run type-check
+
+      - name: Lint
+        run: |
+          set -euo pipefail
+          bun run lint
+
+      - name: Test
+        run: |
+          set -euo pipefail
+          bun run test
+
+      - name: Build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          set -euo pipefail
+          bun run build
+
+      - name: Pack and validate relocatable web artifact
+        id: pack
+        run: |
+          set -euo pipefail
+          mkdir artifacts
+          package_version="$(node -p 'require(`./packages/web/package.json`).version')"
+          tarball="openchamber-web-$package_version.tgz"
+          node tools/channel-release/channel-release.mjs pack-package \
+            --version "$package_version" \
+            --source-commit "${{ github.sha }}" \
+            --platform "$TARGET_PLATFORM" \
+            --arch "$TARGET_ARCH" \
+            --node-abi "$TARGET_NODE_ABI" \
+            --output-dir artifacts
+          node tools/channel-release/channel-release.mjs verify-package \
+            --tarball "artifacts/$tarball" \
+            --version "$package_version" \
+            --source-commit "${{ github.sha }}" \
+            --platform "$TARGET_PLATFORM" \
+            --arch "$TARGET_ARCH" \
+            --node-abi "$TARGET_NODE_ABI"
+          printf 'tarball=%s\nversion=%s\n' "$tarball" "$package_version" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke installed web artifact
+        run: |
+          set -euo pipefail
+          node tools/channel-release/smoke-installed-package.mjs \
+            --tarball "artifacts/${{ steps.pack.outputs.tarball }}" \
+            --version "${{ steps.pack.outputs.version }}" \
+            --source-commit "${{ github.sha }}" \
+            --platform "$TARGET_PLATFORM" \
+            --arch "$TARGET_ARCH" \
+            --node-abi "$TARGET_NODE_ABI"
+
+      - name: Upload validated web artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: validated-web-${{ github.sha }}
+          path: artifacts/${{ steps.pack.outputs.tarball }}
+          if-no-files-found: error
+          retention-days: 7
+
+  report-release-branch-result:
+    name: Report release branch validation
+    needs: validate
+    if: >-
+      always() &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      startsWith(github.ref_name, 'j2k/v')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+    steps:
+      - name: Check out trusted recovery renderer
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Defer failure recovery to trusted workflow-run handler
+        env:
+          BRANCH: ${{ github.ref_name }}
+          RESULT: ${{ needs.validate.result }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$BRANCH" =~ ^j2k/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Ignoring non-release branch $BRANCH."
+            exit 0
+          fi
+          if [[ "$RESULT" == 'success' ]]; then
+            exit 0
+          fi
+          echo "Validation ended with $RESULT; converting it to a failure for the trusted workflow-run recovery handler." >&2
+          exit 1

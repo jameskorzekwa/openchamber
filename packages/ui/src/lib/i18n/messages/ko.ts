@@ -62,6 +62,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   'quota.family.zen': 'Zen 모델',
@@ -239,6 +240,7 @@ export const dict: Record<I18nKey, string> = {
   ...tooltipsWorkspaceI18n['ko'],
   ...tooltipsPanelI18n['ko'],
   ...tooltipsChatI18n['ko'],
+  ...updateStatusI18n.ko,
   'terminalView.actions.attachSelection': '선택한 출력 첨부',
   'terminalView.actions.copySelection': '선택한 출력 복사',
   'terminalView.toast.selectionCopied': '출력을 복사했습니다',
@@ -827,6 +829,11 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.export.dialog.includeSubtasks': '서브 에이전트 작업 포함',
   'sessions.sidebar.session.export.dialog.confirm': '내보내기',
   'sessions.sidebar.session.status.active': '활성 세션',
+  'sessions.sidebar.session.status.waitingSingleDescription': '{description} 대기 중',
+  'sessions.sidebar.session.status.waitingSingleDefault': '백그라운드 프로세스를 기다리는 중',
+  'sessions.sidebar.session.status.waitingMany': '백그라운드 프로세스 {count}개를 기다리는 중',
+  'sessions.sidebar.session.status.waitingBadgeSingle': '대기 중',
+  'sessions.sidebar.session.status.waitingBadgeMany': '대기 중 · {count}',
   'sessions.sidebar.session.status.unread': '읽지 않은 업데이트',
   'sessions.sidebar.session.status.backgroundSubagent': '하위 에이전트가 백그라운드에서 실행 중',
   'sessions.sidebar.session.status.backgroundCommand': '명령이 백그라운드에서 실행 중',
@@ -838,6 +845,14 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.status.questionPending': '대기 중인 질문',
   'sessions.sidebar.session.status.activeFor': '{duration} 동안 활성 상태',
   'sessions.sidebar.session.status.lastTurnDuration': '마지막 턴 소요 시간 {duration}',
+  'chat.ptyWaiting.backgroundProcess': '백그라운드 프로세스',
+  'chat.backgroundWork.label': '백그라운드에서 실행 중',
+  'chat.backgroundWork.ariaLabel': '백그라운드에서 실행 중: {summary}',
+  'chat.backgroundWork.subtaskCountOne': '하위 작업 1개',
+  'chat.backgroundWork.subtaskCountMany': '하위 작업 {count}개',
+  'chat.backgroundWork.processCountOne': '프로세스 1개',
+  'chat.backgroundWork.processCountMany': '프로세스 {count}개',
+  'chat.backgroundWork.subtaskUntitled': '하위 작업',
   'sessions.sidebar.session.subsessions.collapse': '하위 세션 접기',
   'sessions.sidebar.session.subsessions.expand': '하위 세션 펼치기',
   'sessions.sidebar.dialogs.deleteSession.title': '세션 삭제?',

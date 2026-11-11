@@ -1,95 +1,125 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
+import fsp from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import request from 'supertest';
 
-vi.mock('child_process', () => ({
-  spawn: vi.fn(),
-  spawnSync: vi.fn(),
-}));
-
-vi.mock('../package-manager.js', () => ({
-  checkForUpdates: vi.fn(),
-  getUpdateCommand: vi.fn(),
-  detectPackageManagerDetails: vi.fn(),
-  isUnmanagedInstall: vi.fn(),
-}));
-
-const childProcess = await import('child_process');
-const packageManager = await import('../package-manager.js');
 const { registerOpenChamberRoutes } = await import('./openchamber-routes.js');
+const checkForUpdates = vi.fn();
+const spawnSync = vi.fn();
+const spawn = vi.fn(() => ({ pid: 4321, unref: vi.fn() }));
+const rollbackService = vi.fn();
+const applyService = vi.fn();
+const rollbackState = { servicePath: '/tmp/openchamber.service', originalService: 'c2VydmljZQ==', serviceMode: 0o600 };
+const migrateSystemdServiceToManagedLauncher = vi.fn(() => ({ apply: applyService, rollback: rollbackService, rollbackState }));
+const writeRestartTransaction = vi.fn(async () => {});
+const activateRestartTransaction = vi.fn(async () => {});
+const cancelRestartTransaction = vi.fn(async () => true);
 
-const createApp = ({
-  environment = {},
-  storedOptions = {},
-  desktopUpdater,
-  platform = 'linux',
-  execPath = '/usr/bin/node',
-  plistExists = false,
-} = {}) => {
+function createInstaller() {
+  let status = {
+    schemaVersion: 1,
+    state: 'installed',
+    currentVersion: '1.0.0',
+    targetVersion: null,
+    previousVersion: null,
+    error: null,
+    updatedAt: '2026-08-26T00:00:00.000Z',
+  };
+  return {
+    getStatus: vi.fn(() => status),
+    isInstalling: vi.fn(() => status.state === 'downloading' || status.state === 'installing' || status.state === 'restarting'),
+    noteAvailable: vi.fn((info) => {
+      status = { ...status, state: 'available', targetVersion: info.version };
+    }),
+    checkForUpdate: vi.fn(async () => {
+      const info = await checkForUpdates();
+      status = { ...status, state: 'available', targetVersion: info.version };
+      return { ...info, channel: 'j2k', channelRepository: 'jameskorzekwa/openchamber' };
+    }),
+    beginInstall: vi.fn(async ({ targetVersion, prepareRestart, handoffRestart, cancelRestart }) => {
+      const context = {
+        installRoot: '/tmp/openchamber-install',
+        statusPath: '/tmp/openchamber-install/update-status.json',
+        targetVersion,
+        targetRevision: '2'.repeat(40),
+        targetDirectory: '/tmp/openchamber-install/releases/2.0.0',
+        previousVersion: '1.0.0',
+        previousRevision: '1'.repeat(40),
+        previousDirectory: '/tmp/openchamber-install/archives/1.0.0',
+      };
+      const restartPreparation = await prepareRestart(context);
+      status = { ...status, state: 'restarting', targetVersion };
+      const completion = handoffRestart({ ...context, restartPreparation }).catch(async (error) => {
+        status = { ...status, state: 'rollback', error: error.message };
+        await cancelRestart({ restartPreparation, error });
+        throw error;
+      });
+      return { completion };
+    }),
+  };
+}
+
+function createApp({ environment = {}, storedOptions = {}, installer = createInstaller(), platform = 'linux', survivingTransaction = null, canonicalManagedInstallRoot = null, desktopUpdater, selfUpdate } = {}) {
   const app = express();
+  const processMock = {
+    env: environment,
+    platform,
+    pid: 1234,
+    execPath: process.execPath,
+    kill: vi.fn(),
+  };
   const dependencies = {
     fs: {
-      existsSync: vi.fn((targetPath) => {
-        if (typeof targetPath === 'string' && targetPath.endsWith('dev.openchamber.web.plist')) {
-          return plistExists;
-        }
-        return false;
-      }),
-      mkdirSync: vi.fn(),
-      writeFileSync: vi.fn(),
-      openSync: vi.fn(() => 7),
-      closeSync: vi.fn(),
+      existsSync: vi.fn(() => false),
       promises: {
-        readFile: vi.fn(async () => JSON.stringify({
-          launchMode: 'foreground',
-          port: 7897,
-          ...storedOptions,
-        })),
+        realpath: vi.fn(async (filePath) => canonicalManagedInstallRoot || filePath),
+        readFile: vi.fn(async (filePath) => {
+          if (String(filePath).endsWith('restart-transaction.json')) {
+            if (survivingTransaction) return JSON.stringify(survivingTransaction);
+            throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+          }
+          return JSON.stringify({ launchMode: 'foreground', port: 7897, ...storedOptions });
+        }),
+        rm: vi.fn(async () => {}),
       },
     },
-    os: {
-      homedir: () => '/home/test',
-    },
+    os,
     path,
-    process: {
-      env: environment,
-      platform,
-      execPath,
-      exit: vi.fn(),
-    },
-    server: {
-      address: () => ({ port: 7897 }),
-      close: vi.fn(),
-    },
+    process: processMock,
+    server: { address: () => ({ port: 7897 }) },
+    serverStartedAt: '2026-08-26T00:00:00.000Z',
     __dirname: '/opt/openchamber/server',
     openchamberDataDir: '/tmp/openchamber',
+    openchamberVersion: '1.0.0',
     modelsDevApiUrl: 'https://models.example.test',
     modelsMetadataCacheTtl: 0,
     readSettingsFromDiskMigrated: vi.fn(),
     fetchFreeZenModels: vi.fn(),
     getCachedZenModels: vi.fn(),
     desktopUpdater,
+    selfUpdate,
+    createValidatedReleaseInstaller: vi.fn(() => installer),
+    checkForUpdates,
+    spawnSync,
+    spawn,
+    migrateSystemdServiceToManagedLauncher,
+    writeRestartTransaction,
+    activateRestartTransaction,
+    cancelRestartTransaction,
   };
-
   registerOpenChamberRoutes(app, dependencies);
-  return { app, dependencies };
-};
+  return { app, dependencies, installer };
+}
 
 beforeEach(() => {
-  packageManager.checkForUpdates.mockResolvedValue({
-    available: true,
-    version: '1.17.1',
-  });
-  packageManager.detectPackageManagerDetails.mockReturnValue({
-    packageManager: 'npm',
-  });
-  packageManager.getUpdateCommand.mockReturnValue('npm install -g @openchamber/web@latest');
-  packageManager.isUnmanagedInstall.mockReturnValue(false);
+  checkForUpdates.mockResolvedValue({ available: true, version: '2.0.0', currentVersion: '1.0.0' });
+  spawnSync.mockReturnValue({ status: 0, stdout: '', stderr: '' });
+  migrateSystemdServiceToManagedLauncher.mockReturnValue({ apply: applyService, rollback: rollbackService, rollbackState });
 });
 
 afterEach(() => {
-  vi.restoreAllMocks();
   vi.clearAllMocks();
 });
 
@@ -100,7 +130,7 @@ describe('OpenChamber desktop host update route', () => {
       install: vi.fn(async () => ({ available: true, version: '1.17.1' })),
       restart: vi.fn().mockRejectedValueOnce(new Error('Signature rejected')).mockResolvedValue(undefined),
     };
-    const { app } = createApp({ environment: { OPENCHAMBER_RUNTIME: 'desktop' }, desktopUpdater });
+    const { app, installer } = createApp({ environment: { OPENCHAMBER_RUNTIME: 'desktop' }, desktopUpdater });
     const logError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     await request(app).post('/api/openchamber/update-install').expect(200);
@@ -118,35 +148,28 @@ describe('OpenChamber desktop host update route', () => {
     const response = await request(app).get('/api/openchamber/update-check?appType=web&reportUsage=false').expect(200);
     expect(response.body.currentVersion).toBe('1.17.0');
     expect(response.body.updateOwner).toBe('electron-updater');
-    expect(packageManager.checkForUpdates).not.toHaveBeenCalled();
+    expect(installer.checkForUpdate).not.toHaveBeenCalled();
+    expect(installer.beginInstall).not.toHaveBeenCalled();
+    logError.mockRestore();
   });
 
   it('rejects native checks without a bridge and preserves explicit non-web checks', async () => {
-    const { app } = createApp({ environment: { OPENCHAMBER_RUNTIME: 'desktop' } });
+    const { app, installer } = createApp({ environment: { OPENCHAMBER_RUNTIME: 'desktop' } });
     await request(app).get('/api/openchamber/update-check?appType=web').expect(503, {
       available: false, code: 'DESKTOP_UPDATER_UNAVAILABLE', error: 'The desktop updater is not available.',
     });
-    expect(packageManager.checkForUpdates).not.toHaveBeenCalled();
+    expect(installer.checkForUpdate).not.toHaveBeenCalled();
     await request(app).get('/api/openchamber/update-check?appType=desktop-electron').expect(200);
-    expect(packageManager.checkForUpdates).toHaveBeenCalledOnce();
+    expect(checkForUpdates).toHaveBeenCalledOnce();
   });
 
   it('uses electron-updater to check for Web client updates', async () => {
     const desktopUpdater = {
-      check: vi.fn(async () => ({
-        available: true,
-        currentVersion: '1.17.0',
-        version: '1.17.1',
-      })),
+      check: vi.fn(async () => ({ available: true, currentVersion: '1.17.0', version: '1.17.1' })),
       install: vi.fn(),
       restart: vi.fn(),
     };
-    const { app } = createApp({
-      environment: {
-        OPENCHAMBER_RUNTIME: 'desktop',
-      },
-      desktopUpdater,
-    });
+    const { app, installer } = createApp({ environment: { OPENCHAMBER_RUNTIME: 'desktop' }, desktopUpdater });
 
     await request(app)
       .get('/api/openchamber/update-check?appType=web&reportUsage=false')
@@ -159,24 +182,16 @@ describe('OpenChamber desktop host update route', () => {
       });
 
     expect(desktopUpdater.check).toHaveBeenCalledOnce();
-    expect(packageManager.checkForUpdates).not.toHaveBeenCalled();
+    expect(installer.checkForUpdate).not.toHaveBeenCalled();
   });
 
   it('installs through electron-updater and restarts after responding', async () => {
     const desktopUpdater = {
       check: vi.fn(),
-      install: vi.fn(async () => ({
-        available: true,
-        version: '1.17.1',
-      })),
+      install: vi.fn(async () => ({ available: true, version: '1.17.1' })),
       restart: vi.fn(),
     };
-    const { app } = createApp({
-      environment: {
-        OPENCHAMBER_RUNTIME: 'desktop',
-      },
-      desktopUpdater,
-    });
+    const { app, installer } = createApp({ environment: { OPENCHAMBER_RUNTIME: 'desktop' }, desktopUpdater });
 
     await request(app)
       .post('/api/openchamber/update-install')
@@ -193,11 +208,7 @@ describe('OpenChamber desktop host update route', () => {
 
     expect(desktopUpdater.install).toHaveBeenCalledOnce();
     expect(desktopUpdater.restart).toHaveBeenCalledOnce();
-    expect(packageManager.checkForUpdates).not.toHaveBeenCalled();
-    expect(packageManager.detectPackageManagerDetails).not.toHaveBeenCalled();
-    expect(packageManager.getUpdateCommand).not.toHaveBeenCalled();
-    expect(childProcess.spawn).not.toHaveBeenCalled();
-    expect(childProcess.spawnSync).not.toHaveBeenCalled();
+    expect(installer.beginInstall).not.toHaveBeenCalled();
   });
 
   it('refuses a remote install the desktop host must run on its own screen, without restarting', async () => {
@@ -218,21 +229,12 @@ describe('OpenChamber desktop host update route', () => {
   });
 
   it('fails safely when the Electron updater bridge is unavailable', async () => {
-    const { app } = createApp({
-      environment: {
-        OPENCHAMBER_RUNTIME: 'desktop',
-      },
+    const { app, installer } = createApp({ environment: { OPENCHAMBER_RUNTIME: 'desktop' } });
+    await request(app).post('/api/openchamber/update-install').expect(503, {
+      code: 'DESKTOP_UPDATER_UNAVAILABLE',
+      error: 'The desktop updater is not available.',
     });
-
-    await request(app)
-      .post('/api/openchamber/update-install')
-      .expect(503, {
-        code: 'DESKTOP_UPDATER_UNAVAILABLE',
-        error: 'The desktop updater is not available.',
-      });
-
-    expect(packageManager.checkForUpdates).not.toHaveBeenCalled();
-    expect(childProcess.spawn).not.toHaveBeenCalled();
+    expect(installer.beginInstall).not.toHaveBeenCalled();
   });
 });
 
@@ -245,329 +247,199 @@ describe('OpenChamber foreground update route', () => {
     expect(response.body).toMatchObject({ available: true, installBlocked: 'service-manager' });
   });
 
-  it('leaves the update installable for a systemd-owned or daemon server', async () => {
+  it('leaves the update installable for a systemd-owned server', async () => {
     const systemd = createApp({ environment: { INVOCATION_ID: 'systemd-invocation' } });
-    const daemon = createApp({ storedOptions: { launchMode: 'daemon' } });
 
-    for (const { app } of [systemd, daemon]) {
+    for (const { app } of [systemd]) {
       const response = await request(app).get('/api/openchamber/update-check?appType=web').expect(200);
       expect(response.body.installBlocked).toBeUndefined();
     }
   });
 
-  it('leaves the update installable for a macOS launchd foreground server', async () => {
-    const launchd = createApp({
-      platform: 'darwin',
-      environment: { XPC_SERVICE_NAME: 'dev.openchamber.web' },
-      storedOptions: { launchMode: 'foreground' },
-      plistExists: true,
-    });
-    const response = await request(launchd.app).get('/api/openchamber/update-check?appType=web').expect(200);
-    expect(response.body.installBlocked).toBeUndefined();
+});
+
+describe('OpenChamber host-owned update routes', () => {
+  it('reports no self-update and never consults the channel when the host owns updates', async () => {
+    const { app, installer } = createApp({ selfUpdate: false });
+    const response = await request(app).get('/api/openchamber/update-check?appType=web').expect(200);
+    expect(response.body).toMatchObject({ available: false, currentVersion: '1.0.0', version: null, updateOwner: 'external', installation: { state: 'installed' } });
+    expect(installer.checkForUpdate).not.toHaveBeenCalled();
+    expect(installer.noteAvailable).not.toHaveBeenCalled();
   });
 
-  it('rejects a foreground update when the server is not owned by systemd', async () => {
-    const { app } = createApp();
-
-    await request(app)
-      .post('/api/openchamber/update-install')
-      .expect(409, {
-        error: 'Foreground servers must be updated by their service manager. Set OPENCHAMBER_SYSTEMD_UNIT when running under systemd, or run openchamber update and restart the service.',
-      });
-
-    expect(childProcess.spawnSync).not.toHaveBeenCalled();
+  it('refuses installation when the host owns updates', async () => {
+    const { app, installer } = createApp({ selfUpdate: false });
+    await request(app).post('/api/openchamber/update-install').expect(409, {
+      code: 'UPDATE_OWNER_EXTERNAL',
+      error: 'OpenChamber updates are managed by the host, not from this UI.',
+    });
+    expect(installer.beginInstall).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
   });
 
-  it('rejects an unsafe systemd unit override before starting an update job', async () => {
-    const { app } = createApp({
-      environment: {
-        INVOCATION_ID: 'systemd-invocation',
-        OPENCHAMBER_SYSTEMD_UNIT: 'openchamber.service; rm -rf /',
-      },
-    });
-
-    await request(app)
-      .post('/api/openchamber/update-install')
-      .expect(409, {
-        error: 'Foreground servers must be updated by their service manager. Set OPENCHAMBER_SYSTEMD_UNIT when running under systemd, or run openchamber update and restart the service.',
-      });
-
-    expect(childProcess.spawnSync).not.toHaveBeenCalled();
-  });
-
-  it('queues the install in a transient systemd unit and returns its job identifier', async () => {
-    vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
-    childProcess.spawnSync.mockReturnValue({ status: 0, stdout: '', stderr: '' });
-    const { app } = createApp({
-      environment: {
-        INVOCATION_ID: 'systemd-invocation',
-        OPENCHAMBER_SYSTEMD_UNIT: 'openchamber@wsl.service',
-        PATH: '/home/syu/.npm-global/bin:/usr/bin:/bin',
-      },
-    });
-
-    await request(app)
-      .post('/api/openchamber/update-install')
-      .expect(200, {
-        success: true,
-        message: 'Update queued; OpenChamber will restart after installation completes',
-        version: '1.17.1',
-        packageManager: 'npm',
-        autoRestart: true,
-        restartManager: 'systemd',
-        jobId: 'openchamber-update-1700000000000',
-        logPath: 'journalctl --user-unit openchamber-update-1700000000000.service',
-      });
-
-    expect(childProcess.spawnSync).toHaveBeenCalledWith('systemd-run', [
-      '--user',
-      '--unit=openchamber-update-1700000000000',
-      '--collect',
-      '--service-type=exec',
-      '--setenv=PATH=/home/syu/.npm-global/bin:/usr/bin:/bin',
-      '/bin/sh',
-      '-c',
-      "set -eu\nnpm install -g @openchamber/web@latest\nsystemctl --user restart 'openchamber@wsl.service'",
-    ], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 5000,
-    });
-  });
-
-  it('rejects foreground update on macOS when launchd plist does not exist', async () => {
-    const { app } = createApp({
-      platform: 'darwin',
-      storedOptions: { launchMode: 'foreground' },
-      plistExists: false,
-    });
-
-    await request(app)
-      .post('/api/openchamber/update-install')
-      .expect(409, {
-        error: 'Foreground servers must be updated by their service manager. Set OPENCHAMBER_SYSTEMD_UNIT when running under systemd, or run openchamber update and restart the service.',
-      });
-
-    expect(childProcess.spawnSync).not.toHaveBeenCalled();
-    expect(childProcess.spawn).not.toHaveBeenCalled();
-  });
-
-  it('rejects foreground update on macOS when the plist exists but the server was not started by launchd', async () => {
-    const { app } = createApp({
-      platform: 'darwin',
-      storedOptions: { launchMode: 'foreground' },
-      plistExists: true,
-    });
-
-    await request(app)
-      .post('/api/openchamber/update-install')
-      .expect(409);
-
-    expect(childProcess.spawn).not.toHaveBeenCalled();
-  });
-
-  it('allows foreground update on macOS when launchd plist exists and invokes launchd restart command', async () => {
-    const { app } = createApp({
-      platform: 'darwin',
-      environment: { XPC_SERVICE_NAME: 'dev.openchamber.web' },
-      storedOptions: { launchMode: 'foreground' },
-      plistExists: true,
-    });
-    childProcess.spawn.mockReturnValue({ unref: vi.fn() });
-
-    await request(app)
-      .post('/api/openchamber/update-install')
-      .expect(200, {
-        success: true,
-        message: 'Update starting, server will restart shortly',
-        version: '1.17.1',
-        packageManager: 'npm',
-        autoRestart: true,
-        restartManager: 'service',
-      });
-
-    await new Promise((resolve) => setTimeout(resolve, 600));
-
-    expect(childProcess.spawn).toHaveBeenCalledWith(
-      'sh',
-      [
-        '-c',
-        expect.stringContaining(
-          "launchctl kickstart -k gui/$(id -u)/dev.openchamber.web || launchctl bootstrap gui/$(id -u) '/home/test/Library/LaunchAgents/dev.openchamber.web.plist'"
-        ),
-      ],
-      expect.objectContaining({
-        detached: true,
-      })
-    );
-  });
-
-  it('allows daemon update on macOS without launchd plist and invokes CLI restart command', async () => {
-    const { app } = createApp({
-      platform: 'darwin',
-      storedOptions: { launchMode: 'daemon', port: 7897 },
-      plistExists: false,
-    });
-    childProcess.spawn.mockReturnValue({ unref: vi.fn() });
-
-    await request(app)
-      .post('/api/openchamber/update-install')
-      .expect(200, {
-        success: true,
-        message: 'Update starting, server will restart shortly',
-        version: '1.17.1',
-        packageManager: 'npm',
-        autoRestart: true,
-        restartManager: 'cli',
-      });
-
-    await new Promise((resolve) => setTimeout(resolve, 600));
-
-    expect(childProcess.spawn).toHaveBeenCalledWith(
-      'sh',
-      [
-        '-c',
-        expect.stringContaining(
-          "('/usr/bin/node' '/opt/openchamber/bin/cli.js' serve --port 7897) || (openchamber serve --port 7897)"
-        ),
-      ],
-      expect.objectContaining({
-        detached: true,
-      })
-    );
-  });
-
-  it('allows daemon update on macOS with launchd plist present and still invokes CLI restart command', async () => {
-    const { app } = createApp({
-      platform: 'darwin',
-      storedOptions: { launchMode: 'daemon', port: 7897 },
-      plistExists: true,
-    });
-    childProcess.spawn.mockReturnValue({ unref: vi.fn() });
-
-    await request(app)
-      .post('/api/openchamber/update-install')
-      .expect(200, {
-        success: true,
-        message: 'Update starting, server will restart shortly',
-        version: '1.17.1',
-        packageManager: 'npm',
-        autoRestart: true,
-        restartManager: 'cli',
-      });
-
-    await new Promise((resolve) => setTimeout(resolve, 600));
-
-    expect(childProcess.spawn).toHaveBeenCalledWith(
-      'sh',
-      [
-        '-c',
-        expect.stringContaining(
-          "('/usr/bin/node' '/opt/openchamber/bin/cli.js' serve --port 7897) || (openchamber serve --port 7897)"
-        ),
-      ],
-      expect.objectContaining({
-        detached: true,
-      })
-    );
+  it('keeps non-web client checks unaffected by the host-owned flag', async () => {
+    const { app, installer } = createApp({ selfUpdate: false });
+    const response = await request(app).get('/api/openchamber/update-check?appType=mobile-capacitor&platform=android').expect(200);
+    expect(checkForUpdates).toHaveBeenCalledOnce();
+    expect(installer.checkForUpdate).not.toHaveBeenCalled();
+    expect(response.body).toMatchObject({ available: true, version: '2.0.0' });
   });
 });
 
-describe('OpenChamber update route for a copy no package manager installed', () => {
-  beforeEach(() => {
-    packageManager.isUnmanagedInstall.mockReturnValue(true);
-  });
-
-  it('marks an available update as blocked so clients show no Update button', async () => {
-    const { app } = createApp({ storedOptions: { launchMode: 'daemon' } });
-
-    const response = await request(app).get('/api/openchamber/update-check?appType=web').expect(200);
-
-    expect(response.body).toMatchObject({ available: true, installBlocked: 'manual-install' });
-  });
-
-  it('refuses the install instead of adding a global copy next to this one', async () => {
-    for (const environment of [{}, { CONTAINER: '1' }]) {
-      const { app } = createApp({ environment, storedOptions: { launchMode: 'daemon' } });
-
-      await request(app)
-        .post('/api/openchamber/update-install')
-        .expect(409, {
-          error: 'This copy can\'t update itself. Install the new version the way you installed it.',
-        });
+describe('OpenChamber validated update routes', () => {
+  it('uses the canonical managed root for installation and restart recovery', async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'openchamber-route-root-'));
+    const actualInstallRoot = path.join(root, 'managed-install');
+    const configuredInstallRoot = path.join(root, 'install');
+    const transactionId = '12345678-1234-4123-8123-123456789abc';
+    try {
+      await fsp.mkdir(actualInstallRoot);
+      await fsp.symlink(actualInstallRoot, configuredInstallRoot);
+      const canonicalInstallRoot = await fsp.realpath(actualInstallRoot);
+      const { dependencies } = createApp({
+        environment: { OPENCHAMBER_MANAGED_INSTALL_ROOT: configuredInstallRoot },
+        survivingTransaction: { schemaVersion: 3, transactionId },
+      });
+      expect(dependencies.createValidatedReleaseInstaller).toHaveBeenCalledWith(expect.objectContaining({ installRoot: canonicalInstallRoot }));
+      await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
+      expect(spawn).toHaveBeenCalledWith(process.execPath, expect.arrayContaining([
+        '--delayed-fallback',
+        path.join(canonicalInstallRoot, 'restart-transaction.json'),
+        '--transaction-id',
+        transactionId,
+      ]), expect.objectContaining({ detached: true }));
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
     }
+  });
 
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    expect(packageManager.detectPackageManagerDetails).not.toHaveBeenCalled();
-    expect(packageManager.getUpdateCommand).not.toHaveBeenCalled();
-    expect(childProcess.spawn).not.toHaveBeenCalled();
-    expect(childProcess.spawnSync).not.toHaveBeenCalled();
+  it('reports available and lifecycle state without claiming installation', async () => {
+    const { app, installer } = createApp();
+    const response = await request(app).get('/api/openchamber/update-check?appType=web').expect(200);
+    expect(installer.checkForUpdate).toHaveBeenCalledOnce();
+    expect(response.body).toMatchObject({ available: true, channel: 'j2k', channelRepository: 'jameskorzekwa/openchamber', installation: { state: 'available', targetVersion: '2.0.0' } });
+
+    const statusResponse = await request(app).get('/api/openchamber/update-status').expect(200);
+    expect(statusResponse.body).toMatchObject({ state: 'available' });
+  });
+
+  it('starts an ID-bound detached fallback for a journal surviving startup', async () => {
+    const transactionId = '12345678-1234-4123-8123-123456789abc';
+    const canonicalManagedInstallRoot = '/Volumes/T9-OpenCode/openchamber';
+    createApp({ survivingTransaction: { schemaVersion: 3, transactionId }, canonicalManagedInstallRoot });
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
+    expect(spawn).toHaveBeenCalledWith(process.execPath, expect.arrayContaining([
+      '--delayed-fallback',
+      path.join(canonicalManagedInstallRoot, 'restart-transaction.json'),
+      '--transaction-id',
+      transactionId,
+    ]), expect.objectContaining({ detached: true }));
+  });
+
+  it('rejects installs without an external process manager', async () => {
+    const { app, installer } = createApp();
+    await request(app).post('/api/openchamber/update-install').expect(409, {
+      error: 'In-app updates require an external process manager. Set OPENCHAMBER_SYSTEMD_UNIT under systemd or OPENCHAMBER_UPDATE_RESTART_ON_EXIT=true for another manager.',
+    });
+    expect(installer.beginInstall).not.toHaveBeenCalled();
+  });
+
+  it('accepts installation and hands restart to an external process manager', async () => {
+    vi.useFakeTimers();
+    const { app, installer, dependencies } = createApp({
+      environment: {
+        OPENCHAMBER_UPDATE_RESTART_ON_EXIT: 'true',
+        OPENCHAMBER_MANAGED_LAUNCHER: path.join(os.homedir(), '.local', 'share', 'openchamber', 'bin', 'openchamber-managed'),
+      },
+    });
+    const response = await request(app).post('/api/openchamber/update-install').expect(202);
+    expect(response.body).toMatchObject({ accepted: true, installation: { state: 'restarting', targetVersion: '2.0.0' } });
+    await vi.waitFor(() => expect(installer.beginInstall).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(dependencies.process.kill).toHaveBeenCalledWith(1234, 0));
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(spawn).toHaveBeenNthCalledWith(1, process.execPath, expect.arrayContaining(['--delayed-fallback', '/tmp/openchamber-install/restart-transaction.json', '--transaction-id']), expect.objectContaining({ detached: true }));
+    expect(spawn).toHaveBeenNthCalledWith(2, process.execPath, expect.arrayContaining(['/tmp/openchamber-install/restart-transaction.json', '--transaction-id']), expect.objectContaining({ detached: true }));
+    await vi.advanceTimersByTimeAsync(250);
+    expect(dependencies.process.kill).toHaveBeenCalledWith(1234, 'SIGTERM');
+    await request(app).post('/api/openchamber/update-install').expect(409);
+    expect(installer.beginInstall).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
+  it('queues only the restart through systemd after installation', async () => {
+    const { app, installer } = createApp({
+      environment: { INVOCATION_ID: 'systemd', OPENCHAMBER_SYSTEMD_UNIT: 'openchamber@home.service' },
+    });
+    await request(app).post('/api/openchamber/update-install').expect(202);
+    await vi.waitFor(() => expect(spawnSync).toHaveBeenCalledTimes(2));
+    expect(migrateSystemdServiceToManagedLauncher).toHaveBeenCalledWith(expect.objectContaining({
+      unit: 'openchamber@home.service',
+      fallbackCliPath: '/opt/openchamber/bin/cli.js',
+    }));
+    expect(writeRestartTransaction).toHaveBeenCalledWith('/tmp/openchamber-install/restart-transaction.json', expect.objectContaining({
+      targetVersion: '2.0.0',
+      targetRevision: '2'.repeat(40),
+      manager: 'systemd',
+      phase: 'prepared',
+      systemd: { unit: 'openchamber@home.service', ...rollbackState },
+    }));
+    expect(spawnSync).toHaveBeenNthCalledWith(1, 'systemd-run', expect.arrayContaining([
+      '--on-active=90s',
+      '--fallback',
+      '/tmp/openchamber-install/restart-transaction.json',
+    ]), expect.objectContaining({ timeout: 5000 }));
+    expect(spawnSync).toHaveBeenNthCalledWith(2, 'systemd-run', expect.arrayContaining([
+      '--collect',
+      process.execPath,
+      '/tmp/openchamber-install/restart-transaction.json',
+    ]), expect.objectContaining({ timeout: 5000 }));
+    expect(writeRestartTransaction.mock.invocationCallOrder[0]).toBeLessThan(spawnSync.mock.invocationCallOrder[0]);
+    expect(spawnSync.mock.invocationCallOrder[0]).toBeLessThan(applyService.mock.invocationCallOrder[0]);
+    expect(installer.beginInstall).toHaveBeenCalledOnce();
+  });
+
+  it('does not exit when a durable supervisor helper cannot be launched', async () => {
+    spawn.mockReturnValueOnce({ pid: 4321, unref: vi.fn() }).mockReturnValueOnce({ pid: undefined, error: new Error('spawn failed'), unref: vi.fn() });
+    const { app, installer, dependencies } = createApp({
+      environment: {
+        OPENCHAMBER_UPDATE_RESTART_ON_EXIT: 'true',
+        OPENCHAMBER_MANAGED_LAUNCHER: path.join(os.homedir(), '.local', 'share', 'openchamber', 'bin', 'openchamber-managed'),
+      },
+    });
+    await request(app).post('/api/openchamber/update-install').expect(202);
+    await vi.waitFor(() => expect(installer.getStatus().state).toBe('rollback'));
+    expect(dependencies.process.kill).not.toHaveBeenCalled();
+    expect(cancelRestartTransaction).toHaveBeenCalled();
+  });
+
+  it('restores the systemd service before installer selection rollback when restart handoff fails', async () => {
+    spawnSync.mockReturnValue({ status: 1, stdout: '', stderr: 'queue failed' });
+    const { app } = createApp({ environment: { INVOCATION_ID: 'systemd' } });
+    await request(app).post('/api/openchamber/update-install').expect(500);
+    await vi.waitFor(() => expect(rollbackService).toHaveBeenCalledOnce());
+  });
+
+  it('rejects malformed systemd ownership and concurrent installs', async () => {
+    const installer = createInstaller();
+    installer.isInstalling.mockReturnValue(true);
+    const { app } = createApp({
+      environment: { INVOCATION_ID: 'systemd', OPENCHAMBER_SYSTEMD_UNIT: 'openchamber.service;rm' },
+      installer,
+    });
+    await request(app).post('/api/openchamber/update-install').expect(409);
+    expect(installer.beginInstall).not.toHaveBeenCalled();
   });
 });
 
 describe('OpenChamber web update route on Windows', () => {
-  it('runs the install-and-restart script from a batch file instead of a cmd.exe /c argument', async () => {
-    const { app, dependencies } = createApp({
+  it('refuses an unmanaged installation rather than bypassing the validated channel with npm', async () => {
+    const { app, installer } = createApp({
       platform: 'win32',
       execPath: 'C:\\Program Files\\nodejs\\node.exe',
       environment: { ComSpec: 'C:\\Windows\\system32\\cmd.exe' },
       storedOptions: { launchMode: 'daemon', port: 7897, uiPassword: 'pa%ss' },
     });
-    childProcess.spawn.mockReturnValue({ unref: vi.fn() });
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    await request(app).post('/api/openchamber/update-install').expect(200);
-    await new Promise((resolve) => setTimeout(resolve, 1300));
-
-    const scriptPath = path.join('/tmp/openchamber', 'update-install.cmd');
-    expect(dependencies.fs.writeFileSync).toHaveBeenCalledWith(scriptPath, expect.any(String), 'utf8');
-    const script = dependencies.fs.writeFileSync.mock.calls[0][1];
-    const lines = script.split('\r\n');
-    expect(lines[0]).toBe('@echo off');
-    // Every preamble line is an echo; none is left to run as a command.
-    expect(lines.filter((line) => line.startsWith('currentVersion=') || line.startsWith('restartCommand='))).toEqual([]);
-    expect(lines).toContain('echo packageManager=npm');
-    expect(lines).toContain('echo restartCommand=^("C:\\Program Files\\nodejs\\node.exe" "/opt/openchamber/bin/cli.js" serve --port 7897^) ^|^| ^(openchamber serve --port 7897^)');
-    // The UI password is never part of the script or its log.
-    expect(script).not.toContain('pa%');
-    // A .cmd shim (npm, pnpm, yarn) must be `call`ed or the script ends there.
-    expect(lines).toContain('call npm install -g @openchamber/web@latest');
-    expect(lines).toContain('ping -n 3 127.0.0.1 >nul');
-    expect(lines.some((line) => line.startsWith('timeout '))).toBe(false);
-    expect(lines).toContain('if %ERRORLEVEL% EQU 0 (');
-    expect(lines.at(-2)).toBe('del "%~f0"');
-    expect(lines).toContain('  ("C:\\Program Files\\nodejs\\node.exe" "/opt/openchamber/bin/cli.js" serve --port 7897) || (openchamber serve --port 7897)');
-
-    // The restarted server reads the password from its environment.
-    expect(childProcess.spawn).toHaveBeenCalledWith(
-      'C:\\Windows\\system32\\cmd.exe',
-      ['/c', scriptPath],
-      expect.objectContaining({
-        detached: true,
-        windowsHide: true,
-        env: expect.objectContaining({ OPENCHAMBER_UI_PASSWORD: 'pa%ss' }),
-      }),
-    );
-    // The listener is closed before the batch is spawned, so the detached
-    // child cannot inherit the socket and hold the port against the restart.
-    expect(dependencies.server.close).toHaveBeenCalledOnce();
-    expect(dependencies.server.close.mock.invocationCallOrder[0]).toBeLessThan(childProcess.spawn.mock.invocationCallOrder[0]);
-    expect(dependencies.process.exit).toHaveBeenCalledWith(0);
-  });
-
-  it('answers 500 and keeps the server up when the batch file cannot be written', async () => {
-    const { app, dependencies } = createApp({ platform: 'win32', storedOptions: { launchMode: 'daemon', port: 7897 } });
-    dependencies.fs.writeFileSync.mockImplementation(() => { throw new Error('EACCES'); });
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    const logError = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-    const response = await request(app).post('/api/openchamber/update-install').expect(500);
-    await new Promise((resolve) => setTimeout(resolve, 1300));
-
-    expect(response.body.error).toContain('update-install.cmd');
-    expect(response.body.error).toContain('EACCES');
-    expect(childProcess.spawn).not.toHaveBeenCalled();
-    expect(dependencies.process.exit).not.toHaveBeenCalled();
-    expect(logError).toHaveBeenCalledOnce();
+    await request(app).post('/api/openchamber/update-install').expect(409);
+    expect(installer.beginInstall).not.toHaveBeenCalled();
   });
 });

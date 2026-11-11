@@ -1,0 +1,284 @@
+import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+import { gzipSync } from 'node:zlib';
+import {
+  ARCHIVE_LIMITS,
+  createRelocatableArchive,
+  stageRelocatablePackage,
+  verifyNativeBinary,
+  verifyRelocatableArchive,
+} from './artifact.mjs';
+
+const version = '1.21.0-j2k.1';
+const sourceCommit = '0123456789abcdef0123456789abcdef01234567';
+const target = { platform: 'darwin', arch: 'arm64', nodeAbi: process.versions.modules };
+
+function writePackage(directory, packageJson) {
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, 'package.json'), JSON.stringify(packageJson));
+}
+
+function fixture() {
+  const root = mkdtempSync(join(tmpdir(), 'channel-artifact-test-'));
+  const packageRoot = join(root, 'package');
+  writePackage(packageRoot, {
+    name: '@openchamber/web',
+    version,
+    bin: { openchamber: './bin/cli.js' },
+    dependencies: { 'dep-a': '1.0.0' },
+    openchamberArtifact: target,
+  });
+  for (const path of ['bin', 'server', 'dist', 'node_modules']) mkdirSync(join(packageRoot, path), { recursive: true });
+  writeFileSync(join(packageRoot, 'bin', 'cli.js'), '#!/usr/bin/env node\n');
+  writeFileSync(join(packageRoot, 'server', 'index.js'), 'export {};\n');
+  writeFileSync(join(packageRoot, 'dist', 'index.html'), '<!doctype html>\n');
+  writeFileSync(join(packageRoot, 'dist', 'build-revision.json'), JSON.stringify({ revision: sourceCommit }));
+  writePackage(join(packageRoot, 'node_modules', 'dep-a'), { name: 'dep-a', version: '1.0.0', dependencies: { 'dep-b': '1.0.0' } });
+  writePackage(join(packageRoot, 'node_modules', 'dep-b'), { name: 'dep-b', version: '1.0.0' });
+  return { root, packageRoot, archive: join(root, 'artifact.tgz') };
+}
+
+function writeOctal(header, offset, length, value) {
+  header.write(`${value.toString(8).padStart(length - 1, '0')}\0`, offset, length, 'ascii');
+}
+
+function tarEntry(name, content = '', type = '0', declaredSize) {
+  const data = Buffer.from(content);
+  const header = Buffer.alloc(512);
+  header.write(name, 0, Math.min(100, Buffer.byteLength(name)), 'utf8');
+  writeOctal(header, 100, 8, type === '5' ? 0o755 : 0o644);
+  writeOctal(header, 108, 8, 0);
+  writeOctal(header, 116, 8, 0);
+  writeOctal(header, 124, 12, declaredSize ?? data.length);
+  writeOctal(header, 136, 12, 0);
+  header.fill(32, 148, 156);
+  header.write(type, 156, 1, 'ascii');
+  header.write('ustar', 257, 5, 'ascii');
+  header.write('00', 263, 2, 'ascii');
+  const checksum = header.reduce((sum, byte) => sum + byte, 0);
+  header.write(`${checksum.toString(8).padStart(6, '0')}\0 `, 148, 8, 'ascii');
+  return Buffer.concat([header, data, Buffer.alloc((512 - (data.length % 512)) % 512)]);
+}
+
+function maliciousArchive(root, entries) {
+  const archive = join(root, 'malicious.tgz');
+  writeFileSync(archive, gzipSync(Buffer.concat([...entries, Buffer.alloc(1024)]), { mtime: 0 }));
+  return archive;
+}
+
+function paxRecord(key, value) {
+  const body = `${key}=${value}\n`;
+  let length = Buffer.byteLength(body) + 3;
+  while (Buffer.byteLength(`${length} ${body}`) !== length) length = Buffer.byteLength(`${length} ${body}`);
+  return `${length} ${body}`;
+}
+
+test('creates and verifies a bounded archive with transitive dependencies', async () => {
+  const value = fixture();
+  try {
+    const created = await createRelocatableArchive(value.packageRoot, value.archive);
+    const verified = verifyRelocatableArchive(value.archive, { expectedVersion: version, sourceCommit, target });
+    const second = join(value.root, 'artifact-second.tgz');
+    await createRelocatableArchive(value.packageRoot, second);
+    assert.ok(created.compressedBytes <= ARCHIVE_LIMITS.compressedBytes);
+    assert.equal(verified.revision, sourceCommit);
+    assert.deepEqual(readFileSync(second), readFileSync(value.archive));
+  } finally {
+    rmSync(value.root, { recursive: true, force: true });
+  }
+});
+
+test('rejects a missing transitive dependency', async () => {
+  const value = fixture();
+  try {
+    rmSync(join(value.packageRoot, 'node_modules', 'dep-b'), { recursive: true });
+    await createRelocatableArchive(value.packageRoot, value.archive);
+    assert.throws(() => verifyRelocatableArchive(value.archive, { expectedVersion: version, sourceCommit, target }), /missing required dependency dep-b/);
+  } finally {
+    rmSync(value.root, { recursive: true, force: true });
+  }
+});
+
+test('rejects package target metadata and incompatible dependency platforms', async () => {
+  const value = fixture();
+  try {
+    const rootPackage = JSON.parse(readFileSync(join(value.packageRoot, 'package.json'), 'utf8'));
+    rootPackage.openchamberArtifact = { platform: 'linux', arch: 'arm64', nodeAbi: target.nodeAbi };
+    writeFileSync(join(value.packageRoot, 'package.json'), JSON.stringify(rootPackage));
+    await createRelocatableArchive(value.packageRoot, value.archive);
+    assert.throws(() => verifyRelocatableArchive(value.archive, { expectedVersion: version, sourceCommit, target }), /target metadata does not match/);
+    rmSync(value.archive);
+
+    rootPackage.openchamberArtifact = target;
+    writeFileSync(join(value.packageRoot, 'package.json'), JSON.stringify(rootPackage));
+    const dependencyPath = join(value.packageRoot, 'node_modules', 'dep-a', 'package.json');
+    const dependency = JSON.parse(readFileSync(dependencyPath, 'utf8'));
+    dependency.os = ['linux'];
+    writeFileSync(dependencyPath, JSON.stringify(dependency));
+    await createRelocatableArchive(value.packageRoot, value.archive);
+    assert.throws(() => verifyRelocatableArchive(value.archive, { expectedVersion: version, sourceCommit, target }), /does not support darwin/);
+  } finally {
+    rmSync(value.root, { recursive: true, force: true });
+  }
+});
+
+test('refuses symlinks before archive creation', async () => {
+  const value = fixture();
+  try {
+    symlinkSync('package.json', join(value.packageRoot, 'link'));
+    await assert.rejects(createRelocatableArchive(value.packageRoot, value.archive), /symlink/);
+  } finally {
+    rmSync(value.root, { recursive: true, force: true });
+  }
+});
+
+test('rejects links, devices, fifos, traversal, duplicates, and oversized entries', () => {
+  const value = fixture();
+  try {
+    for (const [label, entry, pattern] of [
+      ['hardlink', tarEntry('package/hard', 'package/package.json', '1'), /type 1/],
+      ['device', tarEntry('package/device', '', '3'), /type 3/],
+      ['fifo', tarEntry('package/fifo', '', '6'), /type 6/],
+      ['traversal', tarEntry('package/../escape', 'x'), /Unsafe archive path/],
+      ['oversized', tarEntry('package/large', '', '0', ARCHIVE_LIMITS.fileBytes + 1), /exceeds 128 MiB/],
+      ['oversized metadata', tarEntry('PaxHeader', '', 'x', ARCHIVE_LIMITS.metadataBytes + 1), /metadata exceeds 64 KiB/],
+      ['unsupported pax', tarEntry('PaxHeader', paxRecord('size', '1'), 'x'), /unsupported PAX metadata/],
+    ]) {
+      const archive = maliciousArchive(value.root, [entry]);
+      assert.throws(() => verifyRelocatableArchive(archive, { target }), pattern, label);
+      rmSync(archive);
+    }
+    const duplicate = maliciousArchive(value.root, [tarEntry('package/file', 'a'), tarEntry('package/file', 'b')]);
+    assert.throws(() => verifyRelocatableArchive(duplicate, { target }), /duplicate/);
+    rmSync(duplicate);
+    const fileDirectoryCollision = maliciousArchive(value.root, [
+      tarEntry('package/collision', 'file'),
+      tarEntry('package/collision/', '', '5'),
+    ]);
+    assert.throws(() => verifyRelocatableArchive(fileDirectoryCollision, { target }), /duplicate/);
+  } finally {
+    rmSync(value.root, { recursive: true, force: true });
+  }
+});
+
+test('validates Linux x86-64 ELF identity without host tooling', () => {
+  const linuxTarget = { platform: 'linux', arch: 'x64', nodeAbi: '127' };
+  const elf = Buffer.alloc(64);
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]).copy(elf);
+  elf.writeUInt16LE(62, 18);
+  assert.doesNotThrow(() => verifyNativeBinary(elf, linuxTarget, 'binding.node'));
+  elf.writeUInt16LE(183, 18);
+  assert.throws(() => verifyNativeBinary(elf, linuxTarget, 'binding.node'), /not ELF x86-64/);
+});
+
+test('discovers nested native packages and accepts valid node-pty build and prebuild bindings', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'channel-linux-native-test-'));
+  const packageRoot = join(root, 'package');
+  const archive = join(root, 'linux.tgz');
+  const linuxTarget = { platform: 'linux', arch: 'x64', nodeAbi: '127' };
+  const elf = Buffer.alloc(64);
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]).copy(elf);
+  elf.writeUInt16LE(62, 18);
+  try {
+    writePackage(packageRoot, {
+      name: '@openchamber/web', version, bin: { openchamber: './bin/cli.js' }, openchamberArtifact: linuxTarget,
+      dependencies: { 'node-pty': '1.0.0', 'sherpa-onnx-node': '1.0.0' },
+    });
+    for (const path of ['bin', 'server', 'dist', 'node_modules']) mkdirSync(join(packageRoot, path), { recursive: true });
+    writeFileSync(join(packageRoot, 'bin/cli.js'), '#!/usr/bin/env node\n');
+    writeFileSync(join(packageRoot, 'server/index.js'), 'export {};\n');
+    writeFileSync(join(packageRoot, 'dist/index.html'), '<!doctype html>\n');
+    writeFileSync(join(packageRoot, 'dist/build-revision.json'), JSON.stringify({ revision: sourceCommit }));
+    const nodePty = join(packageRoot, 'node_modules', 'node-pty');
+    writePackage(nodePty, { name: 'node-pty', version: '1.0.0' });
+    mkdirSync(join(nodePty, 'prebuilds', 'linux-x64'), { recursive: true });
+    writeFileSync(join(nodePty, 'prebuilds', 'linux-x64', 'pty.node'), elf);
+    mkdirSync(join(nodePty, 'build', 'Release'), { recursive: true });
+    writeFileSync(join(nodePty, 'build', 'Release', 'pty.node'), elf);
+    const sherpa = join(packageRoot, 'node_modules', 'sherpa-onnx-node');
+    writePackage(sherpa, { name: 'sherpa-onnx-node', version: '1.0.0', dependencies: { 'sherpa-onnx-linux-x64': '1.0.0' } });
+    const native = join(sherpa, 'node_modules', 'sherpa-onnx-linux-x64');
+    writePackage(native, { name: 'sherpa-onnx-linux-x64', version: '1.0.0' });
+    writeFileSync(join(native, 'sherpa-onnx.node'), elf);
+    writeFileSync(join(native, 'libsherpa.so'), elf);
+    await createRelocatableArchive(packageRoot, archive);
+    assert.doesNotThrow(() => verifyRelocatableArchive(archive, { expectedVersion: version, sourceCommit, target: linuxTarget }));
+
+    const wrongArchitecture = Buffer.from(elf);
+    wrongArchitecture.writeUInt16LE(183, 18);
+    writeFileSync(join(nodePty, 'build', 'Release', 'pty.node'), wrongArchitecture);
+    rmSync(archive);
+    await createRelocatableArchive(packageRoot, archive);
+    assert.throws(
+      () => verifyRelocatableArchive(archive, { expectedVersion: version, sourceCommit, target: linuxTarget }),
+      /not ELF x86-64/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('does not extract an archive that fails final identity validation', async () => {
+  const value = fixture();
+  const extraction = join(value.root, 'extracted');
+  try {
+    await createRelocatableArchive(value.packageRoot, value.archive);
+    assert.throws(() => verifyRelocatableArchive(value.archive, { expectedVersion: '9.9.9', sourceCommit, target, extractDirectory: extraction }), /version/);
+    assert.equal(existsSync(extraction), false);
+  } finally {
+    rmSync(value.root, { recursive: true, force: true });
+  }
+});
+
+test('stages a workspace dependency through its published files and rejects other out-of-tree links', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'channel-artifact-workspace-'));
+  const repositoryRoot = join(root, 'repo');
+  const packageRoot = join(repositoryRoot, 'packages', 'web');
+  const sdkRoot = join(repositoryRoot, 'packages', 'sdk');
+  const stagingRoot = join(root, 'staging');
+  try {
+    writePackage(packageRoot, {
+      name: '@openchamber/web', version, bin: { openchamber: './bin/cli.js' },
+      dependencies: { '@openchamber/sdk': 'workspace:*', 'dep-a': '1.0.0' },
+    });
+    for (const path of ['bin', 'server', 'dist', 'public']) mkdirSync(join(packageRoot, path), { recursive: true });
+    writeFileSync(join(packageRoot, 'bin/cli.js'), '#!/usr/bin/env node\n');
+    writeFileSync(join(packageRoot, 'server/index.js'), 'export {};\n');
+    writeFileSync(join(packageRoot, 'dist/index.html'), '<!doctype html>\n');
+    writeFileSync(join(packageRoot, 'README.md'), '# web\n');
+    writePackage(sdkRoot, { name: '@openchamber/sdk', version, files: ['dist', 'README.md'], dependencies: { 'dep-a': '1.0.0' } });
+    mkdirSync(join(sdkRoot, 'dist'), { recursive: true });
+    mkdirSync(join(sdkRoot, 'src'), { recursive: true });
+    mkdirSync(join(sdkRoot, 'examples', 'hello'), { recursive: true });
+    writeFileSync(join(sdkRoot, 'dist/index.js'), 'export {};\n');
+    writeFileSync(join(sdkRoot, 'src/index.ts'), 'export {};\n');
+    writePackage(join(sdkRoot, 'examples', 'hello'), { name: '@openchamber/example-hello', version, dependencies: { 'dep-missing': '1.0.0' } });
+    writePackage(join(repositoryRoot, 'node_modules', 'dep-a'), { name: 'dep-a', version: '1.0.0' });
+    mkdirSync(join(repositoryRoot, 'node_modules', '@openchamber'), { recursive: true });
+    symlinkSync(join('..', '..', 'packages', 'sdk'), join(repositoryRoot, 'node_modules', '@openchamber', 'sdk'));
+
+    stageRelocatablePackage({ repositoryRoot, packageRoot, stagingRoot, sourceCommit, target });
+    assert.ok(existsSync(join(stagingRoot, 'node_modules', '@openchamber', 'sdk', 'dist', 'index.js')));
+    assert.ok(existsSync(join(stagingRoot, 'node_modules', '@openchamber', 'sdk', 'package.json')));
+    assert.equal(existsSync(join(stagingRoot, 'node_modules', '@openchamber', 'sdk', 'src')), false);
+    assert.equal(existsSync(join(stagingRoot, 'node_modules', '@openchamber', 'sdk', 'examples')), false);
+    assert.ok(existsSync(join(stagingRoot, 'node_modules', 'dep-a', 'package.json')));
+    const archive = join(root, 'artifact.tgz');
+    await createRelocatableArchive(stagingRoot, archive);
+    assert.doesNotThrow(() => verifyRelocatableArchive(archive, { expectedVersion: version, sourceCommit, target }));
+
+    const outside = join(root, 'outside-dep');
+    writePackage(outside, { name: 'dep-a', version: '1.0.0' });
+    rmSync(join(repositoryRoot, 'node_modules', 'dep-a'), { recursive: true });
+    symlinkSync(outside, join(repositoryRoot, 'node_modules', 'dep-a'));
+    assert.throws(
+      () => stageRelocatablePackage({ repositoryRoot, packageRoot, stagingRoot, sourceCommit, target }),
+      /resolves outside the frozen node_modules tree: dep-a/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
