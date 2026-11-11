@@ -46,6 +46,7 @@ import { AttachedFilesList, AttachedVSCodeFileChips, ActiveEditorFileSuggestion 
 import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
 import type { ToolPopupContent } from './message/types';
 import { QueuedMessageChips } from './QueuedMessageChips';
+import { BackgroundWorkBanner } from './BackgroundWorkBanner';
 import { AutoReviewBanner } from './AutoReviewBanner';
 import type { FileMentionHandle } from './FileMentionAutocomplete';
 import type { CommandAutocompleteHandle, CommandInfo } from './CommandAutocomplete';
@@ -3913,6 +3914,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 onSendMessage={handleQueuedMessageSend}
             />
             {currentSessionId ? <BtwPanel parentSessionId={currentSessionId} panel={btwPanel} onExit={handleExitBtw} /> : null}
+            {/* Shares the dock with the queue and BTW panels, which take
+                precedence while they are open. */}
+            <BackgroundWorkBanner
+                sessionId={currentSessionId}
+                directory={currentSessionDirectoryForSync ?? currentDirectory}
+                hidden={newSessionDraftOpen || isBtwActive || isBtwPanelVisible || hasQueuedMessages}
+            />
         </form>
 
         {/* Issue Picker Dialog */}

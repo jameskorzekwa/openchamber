@@ -39,6 +39,7 @@ import { registerTtsRoutes } from './lib/tts/routes.js';
 import { detectSayTtsCapability } from './lib/tts/capability-runtime.js';
 import { createTerminalRuntime } from './lib/terminal/runtime.js';
 import { createDictationRuntime } from './lib/dictation/runtime.js';
+import { createPtyInspectorRuntime } from './lib/pty-inspector/runtime.js';
 import {
   createGlobalUiEventBroadcaster,
   createGlobalMessageStreamHub,
@@ -57,6 +58,7 @@ import { createOpenCodeAuthStateRuntime } from './lib/opencode/auth-state-runtim
 import { createProjectDirectoryRuntime } from './lib/opencode/project-directory-runtime.js';
 import { createSettingsNormalizationRuntime } from './lib/opencode/settings-normalization-runtime.js';
 import { createSettingsHelpers } from './lib/opencode/settings-helpers.js';
+import { readMergedSettingsSync } from './lib/opencode/settings-files.js';
 import { createThemeRuntime } from './lib/opencode/theme-runtime.js';
 import { createFeatureRoutesRuntime } from './lib/opencode/feature-routes-runtime.js';
 import { parseServeCliOptions } from './lib/opencode/cli-options.js';
@@ -586,6 +588,7 @@ let runtimeManagedRemoteTunnelToken = '';
 let runtimeManagedRemoteTunnelHostname = '';
 let terminalRuntime = null;
 let dictationRuntime = null;
+let ptyInspectorRuntime = null;
 let messageStreamRuntime = null;
 const userProvidedOpenCodePassword = hmrStateRuntime.getUserProvidedOpenCodePassword(hmrState);
 const initialOpenCodeAuthState = hmrStateRuntime.resolveOpenCodeAuthFromState({
@@ -1154,6 +1157,7 @@ const tunnelWiringRuntime = createTunnelWiringRuntime({
 const startupPipelineRuntime = createStartupPipelineRuntime({
   createTerminalRuntime,
   createDictationRuntime,
+  createPtyInspectorRuntime,
   createMessageStreamWsRuntime,
   createServerStartupRuntime,
 });
@@ -2064,9 +2068,12 @@ async function main(options = {}) {
     attachSignals,
     apiOnly,
     dictationModelsDir: path.join(OPENCHAMBER_USER_CONFIG_ROOT, 'speech-models'),
+    // Read per call: a settings save must take effect without a restart.
+    resolvePtyInspectorUrl: () => readMergedSettingsSync({ fs, path, settingsFilePath: SETTINGS_FILE_PATH }).ptyInspectorUrl,
   });
   terminalRuntime = startupPipelineResult.terminalRuntime;
   dictationRuntime = startupPipelineResult.dictationRuntime;
+  ptyInspectorRuntime = startupPipelineResult.ptyInspectorRuntime;
   messageStreamRuntime = startupPipelineResult.messageStreamRuntime;
 
   try {
@@ -2129,6 +2136,11 @@ async function main(options = {}) {
         dictationRuntime?.stop?.();
       } catch {
         // best-effort shutdown of the dictation worker
+      }
+      try {
+        ptyInspectorRuntime?.stop?.();
+      } catch {
+        // best-effort close of inspector sockets
       }
       // Guest services are child processes; leaving before SIGTERM lands
       // (and the SIGKILL fallback fires) orphans them on the user's machine.

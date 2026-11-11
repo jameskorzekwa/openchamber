@@ -228,5 +228,8 @@ Session rows also derive hosted PTY waiting state from the row session's
 and compact waiting count only while live status is idle; busy and retry remain
 authoritative. The row memo compares only the derived waiting fields
 (`arePtyWaitingStatesEqual` in `lib/ptyWaitingState.ts`), not the whole
-metadata object. The transcript's `chat/BackgroundWorkBanner.tsx` reads the same
-jobs and lists them one per row next to the session's busy child sessions.
+metadata object. The composer's `chat/BackgroundWorkBanner.tsx` reads the same
+jobs and lists them one per row next to the session's busy child sessions. The
+waiting badge is a button: with one job it selects the session and opens that
+job's `pty` context-panel tab (`chat/useOpenPtyInspector.ts`); with several it
+only selects the session, whose card lists them.

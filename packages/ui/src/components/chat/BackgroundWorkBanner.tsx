@@ -1,18 +1,21 @@
 import React from 'react';
-import type { Session } from '@opencode-ai/sdk/v2';
 
 import { Icon } from '@/components/icon/Icon';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { formatPtyWaitingElapsed, getPtyWaitingState } from '@/lib/ptyWaitingState';
-import { useDirectorySync } from '@/sync/sync-context';
+import { useDirectorySync, useSession } from '@/sync/sync-context';
 import type { State } from '@/sync/types';
+import { ComposerFloatingPanel } from './composer/ui/ComposerFloatingPanel';
 import { areRunningSubtaskListsEqual, listRunningSubtasks, type RunningSubtask } from './runningSubtasks';
+import { useOpenPtyInspector } from './useOpenPtyInspector';
 import { useOpenSubagentSession } from './useOpenSubagentSession';
 
 type BackgroundWorkBannerProps = {
-  session: Session | null | undefined;
+  sessionId: string | null | undefined;
   directory: string | null | undefined;
+  /** Another composer panel (queue, BTW) owns the dock right now. */
+  hidden?: boolean;
 };
 
 const selectSessions = (state: State) => state.session;
@@ -66,16 +69,19 @@ const BackgroundWorkRow: React.FC<{
 };
 
 /**
- * What this session is still waiting on while nothing streams in the
- * transcript: background subtasks (child sessions whose live status is busy)
- * and hosted PTY processes the agent asked to be notified about.
+ * What this session is still waiting on: background subtasks (child sessions
+ * whose live status is busy) and hosted PTY processes the agent asked to be
+ * notified about. Docked above the composer like the queue panel, so it keeps
+ * its place while the transcript streams instead of riding the list footer.
  */
-export const BackgroundWorkBanner: React.FC<BackgroundWorkBannerProps> = ({ session, directory }) => {
+export const BackgroundWorkBanner: React.FC<BackgroundWorkBannerProps> = ({ sessionId, directory, hidden = false }) => {
   const { t } = useI18n();
-  const subtasks = useRunningSubtasks(session?.id, directory ?? undefined);
+  const session = useSession(sessionId ?? undefined, directory ?? undefined);
+  const subtasks = useRunningSubtasks(sessionId, directory ?? undefined);
   const waiting = getPtyWaitingState(session);
   const openSubagentSession = useOpenSubagentSession(directory ?? null);
-  const active = subtasks.length > 0 || waiting.count > 0;
+  const openPtyInspector = useOpenPtyInspector(directory ?? null);
+  const active = !hidden && (subtasks.length > 0 || waiting.count > 0);
   const [now, setNow] = React.useState(Date.now);
 
   React.useEffect(() => {
@@ -100,42 +106,48 @@ export const BackgroundWorkBanner: React.FC<BackgroundWorkBannerProps> = ({ sess
   ].filter((part): part is string => part !== null).join(' · ');
 
   return (
-    <div className="chat-message-column mb-3">
-      <section
-        className="rounded-lg border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-2 py-1.5"
-        aria-label={t('chat.backgroundWork.ariaLabel', { summary })}
-      >
-        <div className="flex items-center gap-2 px-1 pb-1">
+    <ComposerFloatingPanel
+      role="region"
+      ariaLabel={t('chat.backgroundWork.ariaLabel', { summary })}
+      compact
+      header={(
+        <>
           <span className="h-2 w-2 flex-shrink-0 animate-pulse rounded-full bg-[var(--status-warning)]" aria-hidden="true" />
           <span className="flex-shrink-0 typography-ui-label text-[var(--status-warning)]">
             {t('chat.backgroundWork.label')}
           </span>
           <span className="min-w-0 truncate typography-meta text-muted-foreground">{summary}</span>
-        </div>
-        <div className="flex flex-col">
-          {subtasks.map((subtask) => {
-            const label = subtask.title ?? t('chat.backgroundWork.subtaskUntitled');
-            return (
-              <BackgroundWorkRow
-                key={subtask.id}
-                icon="ai-agent"
-                label={label}
-                elapsed={formatPtyWaitingElapsed((now - subtask.startedAt) / 1000)}
-                onOpen={directory ? () => openSubagentSession(subtask.id, label) : undefined}
-                openLabel={t('chat.workStatus.action.openSubagent', { name: label })}
-              />
-            );
-          })}
-          {waiting.jobs.map((job) => (
+        </>
+      )}
+    >
+      <div className="flex flex-col px-2 pb-1.5" data-background-work-rows>
+        {subtasks.map((subtask) => {
+          const label = subtask.title ?? t('chat.backgroundWork.subtaskUntitled');
+          return (
+            <BackgroundWorkRow
+              key={subtask.id}
+              icon="ai-agent"
+              label={label}
+              elapsed={formatPtyWaitingElapsed((now - subtask.startedAt) / 1000)}
+              onOpen={directory ? () => openSubagentSession(subtask.id, label) : undefined}
+              openLabel={t('chat.workStatus.action.openSubagent', { name: label })}
+            />
+          );
+        })}
+        {waiting.jobs.map((job) => {
+          const label = job.description ?? t('chat.ptyWaiting.backgroundProcess');
+          return (
             <BackgroundWorkRow
               key={job.id}
               icon="terminal"
-              label={job.description ?? t('chat.ptyWaiting.backgroundProcess')}
+              label={label}
               elapsed={formatPtyWaitingElapsed((now - job.createdAt) / 1000)}
+              onOpen={openPtyInspector ? () => openPtyInspector(job.id, label) : undefined}
+              openLabel={t('chat.backgroundWork.openProcess', { name: label })}
             />
-          ))}
-        </div>
-      </section>
-    </div>
+          );
+        })}
+      </div>
+    </ComposerFloatingPanel>
   );
 };

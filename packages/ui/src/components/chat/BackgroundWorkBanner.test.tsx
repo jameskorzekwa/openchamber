@@ -44,7 +44,7 @@ describe('BackgroundWorkBanner', () => {
   const render = async (parent: Session | null) => {
     await act(async () => root.render(
       <SyncProvider sdk={sdk} directory={directory}>
-        <I18nProvider><BackgroundWorkBanner session={parent} directory={directory} /></I18nProvider>
+        <I18nProvider><div data-composer-bound><BackgroundWorkBanner sessionId={parent?.id ?? null} directory={directory} /></div></I18nProvider>
       </SyncProvider>,
     ));
   };
@@ -93,7 +93,7 @@ describe('BackgroundWorkBanner', () => {
   test('lists busy subtasks and PTY jobs, and drops a subtask once its live status goes idle', async () => {
     await render(parentWithPty());
     await publish(
-      [session(parentId), session('child-a', { parentID: parentId }), session('child-b', { parentID: parentId, title: '  ' })],
+      [parentWithPty(), session('child-a', { parentID: parentId }), session('child-b', { parentID: parentId, title: '  ' })],
       { 'child-a': { type: 'busy' }, 'child-b': { type: 'busy' } },
     );
 
@@ -103,15 +103,36 @@ describe('BackgroundWorkBanner', () => {
     expect(text).toContain('Title child-a');
     expect(text).toContain('Subtask');
     expect(text).toContain('Waiting: build');
-    expect(container.querySelectorAll('button[aria-label^="Open "]').length).toBe(2);
+    expect(container.querySelectorAll('button[aria-label^="Open "]').length).toBe(3);
+    expect(container.querySelector('button[aria-label="Open output of Waiting: build"]')).not.toBeNull();
 
     await publish(
-      [session(parentId), session('child-a', { parentID: parentId }), session('child-b', { parentID: parentId })],
+      [parentWithPty(), session('child-a', { parentID: parentId }), session('child-b', { parentID: parentId })],
       { 'child-a': { type: 'idle' }, 'child-b': { type: 'busy' } },
     );
     const after = container.textContent ?? '';
     expect(after).not.toContain('Title child-a');
     expect(after).toContain('1 subtask · 1 process');
+  });
+
+  test('hides while another composer panel owns the dock', async () => {
+    await act(async () => root.render(
+      <SyncProvider sdk={sdk} directory={directory}>
+        <I18nProvider><div data-composer-bound><BackgroundWorkBanner sessionId={parentId} directory={directory} hidden /></div></I18nProvider>
+      </SyncProvider>,
+    ));
+    await publish([session(parentId), session('child', { parentID: parentId })], { child: { type: 'busy' } });
+    expect(container.textContent).toBe('');
+  });
+
+  test('opens a PTY row as a read-only pty context-panel tab', async () => {
+    await render(parentWithPty());
+    await publish([parentWithPty()], {});
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Open output of Waiting: build"]');
+    if (!button) throw new Error('Expected PTY row button');
+    await act(async () => button.click());
+    const tabs = useUIStore.getState().contextPanelByDirectory[directory]?.tabs ?? [];
+    expect(tabs.map((tab) => [tab.mode, tab.dedupeKey, tab.readOnly])).toEqual([['pty', 'pty_build', true]]);
   });
 
   test('opens the subtask through the session selection on a single-surface runtime', async () => {

@@ -31,6 +31,9 @@
     "opencodeBinary": {
       "scope": "instance"
     },
+    "ptyInspectorUrl": {
+      "scope": "instance"
+    },
     "projects": {
       "scope": "instance"
     },

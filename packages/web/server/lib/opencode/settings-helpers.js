@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 
 import { isAgentMemoryFeatureAvailable } from '../agent-memory/feature-flag.js';
 import { isRoutingFeatureAvailable } from '../routing/feature-flag.js';
+import { normalizePtyInspectorUrl } from '../pty-inspector/runtime.js';
 
 // Generated from packages/ui/src/lib/settings/registry.ts by
 // `bun run settings-registry:generate`; `registry.test.ts` fails when stale.
@@ -411,6 +412,12 @@ export const createSettingsHelpers = (dependencies) => {
     }
     if (typeof candidate.sessionGoalEnabled === 'boolean') {
       result.sessionGoalEnabled = candidate.sessionGoalEnabled;
+    }
+    if (typeof candidate.ptyInspectorUrl === 'string') {
+      // Loopback origins only: the inspector server also accepts spawn/input.
+      const ptyInspectorUrl = normalizePtyInspectorUrl(candidate.ptyInspectorUrl);
+      if (ptyInspectorUrl) result.ptyInspectorUrl = ptyInspectorUrl;
+      else if (candidate.ptyInspectorUrl.trim() === '') result.ptyInspectorUrl = '';
     }
     if (typeof candidate.sessionGoalDefaultBudgetEnabled === 'boolean') {
       result.sessionGoalDefaultBudgetEnabled = candidate.sessionGoalDefaultBudgetEnabled;

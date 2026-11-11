@@ -87,8 +87,6 @@ import { resolveChatPromptReadOnly } from './chatPromptReadOnly';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { createFirstVisibleSessionPerformanceTracker } from '@/sync/session-load-performance';
 import { isChatDirectoryPath } from '@/lib/chatDirectories';
-import { BackgroundWorkBanner } from './BackgroundWorkBanner';
-import { arePtyWaitingStatesEqual, getPtyWaitingState } from '@/lib/ptyWaitingState';
 
 const EMPTY_MESSAGES: Array<{ info: Message; parts: Part[] }> = [];
 const IDLE_SESSION_STATUS = { type: 'idle' as const };
@@ -177,7 +175,6 @@ type HydratingToolSkeletonRow = {
 type ChatViewportProps = {
     currentSessionId: string;
     currentSessionKey: string;
-    currentSession: Session | null | undefined;
     isDesktopExpandedInput: boolean;
     isMobile: boolean;
     /** The composer floats over the transcript and reserves its band via
@@ -223,7 +220,6 @@ type ChatViewportProps = {
 const ChatViewport = React.memo(({
     currentSessionId,
     currentSessionKey,
-    currentSession,
     isDesktopExpandedInput,
     isMobile,
     floatingComposer,
@@ -393,8 +389,6 @@ const ChatViewport = React.memo(({
 
             <SessionErrorNotice sessionId={currentSessionId} directory={directory} />
 
-            <BackgroundWorkBanner session={currentSession} directory={directory} />
-
             {/* Tail spacer. With a floating composer it reserves the band the
                 composer covers, plus any panel docked above it (queue, BTW),
                 so the end of the transcript stays readable above them; the
@@ -413,7 +407,7 @@ const ChatViewport = React.memo(({
                 aria-hidden="true"
             />
         </>
-    ), [currentSession, currentSessionId, directory, floatingComposer, isMobile, sessionPermissions, sessionQuestions]);
+    ), [currentSessionId, directory, floatingComposer, isMobile, sessionPermissions, sessionQuestions]);
 
     // Opening a session paints the timeline as one finished picture: the root
     // stays invisible while any renderer holds a provisional first paint, then
@@ -560,7 +554,6 @@ const ChatViewport = React.memo(({
 }, (prev, next) => {
     return prev.currentSessionId === next.currentSessionId
         && prev.currentSessionKey === next.currentSessionKey
-        && arePtyWaitingStatesEqual(getPtyWaitingState(prev.currentSession), getPtyWaitingState(next.currentSession))
         && prev.isDesktopExpandedInput === next.isDesktopExpandedInput
         && prev.isMobile === next.isMobile
         && prev.floatingComposer === next.floatingComposer
@@ -1595,7 +1588,6 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
             <ChatViewport
                 currentSessionId={currentSessionId ?? ''}
                 currentSessionKey={currentSessionKey ?? currentSessionId ?? ''}
-                currentSession={currentSession}
                 isDesktopExpandedInput={isDesktopExpandedInput}
                 isMobile={isMobile}
                 floatingComposer={floatingComposer}
