@@ -226,5 +226,7 @@ make every row observe unrelated streaming updates.
 Session rows also derive hosted PTY waiting state from the row session's
 `metadata.openchamber.backgroundJobs.jobs`. Valid PTY jobs add a warning marker
 and compact waiting count only while live status is idle; busy and retry remain
-authoritative. The row memo compares only the derived waiting fields, not the
-whole metadata object.
+authoritative. The row memo compares only the derived waiting fields
+(`arePtyWaitingStatesEqual` in `lib/ptyWaitingState.ts`), not the whole
+metadata object. The transcript's `chat/BackgroundWorkBanner.tsx` reads the same
+jobs and lists them one per row next to the session's busy child sessions.

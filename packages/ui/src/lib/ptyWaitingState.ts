@@ -16,16 +16,25 @@ const ptyJobsMetadataSchema = z.object({
   }),
 });
 
+export type PtyWaitingJob = {
+  id: string;
+  createdAt: number;
+  description: string | null;
+};
+
 export type PtyWaitingState = {
   count: number;
   oldestCreatedAt: number | null;
   description: string | null;
+  /** Every valid PTY job, oldest first. */
+  jobs: readonly PtyWaitingJob[];
 };
 
 const EMPTY_PTY_WAITING_STATE: PtyWaitingState = {
   count: 0,
   oldestCreatedAt: null,
   description: null,
+  jobs: [],
 };
 
 export function getPtyWaitingState(session: Session | null | undefined): PtyWaitingState {
@@ -34,25 +43,37 @@ export function getPtyWaitingState(session: Session | null | undefined): PtyWait
   const metadata = ptyJobsMetadataSchema.safeParse(session.metadata);
   if (!metadata.success) return EMPTY_PTY_WAITING_STATE;
 
-  let count = 0;
-  let oldestCreatedAt = Number.POSITIVE_INFINITY;
-  let description: string | null = null;
-
+  const jobs: PtyWaitingJob[] = [];
   for (const candidate of metadata.data.openchamber.backgroundJobs.jobs) {
     const job = ptyJobSchema.safeParse(candidate);
     if (!job.success) continue;
-
-    count += 1;
-    oldestCreatedAt = Math.min(oldestCreatedAt, job.data.createdAt);
-    if (count === 1) {
-      description = job.data.description?.trim() || null;
-    } else {
-      description = null;
-    }
+    jobs.push({
+      id: job.data.id,
+      createdAt: job.data.createdAt,
+      description: job.data.description?.trim() || null,
+    });
   }
 
-  if (count === 0) return EMPTY_PTY_WAITING_STATE;
-  return { count, oldestCreatedAt, description };
+  if (jobs.length === 0) return EMPTY_PTY_WAITING_STATE;
+  jobs.sort((left, right) => left.createdAt - right.createdAt);
+  return {
+    count: jobs.length,
+    oldestCreatedAt: jobs[0].createdAt,
+    description: jobs.length === 1 ? jobs[0].description : null,
+    jobs,
+  };
+}
+
+/** Compares the fields that drive rendering, so memoized rows can skip the metadata object. */
+export function arePtyWaitingStatesEqual(previous: PtyWaitingState, next: PtyWaitingState): boolean {
+  if (previous === next) return true;
+  if (previous.count !== next.count || previous.oldestCreatedAt !== next.oldestCreatedAt || previous.description !== next.description) {
+    return false;
+  }
+  return previous.jobs.every((job, index) => {
+    const other = next.jobs[index];
+    return other !== undefined && job.id === other.id && job.createdAt === other.createdAt && job.description === other.description;
+  });
 }
 
 export function formatPtyWaitingElapsed(elapsedSeconds: number): string {

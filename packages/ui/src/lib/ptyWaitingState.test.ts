@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { Session } from '@opencode-ai/sdk/v2';
 
-import { formatPtyWaitingElapsed, getPtyWaitingState } from './ptyWaitingState';
+import { arePtyWaitingStatesEqual, formatPtyWaitingElapsed, getPtyWaitingState } from './ptyWaitingState';
 
 type JobFixture = {
   id?: string;
@@ -30,9 +30,10 @@ const sessionWithJobs = (jobs: JobFixture[] | string): Session => Object.assign(
 
 describe('getPtyWaitingState', () => {
   test('fails closed for missing and malformed metadata', () => {
-    expect(getPtyWaitingState(null)).toEqual({ count: 0, oldestCreatedAt: null, description: null });
-    expect(getPtyWaitingState(baseSession())).toEqual({ count: 0, oldestCreatedAt: null, description: null });
-    expect(getPtyWaitingState(sessionWithJobs('not-an-array'))).toEqual({ count: 0, oldestCreatedAt: null, description: null });
+    const empty = { count: 0, oldestCreatedAt: null, description: null, jobs: [] };
+    expect(getPtyWaitingState(null)).toEqual(empty);
+    expect(getPtyWaitingState(baseSession())).toEqual(empty);
+    expect(getPtyWaitingState(sessionWithJobs('not-an-array'))).toEqual(empty);
   });
 
   test('accepts only complete PTY jobs', () => {
@@ -44,7 +45,12 @@ describe('getPtyWaitingState', () => {
       null,
     ]));
 
-    expect(state).toEqual({ count: 1, oldestCreatedAt: 200, description: 'Wait for deploy' });
+    expect(state).toEqual({
+      count: 1,
+      oldestCreatedAt: 200,
+      description: 'Wait for deploy',
+      jobs: [{ id: 'pty_valid', createdAt: 200, description: 'Wait for deploy' }],
+    });
   });
 
   test('counts PTY jobs, keeps the oldest timestamp, and generalizes multiple descriptions', () => {
@@ -54,13 +60,43 @@ describe('getPtyWaitingState', () => {
       { id: 'pty_middle', kind: 'pty', createdAt: 600 },
     ]));
 
-    expect(state).toEqual({ count: 3, oldestCreatedAt: 300, description: null });
+    expect(state).toEqual({
+      count: 3,
+      oldestCreatedAt: 300,
+      description: null,
+      jobs: [
+        { id: 'pty_oldest', createdAt: 300, description: 'Older process' },
+        { id: 'pty_middle', createdAt: 600, description: null },
+        { id: 'pty_newer', createdAt: 900, description: 'Newer process' },
+      ],
+    });
   });
 
   test('uses no description for a blank single-job description', () => {
     expect(getPtyWaitingState(sessionWithJobs([
       { id: 'pty_blank', kind: 'pty', createdAt: 100, description: '   ' },
-    ]))).toEqual({ count: 1, oldestCreatedAt: 100, description: null });
+    ]))).toEqual({ count: 1, oldestCreatedAt: 100, description: null, jobs: [{ id: 'pty_blank', createdAt: 100, description: null }] });
+  });
+});
+
+describe('arePtyWaitingStatesEqual', () => {
+  test('treats the same job list as equal and a swapped job as a change', () => {
+    const first = getPtyWaitingState(sessionWithJobs([
+      { id: 'pty_a', kind: 'pty', createdAt: 100, description: 'Build' },
+      { id: 'pty_b', kind: 'pty', createdAt: 200, description: 'Deploy' },
+    ]));
+    const same = getPtyWaitingState(sessionWithJobs([
+      { id: 'pty_a', kind: 'pty', createdAt: 100, description: 'Build' },
+      { id: 'pty_b', kind: 'pty', createdAt: 200, description: 'Deploy' },
+    ]));
+    const swapped = getPtyWaitingState(sessionWithJobs([
+      { id: 'pty_a', kind: 'pty', createdAt: 100, description: 'Build' },
+      { id: 'pty_c', kind: 'pty', createdAt: 200, description: 'Deploy' },
+    ]));
+
+    expect(arePtyWaitingStatesEqual(first, same)).toBe(true);
+    expect(arePtyWaitingStatesEqual(first, swapped)).toBe(false);
+    expect(arePtyWaitingStatesEqual(first, getPtyWaitingState(null))).toBe(false);
   });
 });
 

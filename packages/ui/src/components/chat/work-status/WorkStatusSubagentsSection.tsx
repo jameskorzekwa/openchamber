@@ -2,9 +2,7 @@ import React from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useAllLiveSessions, useAllSessionStatuses, useDirectorySync } from '@/sync/sync-context';
 import { useUIStore } from '@/stores/useUIStore';
-import { useSessionUIStore } from '@/sync/session-ui-store';
-import { isVSCodeRuntime } from '@/lib/desktop';
-import { isEmbeddedSessionChat } from '@/components/layout/contextPanelEmbeddedChat';
+import { useOpenSubagentSession } from '@/components/chat/useOpenSubagentSession';
 import { WorkStatusCollapsibleSection, WorkStatusRow, WorkStatusValue } from './WorkStatusPrimitives';
 import { useReportWorkStatusPresence } from './presenceContext';
 import { formatCost } from './subagentCost';
@@ -25,7 +23,6 @@ const SECTION_ID = 'subagents';
  */
 export const WorkStatusSubagentsSection: React.FC<Props> = ({ sessionId, directory }) => {
   const { t } = useI18n();
-  const isMobile = useUIStore((state) => state.isMobile);
 
   const liveSessions = useAllLiveSessions();
   const statuses = useAllSessionStatuses();
@@ -44,8 +41,6 @@ export const WorkStatusSubagentsSection: React.FC<Props> = ({ sessionId, directo
   const permissions = useDirectorySync(React.useCallback((state: State) => state.permission, []));
   const questions = useDirectorySync(React.useCallback((state: State) => state.question, []));
 
-  const openContextPanelTab = useUIStore((state) => state.openContextPanelTab);
-  const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
   const setSectionExpanded = useUIStore((state) => state.setWorkStatusSectionExpanded);
 
   // Subagents appearing where there were none is the one moment this section
@@ -59,21 +54,7 @@ export const WorkStatusSubagentsSection: React.FC<Props> = ({ sessionId, directo
     hadChildren.current = present;
   }, [children.length, setSectionExpanded]);
 
-  // Same branch the transcript's Task tool takes: surfaces that cannot host an
-  // embedded panel navigate to the child session instead of opening a tab.
-  const openChildSession = React.useCallback((childId: string, label: string) => {
-    if (!directory) return;
-    if (isEmbeddedSessionChat() || isMobile || isVSCodeRuntime()) {
-      setCurrentSession(childId, directory);
-      return;
-    }
-    openContextPanelTab(directory, {
-      mode: 'chat',
-      dedupeKey: `session:${childId}`,
-      label,
-      readOnly: true,
-    });
-  }, [directory, isMobile, openContextPanelTab, setCurrentSession]);
+  const openChildSession = useOpenSubagentSession(directory);
 
   useReportWorkStatusPresence('subagents', children.length > 0);
 

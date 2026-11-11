@@ -73,7 +73,7 @@ import {
   type SessionWorktreeMenuTarget,
   type StartSessionWorktreeMenuLoadResult,
 } from '../sessionWorktreeMenu';
-import { getPtyWaitingState } from '@/lib/ptyWaitingState';
+import { arePtyWaitingStatesEqual, getPtyWaitingState } from '@/lib/ptyWaitingState';
 
 type SecondaryMeta = {
   projectLabel?: string | null;
@@ -1838,16 +1838,8 @@ const areSessionRenderSemanticsEqual = (prev: Session, next: Session): boolean =
   && prev.time?.updated === next.time?.updated
   && prev.time?.archived === next.time?.archived
   && sameMultiRunIdentity(prev, next)
-  && arePtyWaitingStatesEqual(prev, next)
+  && arePtyWaitingStatesEqual(getPtyWaitingState(prev), getPtyWaitingState(next))
 );
-
-const arePtyWaitingStatesEqual = (prev: Session, next: Session): boolean => {
-  const previousWaiting = getPtyWaitingState(prev);
-  const nextWaiting = getPtyWaitingState(next);
-  return previousWaiting.count === nextWaiting.count
-    && previousWaiting.oldestCreatedAt === nextWaiting.oldestCreatedAt
-    && previousWaiting.description === nextWaiting.description;
-};
 
 // Returns the name of the first prop whose change requires a render, or null
 // when the row can skip it. The name feeds the stream perf counters so sidebar
