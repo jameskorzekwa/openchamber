@@ -83,7 +83,7 @@ test('checks packaged fork and plugin artifacts byte-for-byte', () => {
   const root = mkdtempSync(join(tmpdir(), 'channel-parity-test-'));
   const source = join(root, 'source');
   const installed = join(root, 'installed');
-  const paths = ['bin/cli.js', 'server/lib/agent-tool/runtime.js', 'server/lib/opm-status/routes.js', 'server/lib/session-goal/runtime.js'];
+  const paths = ['bin/cli.js', 'server/lib/agent-tool/runtime.js', 'server/lib/session-goal/runtime.js'];
   try {
     for (const path of paths) {
       mkdirSync(join(source, path, '..'), { recursive: true });

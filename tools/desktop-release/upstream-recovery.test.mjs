@@ -23,10 +23,10 @@ test('renders a complete machine-readable textual-conflict handoff', () => {
     failedPatchCommit: '3'.repeat(40),
     conflictingFiles: ['packages/web/b.js', 'packages/web/a.js', 'packages/web/a.js'],
   });
-  assert.equal(rendered.title, 'OPM recovery: j2k/v1.22.0');
+  assert.equal(rendered.title, 'Upstream recovery: j2k/v1.22.0');
   assert.deepEqual(rendered.recovery.conflictingFiles, ['packages/web/a.js', 'packages/web/b.js']);
   assert.equal(rendered.recovery.eligibleForUnattendedWork, true);
-  assert.match(rendered.body, /<!-- opm:upstream-recovery -->/);
+  assert.match(rendered.body, /<!-- j2k:upstream-recovery -->/);
   assert.match(rendered.body, /"failedPatchCommit": "3333333333333333333333333333333333333333"/);
   assert.match(rendered.body, /Do not modify `j2k\/current`, tags, releases/);
 });

@@ -145,8 +145,7 @@ Before adding guidance to a skill, identify its canonical owner. If another skil
 ## Pull Request Handoff
 
 For this fork, read [repository workflow](docs/REPOSITORY-WORKFLOW.md) before
-preparing or merging a PR. There is no automated merge pipeline
-(opencode-project-manager was decommissioned on 2026-10-06); every merge
+preparing or merging a PR. There is no automated merge pipeline; every merge
 requires explicit informed owner approval for the exact head. Respect
 preparation-only review holds.
 

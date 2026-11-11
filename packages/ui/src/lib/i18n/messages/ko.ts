@@ -4,7 +4,6 @@ import { linearIssuePickerI18n } from './linear-issue-picker.i18n';
 import { linearPanelI18n } from './linear-panel.i18n';
 import { routingI18n } from './routing.i18n';
 import { pluginPanelI18n } from './plugin-panel.i18n';
-import { opmStatusI18n } from './opm-status.i18n';
 import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
@@ -36,7 +35,6 @@ export const dict: Record<I18nKey, string> = {
   ...linearPanelI18n.ko,
   ...routingI18n.ko,
   ...pluginPanelI18n.ko,
-  ...opmStatusI18n.ko,
   ...updateStatusI18n.ko,
   'terminalView.actions.attachSelection': '선택한 출력 첨부',
   'terminalView.actions.copySelection': '선택한 출력 복사',

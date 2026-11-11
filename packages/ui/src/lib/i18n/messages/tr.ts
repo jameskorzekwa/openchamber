@@ -3,7 +3,6 @@ import { linearIssuePickerI18n } from './linear-issue-picker.i18n';
 import { linearPanelI18n } from './linear-panel.i18n';
 import { routingI18n } from './routing.i18n';
 import { pluginPanelI18n } from './plugin-panel.i18n';
-import { opmStatusI18n } from './opm-status.i18n';
 import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
@@ -35,7 +34,6 @@ export const dict = {
   ...linearPanelI18n.tr,
   ...routingI18n.tr,
   ...pluginPanelI18n.tr,
-  ...opmStatusI18n.tr,
   ...updateStatusI18n.tr,
   'terminalView.actions.attachSelection': 'Seçili çıktıyı ekle',
   'terminalView.actions.copySelection': 'Seçili çıktıyı kopyala',

@@ -63,13 +63,13 @@ export function validateRecovery(input) {
 }
 
 export function recoveryTitle(recovery) {
-  return `OPM recovery: ${recovery.candidateBranch}`;
+  return `Upstream recovery: ${recovery.candidateBranch}`;
 }
 
 export function renderRecoveryIssue(input) {
   const recovery = validateRecovery(input);
   const lines = [
-    '<!-- opm:upstream-recovery -->',
+    '<!-- j2k:upstream-recovery -->',
     '## Recovery contract',
     '',
     '```json',
