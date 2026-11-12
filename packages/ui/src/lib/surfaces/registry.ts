@@ -16,7 +16,8 @@ type BuiltInContextSurfaceId =
   | 'context'
   | 'browser'
   | 'workflows'
-  | 'chat';
+  | 'chat'
+  | 'pty';
 
 export type ContextSurfaceId = BuiltInContextSurfaceId | `plugin:${string}`;
 
@@ -130,6 +131,17 @@ export const CONTEXT_SURFACES: readonly ContextSurfaceDescriptor[] = [
     labelKey: 'contextPanel.mode.chat',
     availability: 'has-content',
   },
+  {
+    // Output of a command the agent left running in the background (an
+    // OpenCode `shell` call with `background: true`); opened from the
+    // composer's background-commands row, never empty from the rail.
+    id: 'pty',
+    descriptionKey: 'contextRail.surface.pty.description',
+    mode: 'pty',
+    icon: 'terminal-window',
+    labelKey: 'contextPanel.mode.pty',
+    availability: 'has-content',
+  },
 ];
 
 // Tablet width and up: below this the walkthrough cannot show a stop and its
@@ -155,6 +167,7 @@ const BUILT_IN_SURFACE_GROUPS = {
   notes: 'workspace',
   workflows: 'workspace',
   chat: 'workspace',
+  pty: 'workspace',
 } satisfies Record<BuiltInContextSurfaceId, ContextSurfaceGroup>;
 
 const isBuiltInSurfaceId = (id: ContextSurfaceId): id is BuiltInContextSurfaceId => Object.hasOwn(BUILT_IN_SURFACE_GROUPS, id);

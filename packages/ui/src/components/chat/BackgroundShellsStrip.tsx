@@ -18,6 +18,7 @@ import {
 } from '@/sync/background-shells';
 import { backgroundImagesOfSessions, useBackgroundImagesStore } from '@/sync/background-images';
 import type { RunningImageJob } from '@/lib/opencode/background-image';
+import { useOpenShellOutput } from './useOpenShellOutput';
 
 interface BackgroundShellsStripProps {
   sessionId: string | null;
@@ -122,7 +123,9 @@ const ShellRow: React.FC<{
   fromSubagent: boolean;
   stopping: boolean;
   onStop: (shell: TrackedShell) => void;
-}> = ({ shell, fromSubagent, stopping, onStop }) => {
+  /** Opens the read-only output panel; null where there is no side panel. */
+  onOpenOutput: ((shell: TrackedShell) => void) | null;
+}> = ({ shell, fromSubagent, stopping, onStop, onOpenOutput }) => {
   const { t } = useI18n();
 
   return (
@@ -146,6 +149,26 @@ const ShellRow: React.FC<{
         <span className="shrink-0 typography-meta text-muted-foreground">{t('chat.backgroundShells.subagent')}</span>
       ) : null}
       <ShellElapsed startedAt={shell.startedAt} />
+      {onOpenOutput ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex shrink-0">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => onOpenOutput(shell)}
+                onMouseDown={(event) => event.preventDefault()}
+                aria-label={t('chat.backgroundShells.openOutputAria', { command: shell.command })}
+                className="shrink-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
+              >
+                <Icon name="terminal-window" className="size-3.5" aria-hidden="true" />
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top" sideOffset={6}>{t('chat.backgroundShells.openOutput')}</TooltipContent>
+        </Tooltip>
+      ) : null}
       <Tooltip>
         <TooltipTrigger asChild>
           <span className="inline-flex shrink-0">
@@ -217,6 +240,11 @@ export const BackgroundShellsStrip: React.FC<BackgroundShellsStripProps> = React
   const listId = React.useId();
   const { stoppingIds, stop } = useStopShells(sessionId ?? '', directory);
   const stopOne = React.useCallback((shell: TrackedShell) => stop([shell]), [stop]);
+  const openShellOutput = useOpenShellOutput(directory ?? null);
+  const openOutput = React.useMemo(
+    () => (openShellOutput ? (shell: TrackedShell) => openShellOutput(shell.id, shell.directory, shell.command) : null),
+    [openShellOutput],
+  );
 
   const count = shells.length + images.length;
   if (!sessionId || count === 0) return null;
@@ -230,6 +258,7 @@ export const BackgroundShellsStrip: React.FC<BackgroundShellsStripProps> = React
         fromSubagent={shell.sessionID !== sessionId}
         stopping={stoppingIds.has(shell.id)}
         onStop={stopOne}
+        onOpenOutput={openOutput}
       />
     )),
     ...images.map((job) => <ImageRow key={job.id} job={job} fromSubagent={job.sessionID !== sessionId} />),

@@ -272,7 +272,7 @@ const normalizeContextTargetDirectory = (value: string | null | undefined): stri
 // the app moving to that project. Every other mode works in the panel's own
 // directory.
 const contextPanelModeKeepsTargetDirectory = (mode: ContextPanelMode): boolean => {
-  return mode === 'terminal' || mode === 'chat' || mode === 'pr' || mode === 'diff' || mode === 'walkthrough';
+  return mode === 'terminal' || mode === 'chat' || mode === 'pr' || mode === 'diff' || mode === 'walkthrough' || mode === 'pty';
 };
 
 /**

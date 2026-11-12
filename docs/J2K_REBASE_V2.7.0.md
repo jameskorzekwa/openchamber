@@ -46,6 +46,7 @@ fork shipped nothing newer than `1.24.2-j2k.*`.
 | CLI (`cli-http`, `cli-startup`, `commands-update`) | Upstream request filtering; fork's managed launcher and validated-install path kept beside upstream's startup-service restart. |
 | Tests both sides added | Upstream file kept; fork tests moved to `cli-startup.managed.test.js`, `config-entity-routes.guards.test.js`, `useUpdateStore.lifecycle.test.ts`. |
 | Translations | Fork strings added for the new `ar` and `he` locales; stale Dutch keys of the removed PTY banner dropped. |
+| PR #100 (live PTY panel, docked card) | Ported to OpenCode 2 rather than carried: OpenCode 2 has no `opencode-pty`, so its inspector relay (`/api/pty-inspector`, port 4098) and the PTY-waiting metadata (`backgroundJobs`, sidebar waiting badge) are dropped. Each row of upstream's background-commands strip opens the command's read-only output in a `pty` "Process" tab that reads OpenCode 2's `shell` output by cursor; running subtasks sit in a composer row right after it. Upstream already counts a session with a background command as active. |
 
 ## Node 24
 

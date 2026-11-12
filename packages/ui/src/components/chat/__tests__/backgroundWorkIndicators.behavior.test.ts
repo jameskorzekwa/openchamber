@@ -4,48 +4,34 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
-const chatContainerSource = readFileSync(join(testDirectory, '..', 'ChatContainer.tsx'), 'utf8');
+const chatInputSource = readFileSync(join(testDirectory, '..', 'ChatInput.tsx'), 'utf8');
 const bannerSource = readFileSync(join(testDirectory, '..', 'BackgroundWorkBanner.tsx'), 'utf8');
-const sidebarSource = readFileSync(
-  join(testDirectory, '..', '..', 'session', 'sidebar', 'sessions', 'SessionNodeItem.tsx'),
-  'utf8',
-);
+const shellsStripSource = readFileSync(join(testDirectory, '..', 'BackgroundShellsStrip.tsx'), 'utf8');
 
 describe('background work indicator integration', () => {
-  test('mounts the banner directly after the session error notice in the list footer', () => {
-    const errorNoticeIndex = chatContainerSource.indexOf('<SessionErrorNotice');
-    const bannerIndex = chatContainerSource.indexOf('<BackgroundWorkBanner', errorNoticeIndex);
-    const footerSpacerIndex = chatContainerSource.indexOf('{/* Tail spacer.', bannerIndex);
-
-    expect(errorNoticeIndex).toBeGreaterThan(-1);
-    expect(bannerIndex).toBeGreaterThan(errorNoticeIndex);
-    expect(footerSpacerIndex).toBeGreaterThan(bannerIndex);
+  test('docks the subtask row right after the background-commands row of the composer', () => {
+    const shells = chatInputSource.indexOf('{backgroundShellsRow}');
+    const subtasks = chatInputSource.indexOf('{backgroundSubtasksRow}');
+    expect(shells).toBeGreaterThan(-1);
+    expect(subtasks).toBeGreaterThan(shells);
+    expect(chatInputSource).toContain('backgroundShellsRow || backgroundSubtasksRow');
   });
 
-  test('the viewport memo skips re-renders unless a PTY job row would change', () => {
-    expect(chatContainerSource).toContain(
-      'arePtyWaitingStatesEqual(getPtyWaitingState(prev.currentSession), getPtyWaitingState(next.currentSession))',
-    );
-  });
-
-  test('lists subtasks from live child status and PTY jobs from session metadata', () => {
+  test('lists subtasks from live child status only', () => {
     expect(bannerSource).toContain('listRunningSubtasks(sessions, statuses, sessionId)');
     expect(bannerSource).toContain('state.session_status');
-    expect(bannerSource).toContain('waiting.jobs.map(');
-    expect(bannerSource).toContain('openSubagentSession(subtask.id, label)');
+    expect(bannerSource).toContain('openChildSession(subtask.id, label)');
   });
 
-  test('cleans up its live elapsed timer and runs no infinite animation', () => {
-    expect(bannerSource).toContain('window.clearInterval(timer)');
+  test('runs no infinite animation and no timer of its own', () => {
     expect(bannerSource).not.toContain('animate-pulse');
     expect(bannerSource).not.toContain('animate-spin');
+    expect(bannerSource).not.toContain('setInterval');
+    expect(bannerSource).toContain('useDurationTickerNow');
   });
 
-  test('sidebar shows waiting only while upstream reports no active turn or background work', () => {
-    expect(sidebarSource).toContain('const turnActivity = useSessionTurnActivity(session.id);');
-    expect(sidebarSource).toContain('const isStreaming = turnActivity !== null;');
-    expect(sidebarSource).toContain('const isPtyWaiting = !isStreaming && ptyWaiting.count > 0;');
-    expect(sidebarSource).toContain('const showStatusMarker = isStreaming || isPtyWaiting || showUnreadStatus;');
-    expect(sidebarSource).toContain('bg-[var(--status-warning)]');
+  test('background commands open their output in the side panel', () => {
+    expect(shellsStripSource).toContain('openShellOutput(shell.id, shell.directory, shell.command)');
+    expect(shellsStripSource).toContain('onOpenOutput={openOutput}');
   });
 });

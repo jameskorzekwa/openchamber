@@ -37,6 +37,7 @@ import { useChildStoreManager } from '@/sync/sync-context';
 import { useSessionTurnActivity } from '@/sync/global-session-status';
 import { SessionActivityIndicator } from '@/components/session/SessionActivityIndicator';
 import { ContextPanelContent } from './ContextSidebarTab';
+const ShellOutputPane = React.lazy(() => import('@/components/shell-output/ShellOutputPane').then((module) => ({ default: module.ShellOutputPane })));
 import { browserUrlLabel } from '@/lib/browser/url';
 import { Icon } from "@/components/icon/Icon";
 import type { IconName } from "@/components/icon/icons";
@@ -131,6 +132,7 @@ const getModeLabel = (
   if (mode === 'notes') return t('contextRail.surface.notes');
   if (mode === 'terminal') return t('layout.mainTab.terminal');
   if (mode === 'workflows') return t('contextPanel.mode.workflows');
+  if (mode === 'pty') return t('contextPanel.mode.pty');
   if (isPluginContextPanelMode(mode)) {
     const guest = useGuestsStore.getState().guests.find((entry) => entry.id === pluginIdFromMode(mode));
     return guest?.name ?? t('contextRail.surface.plugin');
@@ -257,6 +259,10 @@ const getTabIcon = (
     return <Icon name="sticky-note" className="h-3.5 w-3.5" />;
   }
 
+  if (tab.mode === 'pty') {
+    return <Icon name="terminal-window" className="h-3.5 w-3.5" />;
+  }
+
   if (tab.mode === 'terminal') {
     return <Icon name="terminal-box" className="h-3.5 w-3.5" />;
   }
@@ -348,7 +354,7 @@ const HEADER_DRAG_EXCLUDED = 'button, a, input, textarea, select, label, [role="
 // Surfaces rendered by the zone itself and remounted on every switch; the
 // rest stay alive in ContextSurfacePanes.
 const isRemountedSurface = (mode: ContextPanelMode): boolean => (
-  mode === 'context' || mode === 'git' || mode === 'pr' || mode === 'notes' || mode === 'workflows'
+  mode === 'context' || mode === 'git' || mode === 'pr' || mode === 'notes' || mode === 'workflows' || mode === 'pty'
 );
 
 const CONTEXT_PANEL_DEFAULT_HEIGHT = 320;
@@ -842,7 +848,7 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
   // The rail switches between surfaces (modes); the in-panel strip only lists
   // instances of the active multi-instance surface (open files, split chats,
   // browser targets).
-  const isMultiInstanceMode = activeTab?.mode === 'file' || activeTab?.mode === 'chat' || activeTab?.mode === 'browser' || activeTab?.mode === 'pr';
+  const isMultiInstanceMode = activeTab?.mode === 'file' || activeTab?.mode === 'chat' || activeTab?.mode === 'browser' || activeTab?.mode === 'pr' || activeTab?.mode === 'pty';
   const activeModeTabs = React.useMemo(() => {
     if (!activeTab) return [];
     const modeTabs = tabs.filter((tab) => tab.mode === activeTab.mode);
@@ -901,6 +907,18 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
                 ? <ContextPanelHeaderSlotProvider value={headerSlotEl}><ProjectContextPanel visible={isOpen} /></ContextPanelHeaderSlotProvider>
             : activeTab?.mode === 'workflows'
                 ? <ContextPanelHeaderSlotProvider value={headerSlotEl}><WorkflowsPanel directory={effectiveDirectory || null} /></ContextPanelHeaderSlotProvider>
+            : activeTab?.mode === 'pty'
+                ? (
+                  <React.Suspense fallback={null}>
+                    <ShellOutputPane
+                      key={activeTab.id}
+                      shellID={activeTab.dedupeKey}
+                      directory={activeTab.targetDirectory ?? effectiveDirectory}
+                      label={activeTab.label ?? activeTab.dedupeKey}
+                      visible={isOpen}
+                    />
+                  </React.Suspense>
+                )
         : null;
 
   const isFileTabActive = activeTab?.mode === 'file';

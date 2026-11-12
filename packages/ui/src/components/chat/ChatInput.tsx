@@ -287,6 +287,7 @@ import { SessionSuggestionChip } from '@/components/chat/SessionSuggestionChip';
 import { SessionDoneHintRow } from '@/components/chat/SessionDoneHintRow';
 import { SessionReviewHintRow } from '@/components/chat/SessionReviewHintRow';
 import { BackgroundShellsStrip } from '@/components/chat/BackgroundShellsStrip';
+import { BackgroundWorkBanner } from '@/components/chat/BackgroundWorkBanner';
 import { ComposerStatusStrip } from '@/components/chat/ComposerStatusStrip';
 import { useWorktreeBootstrapPending } from '@/hooks/useWorktreeBootstrapPending';
 import { useShownAfter } from '@/hooks/useShownAfter';
@@ -4743,6 +4744,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             directory={currentSessionDirectoryForSync ?? currentDirectory}
         />
     ) : null;
+    // J2K: subtasks the agent left running share that slot, right after the
+    // commands, so a turn that ended while they work says what it waits on.
+    const backgroundSubtasksRow = !isBtwActive && !newSessionDraftOpen ? (
+        <BackgroundWorkBanner
+            key={currentSessionId ?? ''}
+            sessionId={currentSessionId}
+            directory={currentSessionDirectoryForSync ?? currentDirectory}
+        />
+    ) : null;
     // A new worktree still running its setup commands, first of all: until it
     // ends, a first prompt can wait with nothing else saying why.
     const worktreeSetupDirectory = currentSessionDirectoryForSync ?? currentDirectory ?? null;
@@ -4791,7 +4801,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const folderMissingRow = sessionFolder.missing && currentSessionId && currentSessionDirectoryForSync && !isBtwActive && !newSessionDraftOpen
         ? <SessionFolderMissingRow sessionId={currentSessionId} directory={currentSessionDirectoryForSync} busy={sessionPhase !== 'idle'} />
         : null;
-    const composerTopRows = folderMissingRow || worktreeSetupRow || creatingSessionRow || spaceWaitRow || goalRow || autoReviewRow || prWatchRow || backgroundShellsRow || revertRow || queueRow || doneHintRow || reviewHintRow || suggestionRow ? (
+    const composerTopRows = folderMissingRow || worktreeSetupRow || creatingSessionRow || spaceWaitRow || goalRow || autoReviewRow || prWatchRow || backgroundShellsRow || backgroundSubtasksRow || revertRow || queueRow || doneHintRow || reviewHintRow || suggestionRow ? (
         <>
             {folderMissingRow}
             {worktreeSetupRow}
@@ -4801,6 +4811,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             {autoReviewRow}
             {prWatchRow}
             {backgroundShellsRow}
+            {backgroundSubtasksRow}
             {revertRow}
             {queueRow}
             {doneHintRow}

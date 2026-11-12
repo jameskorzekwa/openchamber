@@ -130,8 +130,6 @@ import { getRuntimeKey } from '@/lib/runtime-switch';
 import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
 import { createFirstVisibleSessionPerformanceTracker } from '@/sync/session-load-performance';
 import { isChatDirectoryPath } from '@/lib/chatDirectories';
-import { BackgroundWorkBanner } from './BackgroundWorkBanner';
-import { arePtyWaitingStatesEqual, getPtyWaitingState } from '@/lib/ptyWaitingState';
 
 function HoistedUiPageSelection({ scrollNode, sessionId }: { scrollNode: HTMLElement; sessionId: string }) {
     const containerRef = React.useMemo(() => ({ current: scrollNode }), [scrollNode]);
@@ -231,8 +229,6 @@ type HydratingToolSkeletonRow = {
 };
 
 type ChatViewportProps = {
-    /** The session itself, read only for its hosted background jobs. */
-    currentSession: Session | null | undefined;
     /** Loading, error, draft or empty content; undefined shows the transcript. */
     placeholder: React.ReactNode;
     currentSessionId: string;
@@ -291,7 +287,6 @@ const retainedTimelines = () => (isMobileSurfaceRuntime() ? 1 : 4);
 
 const ChatViewport = React.memo(({
     placeholder,
-    currentSession,
     currentSessionId,
     currentSessionKey,
     isDesktopExpandedInput,
@@ -420,8 +415,6 @@ const ChatViewport = React.memo(({
             {/* Permissions and forms dock above the composer (`PermissionDock`, `FormDock`). */}
             <SessionErrorNotice sessionId={currentSessionId} directory={directory} />
 
-            <BackgroundWorkBanner session={currentSession} directory={directory} />
-
             {/* Tail spacer. With a floating composer it reserves the band the
                 composer covers, plus any panel docked above it (queue, BTW),
                 so the end of the transcript stays readable above them; the
@@ -462,7 +455,7 @@ const ChatViewport = React.memo(({
                 ) : null}
             </div>
         </>
-    ), [currentSession, currentSessionId, directory, floatingComposer, isMobile, sessionIsWorking]);
+    ), [currentSessionId, directory, floatingComposer, isMobile, sessionIsWorking]);
 
     const endFadeStyle: React.CSSProperties & Record<'--chat-status-row-clearance', string> = {
         '--chat-status-row-clearance': `${statusRowClearance}px`,
@@ -667,7 +660,6 @@ const ChatViewport = React.memo(({
     return prev.currentSessionId === next.currentSessionId
         && prev.placeholder === next.placeholder
         && prev.currentSessionKey === next.currentSessionKey
-        && arePtyWaitingStatesEqual(getPtyWaitingState(prev.currentSession), getPtyWaitingState(next.currentSession))
         && prev.isDesktopExpandedInput === next.isDesktopExpandedInput
         && prev.isMobile === next.isMobile
         && prev.floatingComposer === next.floatingComposer
@@ -1942,7 +1934,6 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
             placeholder={sessionPlaceholder}
             currentSessionId={currentSessionId ?? ''}
             currentSessionKey={currentSessionKey ?? currentSessionId ?? ''}
-            currentSession={currentSession}
             isDesktopExpandedInput={isDesktopExpandedInput}
             isMobile={isMobile}
             floatingComposer={floatingComposer}

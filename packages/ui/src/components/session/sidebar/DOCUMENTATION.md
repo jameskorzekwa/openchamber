@@ -1273,11 +1273,3 @@ anchored like a session doing so. A hidden list (the phone's while projects
 are reordered) keeps nothing. The sidebar never scrolled to a session the
 user opened or created, and still does not; the phone's drawer brings its
 row into view after the anchor (`scrollRequest`).
-
-Session rows also derive hosted PTY waiting state from the row session's
-`metadata.openchamber.backgroundJobs.jobs`. Valid PTY jobs add a warning marker
-and compact waiting count only while live status is idle; busy and retry remain
-authoritative. The row memo compares only the derived waiting fields
-(`arePtyWaitingStatesEqual` in `lib/ptyWaitingState.ts`), not the whole
-metadata object. The transcript's `chat/BackgroundWorkBanner.tsx` reads the same
-jobs and lists them one per row next to the session's busy child sessions.

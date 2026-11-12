@@ -25,16 +25,6 @@ const session = (id: string, overrides: Partial<Session> = {}): Session => ({
   ...overrides,
 });
 
-const parentWithPty = (): Session => session(parentId, {
-  metadata: {
-    openchamber: {
-      backgroundJobs: {
-        jobs: [{ id: 'pty_build', kind: 'pty', createdAt: Date.now() - 5_000, description: 'Waiting: build' }],
-      },
-    },
-  },
-});
-
 describe('BackgroundWorkBanner', () => {
   let win: Window;
   let root: Root;
@@ -42,10 +32,10 @@ describe('BackgroundWorkBanner', () => {
   let restoreGlobals: () => void;
   const sdk = OpenCode.make({ baseUrl: 'http://background.test', fetch: () => new Promise<Response>(() => undefined) });
 
-  const render = async (parent: Session | null) => {
+  const render = async () => {
     await act(async () => root.render(
       <SyncProvider sdk={sdk} directory={directory}>
-        <I18nProvider><BackgroundWorkBanner session={parent} directory={directory} /></I18nProvider>
+        <I18nProvider><BackgroundWorkBanner sessionId={parentId} directory={directory} /></I18nProvider>
       </SyncProvider>,
     ));
   };
@@ -85,61 +75,57 @@ describe('BackgroundWorkBanner', () => {
     restoreGlobals();
   });
 
-  test('renders nothing while no subtask is busy and no PTY job is registered', async () => {
-    await render(session(parentId));
+  test('renders nothing while no subtask is busy', async () => {
+    await render();
     await publish([session(parentId), session('child', { parentID: parentId })], { child: { type: 'idle' } });
     expect(container.textContent).toBe('');
   });
 
-  test('lists busy subtasks and PTY jobs, and drops a subtask once its live status goes idle', async () => {
-    await render(parentWithPty());
+  test('shows one busy subtask as its own row and drops it once its live status goes idle', async () => {
+    await render();
+    await publish([session(parentId), session('child-a', { parentID: parentId })], { 'child-a': { type: 'busy' } });
+    expect(container.textContent).toContain('Title child-a');
+    expect(container.querySelectorAll('button[aria-label^="Open "]').length).toBe(1);
+
+    await publish([session(parentId), session('child-a', { parentID: parentId })], { 'child-a': { type: 'idle' } });
+    expect(container.textContent).toBe('');
+  });
+
+  test('collapses several busy subtasks into a count that expands in place', async () => {
+    await render();
     await publish(
       [session(parentId), session('child-a', { parentID: parentId }), session('child-b', { parentID: parentId, title: '  ' })],
-      { 'child-a': { type: 'busy' }, 'child-b': { type: 'busy' } },
+      { 'child-a': { type: 'busy' }, 'child-b': { type: 'retry', attempt: 1, message: 'rate limited', next: 2 } },
     );
+    expect(container.textContent).toContain('Running in background · 2 subtasks');
+    expect(container.textContent).not.toContain('Title child-a');
 
-    const text = container.textContent ?? '';
-    expect(text).toContain('Running in background');
-    expect(text).toContain('2 subtasks · 1 process');
-    expect(text).toContain('Title child-a');
-    expect(text).toContain('Subtask');
-    expect(text).toContain('Waiting: build');
+    const toggle = container.querySelector<HTMLButtonElement>('button[aria-expanded]');
+    if (!toggle) throw new Error('Expected the count toggle');
+    await act(async () => toggle.click());
+    expect(container.textContent).toContain('Title child-a');
+    expect(container.textContent).toContain('Subtask');
     expect(container.querySelectorAll('button[aria-label^="Open "]').length).toBe(2);
-
-    await publish(
-      [session(parentId), session('child-a', { parentID: parentId }), session('child-b', { parentID: parentId })],
-      { 'child-a': { type: 'idle' }, 'child-b': { type: 'busy' } },
-    );
-    const after = container.textContent ?? '';
-    expect(after).not.toContain('Title child-a');
-    expect(after).toContain('1 subtask · 1 process');
   });
 
   test('opens the subtask through the session selection on a single-surface runtime', async () => {
     useUIStore.setState({ isMobile: true });
-    await render(session(parentId));
+    await render();
     await publish([session(parentId), session('child', { parentID: parentId })], { child: { type: 'busy' } });
 
-    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Open Title child"]');
-    if (!button) throw new Error('Expected subtask row button');
     // The real selection also admits the session's project over the network;
-    // the banner's contract is only that it selects the child in place.
+    // the card's contract is only that it selects the child in place.
     const { useSessionUIStore } = await import('@/sync/session-ui-store');
     const selected: Array<[string | null, string | null | undefined]> = [];
     const originalSetCurrentSession = useSessionUIStore.getState().setCurrentSession;
     await act(async () => useSessionUIStore.setState({
-      setCurrentSession: (id: string | null, directory?: string | null) => { selected.push([id, directory]); },
+      setCurrentSession: (id: string | null, target?: string | null) => { selected.push([id, target]); },
     }));
-    const target = container.querySelector<HTMLButtonElement>('button[aria-label="Open Title child"]');
-    if (!target) throw new Error('Expected subtask row button after re-render');
-    await act(async () => target.click());
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Open Title child"]');
+    if (!button) throw new Error('Expected subtask row button');
+    await act(async () => button.click());
     useSessionUIStore.setState({ setCurrentSession: originalSetCurrentSession });
     expect(selected).toEqual([['child', directory]]);
-    // Selecting a session switches the active directory, which re-targets the
-    // banner's store subscription; unmount inside the test so that follow-up
-    // render is accounted for before the DOM is torn down.
-    await act(async () => root.unmount());
-    root = createRoot(container);
     useUIStore.setState({ isMobile: false });
   });
 });

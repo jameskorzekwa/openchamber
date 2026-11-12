@@ -755,9 +755,13 @@ shown (`markMessageFocusShown`) once it lands; settling or expiry clears it too.
 Opening a subagent takes the same branch as the transcript's Task tool: an
 embedded panel, mobile, or VS Code navigates to the session instead of nesting
 a tab. That branch lives in `chat/work-status/useOpenChildSession.ts`, shared with the
-transcript's background-work banner (`chat/BackgroundWorkBanner.tsx`), which
-lists the same busy children plus hosted PTY jobs at the end of the transcript
-so a session with nothing streaming still shows what it is waiting on.
+J2K background-subtasks row (`chat/BackgroundWorkBanner.tsx`), a composer top
+row right after the background-commands row that lists the same busy children,
+so a session whose turn ended while they work still shows what it waits on.
+Background commands themselves are listed by `BackgroundShellsStrip`; each row
+opens the command's read-only output in a `pty` context-panel tab
+(`shell-output/ShellOutputPane.tsx`), which reads the output by byte cursor like
+the transcript's running-shell row.
 
 ## Context sources
 
