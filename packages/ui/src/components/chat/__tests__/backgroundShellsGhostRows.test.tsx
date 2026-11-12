@@ -66,7 +66,6 @@ describe('composer background rows across session switches', () => {
   let windowInstance: Window;
   let host: HTMLDivElement;
   let root: Root;
-  const originalConsoleError = console.error;
 
   beforeEach(() => {
     windowInstance = new Window();
@@ -92,7 +91,6 @@ describe('composer background rows across session switches', () => {
   });
 
   afterEach(async () => {
-    console.error = originalConsoleError;
     await act(async () => root.unmount());
     await windowInstance.happyDOM.close();
     resetBackgroundShells();
@@ -118,15 +116,6 @@ describe('composer background rows across session switches', () => {
     ]));
     return { inUnrelatedSession, afterEnd: commandRows().length };
   };
-
-  test('a key shared by both rows leaves frozen command rows behind (the defect)', async () => {
-    // React reports the shared key; the test is about what it leaves on screen.
-    console.error = () => undefined;
-    const shared: KeyOf = (sessionId) => sessionId ?? '';
-    const { inUnrelatedSession, afterEnd } = await switchSessionsWhileTheCommandRuns(shared, shared);
-    expect(inUnrelatedSession).toBeGreaterThan(0);
-    expect(afterEnd).toBeGreaterThan(0);
-  });
 
   test('distinct row keys show the command in its own session only and drop it when it ends', async () => {
     expect(backgroundShellsRowKey('ses_root')).not.toBe(backgroundSubtasksRowKey('ses_root'));
