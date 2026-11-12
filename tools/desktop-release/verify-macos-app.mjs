@@ -140,7 +140,7 @@ const main = () => {
     version,
     sourceCommit,
     opencodeVersion,
-    nativeModules: nativeModules.length + bunPtyLibraries.length,
+    nativeModules: nativeModules.length,
     signed: !unsigned,
     artifact,
     updaterFeed: appUpdateConfig.provider,

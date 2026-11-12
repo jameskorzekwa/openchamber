@@ -47,7 +47,10 @@ const resolveCommand = (file) => {
   // implements. Node's ESM loader cannot resolve the extensionless local
   // specifiers these files use (`./sseProxy`), so it never ran them at all.
   if (isTypeScript || /(?:from\s+|require\(\s*)['"]bun:test['"]/.test(source)) {
-    return { label: 'bun', command: bunExecutable, args: ['test', file] };
+    // CI gates on loaded runners may opt into retrying a failing case
+    // (OPENCHAMBER_TEST_RETRY, also read by the web vitest config).
+    const retry = Number(process.env.OPENCHAMBER_TEST_RETRY) || 0;
+    return { label: 'bun', command: bunExecutable, args: ['test', ...(retry > 0 ? [`--retry=${retry}`] : []), file] };
   }
   if (/(?:from\s+|require\(\s*)['"]node:test['"]/.test(source)) {
     return { label: 'node', command: 'node', args: ['--test', file] };
