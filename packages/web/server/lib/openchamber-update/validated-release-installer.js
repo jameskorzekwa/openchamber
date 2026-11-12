@@ -55,8 +55,37 @@ class NoValidatedReleaseError extends Error {
   }
 }
 
+// The published stable channel targets another platform/ABI and is older
+// than the running release (for example the first release after a Node ABI
+// change still sees the previous release as "latest"): nothing newer exists
+// for this installation, which is not a channel failure.
+class ChannelBaseOlderError extends Error {
+  constructor(version) {
+    super(`Update channel ${version} is older than the running release and targets another runtime`);
+    this.name = 'ChannelBaseOlderError';
+    this.version = version;
+  }
+}
+
 function fail(message) {
   throw new Error(message);
+}
+
+function compareChannelVersions(left, right) {
+  const parse = (value) => {
+    const channelMatch = String(value).match(CHANNEL_VERSION_PATTERN);
+    const baseMatch = String(value).match(BASE_VERSION_PATTERN);
+    const match = channelMatch || baseMatch;
+    if (!match) return null;
+    return [Number(match[1]), Number(match[2]), Number(match[3]), channelMatch ? Number(channelMatch[4]) : 0];
+  };
+  const a = parse(left);
+  const b = parse(right);
+  if (!a || !b) return null;
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) return a[index] - b[index];
+  }
+  return 0;
 }
 
 export function resolveManagedInstallRoot(input = INSTALL_ROOT) {
@@ -102,7 +131,7 @@ function parseTagCommit(raw) {
   return raw.sha;
 }
 
-export function validateChannelMetadata(raw, release, tagCommit, target = { platform: process.platform, arch: process.arch, nodeAbi: process.versions.modules }) {
+export function validateChannelMetadata(raw, release, tagCommit, target = { platform: process.platform, arch: process.arch, nodeAbi: process.versions.modules }, currentVersion = null) {
   const keys = [
     'schema', 'baseVersion', 'channelRevision', 'version', 'releaseTag', 'tarball',
     'checksumAsset', 'manifestAsset', 'assets', 'sha256', 'upstreamTag',
@@ -135,6 +164,8 @@ export function validateChannelMetadata(raw, release, tagCommit, target = { plat
   if (!isString(raw.sha256) || !SHA256_PATTERN.test(raw.sha256)) fail('Update channel SHA-256 is invalid');
   if (raw.minNode !== '22') fail('Update channel minimum Node version is unsupported');
   if (raw.platform !== target.platform || raw.arch !== target.arch || raw.nodeAbi !== target.nodeAbi) {
+    const comparison = currentVersion ? compareChannelVersions(raw.version, currentVersion) : null;
+    if (comparison !== null && comparison < 0) throw new ChannelBaseOlderError(raw.version);
     fail(`Update channel target ${raw.platform}/${raw.arch}/ABI-${raw.nodeAbi} does not match ${target.platform}/${target.arch}/ABI-${target.nodeAbi}`);
   }
   return {
@@ -1003,6 +1034,7 @@ export function createValidatedReleaseInstaller(options = {}) {
       stableRelease,
       stableTagCommit,
       LEGACY_TARGET,
+      currentVersion,
     );
     const stableAssetNames = stableRelease.assets.map((asset) => asset.name).sort();
     if (JSON.stringify(stableAssetNames) !== JSON.stringify([...stableChannel.assets].sort())) {
@@ -1062,28 +1094,16 @@ export function createValidatedReleaseInstaller(options = {}) {
     return { channel, archiveAsset };
   }
 
-  function compareChannelVersions(left, right) {
-    const parse = (value) => {
-      const channelMatch = String(value).match(CHANNEL_VERSION_PATTERN);
-      const baseMatch = String(value).match(BASE_VERSION_PATTERN);
-      const match = channelMatch || baseMatch;
-      if (!match) return null;
-      return [Number(match[1]), Number(match[2]), Number(match[3]), channelMatch ? Number(channelMatch[4]) : 0];
-    };
-    const a = parse(left);
-    const b = parse(right);
-    if (!a || !b) return null;
-    for (let index = 0; index < a.length; index += 1) {
-      if (a[index] !== b[index]) return a[index] - b[index];
-    }
-    return 0;
-  }
 
   async function checkForUpdate() {
     let channel;
     try {
       ({ channel } = await resolveChannel());
     } catch (error) {
+      if (error instanceof ChannelBaseOlderError) {
+        await persist(statePayload('no-validated-release', currentVersion));
+        return { available: false, currentVersion, version: error.version, channel: CHANNEL_ID, channelRepository: repository, noValidatedRelease: true, reason: 'channel-base-older' };
+      }
       if (!(error instanceof NoValidatedReleaseError)) throw error;
       await persist(statePayload('no-validated-release', currentVersion));
       return { available: false, currentVersion, version: null, channel: CHANNEL_ID, channelRepository: repository, noValidatedRelease: true };

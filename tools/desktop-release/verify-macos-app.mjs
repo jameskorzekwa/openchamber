@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { readAndValidateJ2kAppUpdateConfig } from '../../packages/electron/updater-contract-validation.mjs';
+import { parseOpenCodeCliVersion } from '../../packages/electron/scripts/opencode-cli-version.mjs';
 
 const fail = (message) => { throw new Error(message); };
 
@@ -107,7 +108,8 @@ const main = () => {
   const cli = join(resources, 'opencode-cli', 'opencode');
   architecture(cli);
   if (!skipCliExecution) {
-    const cliVersion = run(cli, ['--version']).stdout.trim().split(/\s+/)[0];
+    // OpenCode 2 prints `opencode v2.x.y`; 1.x printed a bare version.
+    const cliVersion = parseOpenCodeCliVersion(run(cli, ['--version']).stdout);
     if (cliVersion !== opencodeVersion) fail(`Bundled OpenCode CLI version ${cliVersion} differs from ${opencodeVersion}`);
   }
 

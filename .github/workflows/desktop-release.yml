@@ -255,7 +255,7 @@ jobs:
           test "$revision" = '${{ needs.metadata.outputs.source_commit }}'
           bundle_version="$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist")"
           test "$bundle_version" = "$version"
-          opencode_version="$(node -p 'require(`./package.json`).dependencies[`@opencode-ai/sdk`]')"
+          opencode_version="$(node -p 'require(`./packages/electron/package.json`).opencodeCli.version')"
           node tools/desktop-release/verify-macos-app.mjs \
             --app "$app" --dmg "$RUNNER_TEMP/not-created.dmg" --version "$version" \
             --source-commit '${{ needs.metadata.outputs.source_commit }}' \
@@ -465,7 +465,7 @@ jobs:
           dist='trusted/packages/electron/dist'
           app='prepackaged/OpenChamber.app'
           dmg="$dist/OpenChamber-$version-mac-arm64.dmg"
-          opencode_version="$(node -p 'require(`./trusted/package.json`).dependencies[`@opencode-ai/sdk`]')"
+          opencode_version="$(node -p 'require(`./trusted/packages/electron/package.json`).opencodeCli.version')"
           electron_version="$(node -p 'require(require.resolve(`electron/package.json`, { paths: [`./trusted/packages/electron`] })).version')"
           node trusted/tools/desktop-release/verify-macos-app.mjs \
             --app "$app" --dmg "$dmg" --version "$version" \
@@ -599,7 +599,7 @@ jobs:
           zip="smoke-inputs/OpenChamber-$version-mac-arm64.zip"
           ditto -x -k "$zip" next-app
           certificate_sha256="$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).signature.certificateSha256' smoke-inputs/desktop-release.json)"
-          opencode_version="$(node -p 'require(`./trusted/package.json`).dependencies[`@opencode-ai/sdk`]')"
+          opencode_version="$(node -p 'require(`./trusted/packages/electron/package.json`).opencodeCli.version')"
           revision='${{ needs.metadata.outputs.revision }}'
           smoke_revision=$((revision - 1))
           smoke_version='${{ needs.metadata.outputs.base_version }}-j2k.'$smoke_revision

@@ -468,6 +468,23 @@ describe('validated release installation', () => {
     expect(installer.getStatus()).toMatchObject({ state: 'failed', error: 'helper wrote this' });
   });
 
+  it('treats an older stable channel built for another Node ABI as nothing newer, not a failure', async () => {
+    // First release after a Node ABI change: "latest" is still the previous
+    // release, built for the old ABI.
+    const archive = makeArchive();
+    const oldAbi = makeChannel(archive, { nodeAbi: '127' });
+    const harness = await makeHarness(makeFetch({ archive, channel: oldAbi }), undefined, { currentVersion: '3.0.0' });
+    await expect(harness.installer.checkForUpdate()).resolves.toMatchObject({ available: false, noValidatedRelease: true, reason: 'channel-base-older', version: VERSION });
+    expect(harness.installer.getStatus().state).toBe('no-validated-release');
+  });
+
+  it('still rejects a newer stable channel built for another Node ABI', async () => {
+    const archive = makeArchive();
+    const oldAbi = makeChannel(archive, { nodeAbi: '127' });
+    const harness = await makeHarness(makeFetch({ archive, channel: oldAbi }), undefined, { currentVersion: '1.0.0' });
+    await expect(harness.installer.checkForUpdate()).rejects.toThrow('does not match');
+  });
+
   it('reports no validated release when the latest channel base is older than the running base', async () => {
     const harness = await makeHarness(makeFetch(), undefined, { currentVersion: '3.0.0' });
     await expect(harness.installer.checkForUpdate()).resolves.toMatchObject({ available: false, noValidatedRelease: true, reason: 'channel-base-older' });

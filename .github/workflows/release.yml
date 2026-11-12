@@ -714,7 +714,7 @@ jobs:
             --upstream-tag "${{ needs.metadata.outputs.upstream_tag }}" \
             --source-commit "${{ needs.metadata.outputs.source_commit }}" \
             --output-dir multi-web-artifacts
-          opencode_version="$(node -p 'require(`./trusted/package.json`).dependencies[`@opencode-ai/sdk`]')"
+          opencode_version="$(node -p 'require(`./trusted/packages/electron/package.json`).opencodeCli.version')"
           electron_version="$(node -p 'require(`./trusted/packages/electron/package.json`).devDependencies.electron.replace(/^\D+/, ``)')"
           node trusted/tools/desktop-release/desktop-release.mjs verify-release \
             --base-version '${{ needs.metadata.outputs.base_version }}' \
