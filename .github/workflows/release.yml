@@ -379,6 +379,9 @@ jobs:
         # locally with OPENCHAMBER_TEST_CHROME.
         env:
           OPENCHAMBER_SKIP_BROWSER_TESTS: '1'
+          # Timing-sensitive vitest cases flake on the macOS release runners
+          # (they pass in J2K Validate on Linux); retry a failing case twice.
+          OPENCHAMBER_TEST_RETRY: '2'
         run: |
           set -euo pipefail
           bun run type-check

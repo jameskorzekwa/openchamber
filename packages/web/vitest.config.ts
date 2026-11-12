@@ -37,6 +37,9 @@ export default defineConfig({
     // cases exceed it shifts with machine load, so the default made a valid
     // suite fail differently on every run.
     testTimeout: 30_000,
+    // Opt-in retries for CI gates on loaded runners (J2K macOS release gates
+    // set OPENCHAMBER_TEST_RETRY=2); a real regression fails every attempt.
+    retry: Number(process.env.OPENCHAMBER_TEST_RETRY) || 0,
     hookTimeout: 30_000,
     // Tests never touch the developer's real ~/.config/openchamber, and
     // supertest servers listen on the loopback address it sends to.

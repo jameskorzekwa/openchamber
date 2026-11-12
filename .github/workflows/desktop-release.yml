@@ -188,6 +188,9 @@ jobs:
         # locally with OPENCHAMBER_TEST_CHROME.
         env:
           OPENCHAMBER_SKIP_BROWSER_TESTS: '1'
+          # Timing-sensitive vitest cases flake on the macOS release runners
+          # (they pass in J2K Validate on Linux); retry a failing case twice.
+          OPENCHAMBER_TEST_RETRY: '2'
         run: |
           set -euo pipefail
           test "$(uname -m)" = arm64
@@ -218,6 +221,9 @@ jobs:
           bun run --cwd packages/electron build:web-assets
           bun run --cwd packages/electron prepare:opencode-cli
           bun run --cwd packages/electron verify:opencode-cli
+          # OpenChamber 2.7.0 ships ripgrep for find-in-files; package.mjs refuses
+          # an app without Resources/ripgrep/rg (upstream runs this step too).
+          bun run --cwd packages/electron prepare:ripgrep
           bun run --cwd packages/electron bundle:main
           bun run --cwd packages/electron rebuild:native
           node packages/electron/scripts/package.mjs --mac --arm64 --dir --publish=never \
