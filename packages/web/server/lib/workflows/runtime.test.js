@@ -96,10 +96,10 @@ const setup = async (agentSessions, options = {}) => {
   });
   const scope = { sessionId: 'ses_parent', directory: dataDir };
   const act = (action, input = {}) => runtime.executeAction(action, input, scope);
-  const finished = (runId) => waitFor(async () => {
+  const finished = (runId, timeoutMs) => waitFor(async () => {
     const status = await act('workflow.status', { runId });
     return ['completed', 'failed', 'stopped', 'declined'].includes(status.state) && agentSessions.reports.some((report) => report.body.metadata.runId === runId) ? status : null;
-  });
+  }, timeoutMs);
   return { runtime, store, events, act, finished, dataDir };
 };
 
@@ -739,7 +739,9 @@ describe('workflow runtime', () => {
 
     await expect(runtime.remove({ runId })).rejects.toThrow('Stop or decline the run before deleting it');
     await runtime.stop({ runId });
-    await finished(runId);
+    // J2K: stopping a hung agent can outlast 5 s on loaded CI runners
+    // (2 of 3 GitHub runs on 2026-11-12); the outcome checked is unchanged.
+    await finished(runId, 20_000);
   });
 
   it('takes an answer accepted during a correction even when that turn ends in an error', async () => {
