@@ -287,6 +287,7 @@ import { SessionSuggestionChip } from '@/components/chat/SessionSuggestionChip';
 import { SessionDoneHintRow } from '@/components/chat/SessionDoneHintRow';
 import { SessionReviewHintRow } from '@/components/chat/SessionReviewHintRow';
 import { BackgroundShellsStrip } from '@/components/chat/BackgroundShellsStrip';
+import { backgroundShellsRowKey, backgroundSubtasksRowKey } from '@/components/chat/composerRowKeys';
 import { BackgroundWorkBanner } from '@/components/chat/BackgroundWorkBanner';
 import { ComposerStatusStrip } from '@/components/chat/ComposerStatusStrip';
 import { useWorktreeBootstrapPending } from '@/hooks/useWorktreeBootstrapPending';
@@ -4736,10 +4737,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     ) : null;
     // Commands the agent left running sit in the same slot, first, so a
     // forgotten dev server is visible without scrolling the chat. Keyed by
-    // session so an expanded list collapses on a session switch.
+    // session so an expanded list collapses on a session switch. The key must
+    // differ from every sibling's (see composerRowKeys).
     const backgroundShellsRow = !isBtwActive && !newSessionDraftOpen ? (
         <BackgroundShellsStrip
-            key={currentSessionId ?? ''}
+            key={backgroundShellsRowKey(currentSessionId)}
             sessionId={currentSessionId}
             directory={currentSessionDirectoryForSync ?? currentDirectory}
         />
@@ -4748,7 +4750,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     // commands, so a turn that ended while they work says what it waits on.
     const backgroundSubtasksRow = !isBtwActive && !newSessionDraftOpen ? (
         <BackgroundWorkBanner
-            key={currentSessionId ?? ''}
+            key={backgroundSubtasksRowKey(currentSessionId)}
             sessionId={currentSessionId}
             directory={currentSessionDirectoryForSync ?? currentDirectory}
         />
