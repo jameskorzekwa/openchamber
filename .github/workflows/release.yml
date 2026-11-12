@@ -715,7 +715,9 @@ jobs:
             --source-commit "${{ needs.metadata.outputs.source_commit }}" \
             --output-dir multi-web-artifacts
           opencode_version="$(node -p 'require(`./trusted/packages/electron/package.json`).opencodeCli.version')"
-          electron_version="$(node -p 'require(`./trusted/packages/electron/package.json`).devDependencies.electron.replace(/^\D+/, ``)')"
+          # The exact Electron the frozen desktop build installed: package.json
+          # holds a range (^45.0.0 in 2.7.0), bun.lock the resolved version.
+          electron_version="$(node -e 'const m = require(`node:fs`).readFileSync(`./trusted/bun.lock`, `utf8`).match(/"electron": \["electron@(\d+\.\d+\.\d+[^"]*)"/); if (!m) throw new Error(`electron is not in bun.lock`); console.log(m[1])')"
           node trusted/tools/desktop-release/desktop-release.mjs verify-release \
             --base-version '${{ needs.metadata.outputs.base_version }}' \
             --revision '${{ needs.metadata.outputs.revision }}' \
