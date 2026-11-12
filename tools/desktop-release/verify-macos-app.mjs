@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -115,16 +115,18 @@ const main = () => {
 
   const nativeModules = visit(resources, (path) => path.endsWith('.node')
     && (!path.includes('/prebuilds/') || path.includes('/prebuilds/darwin-arm64/')));
-  const bunPtyLibraries = visit(
-    join(resources, 'app.asar.unpacked', 'node_modules', 'bun-pty'),
-    (path) => path.endsWith('/librust_pty_arm64.dylib'),
-  );
   if (!nativeModules.some((path) => path.includes('/node-pty/build/Release/pty.node'))
-    || !nativeModules.some((path) => path.includes('/sherpa-onnx-darwin-arm64/'))
-    || bunPtyLibraries.length === 0) {
-    fail('Packaged app is missing rebuilt node-pty, bun-pty, or arm64 sherpa-onnx payloads');
+    || !nativeModules.some((path) => path.includes('/sherpa-onnx-darwin-arm64/'))) {
+    fail('Packaged app is missing rebuilt node-pty or arm64 sherpa-onnx payloads');
   }
-  for (const modulePath of [...nativeModules, ...bunPtyLibraries]) architecture(modulePath);
+  // OpenChamber 2.7.0 runs terminals on node-pty in Electron and excludes the
+  // Bun-only bun-pty from the app (`!**/node_modules/bun-pty` in build.files).
+  if (existsSync(join(resources, 'app.asar.unpacked', 'node_modules', 'bun-pty'))) {
+    fail('Packaged app unexpectedly contains bun-pty');
+  }
+  for (const modulePath of nativeModules) architecture(modulePath);
+  // Find-in-files ripgrep is downloaded per target architecture (prepare:ripgrep).
+  architecture(join(resources, 'ripgrep', 'rg'));
 
   // Verify app-update.yml is present and correctly configured for electron-updater
   const appUpdateConfig = verifyAppUpdateYml(resources, artifact);
