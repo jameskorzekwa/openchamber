@@ -16,7 +16,9 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 })));
 });
 
-const waitFor = async (check, timeoutMs = 5_000) => {
+// 20 s, within the 30 s test timeout: at 5 s, different cases timed out on
+// loaded CI runners on almost every J2K run. Outcomes checked are unchanged.
+const waitFor = async (check, timeoutMs = 20_000) => {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const value = await check();

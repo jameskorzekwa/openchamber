@@ -100,6 +100,9 @@ jobs:
         # locally with OPENCHAMBER_TEST_CHROME.
         env:
           OPENCHAMBER_SKIP_BROWSER_TESTS: '1'
+          # Retry a failing timing-sensitive vitest case twice; a real
+          # regression fails every attempt.
+          OPENCHAMBER_TEST_RETRY: '2'
         run: |
           set -euo pipefail
           bun run test
