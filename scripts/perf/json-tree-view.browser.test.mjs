@@ -17,7 +17,7 @@ try {
 }
 
 // Real CSS layout catches the unbounded viewport that happy-dom cannot measure.
-test('JSON tree stays bounded and its tail remains reachable', { skip: !chrome && 'Set OPENCHAMBER_TEST_CHROME to run the browser regression', timeout: 120_000 }, async (t) => {
+test('JSON tree stays bounded and its tail remains reachable', { skip: process.env.OPENCHAMBER_SKIP_BROWSER_TESTS === '1' ? 'OPENCHAMBER_SKIP_BROWSER_TESTS=1 (J2K release gates)' : !chrome && 'Set OPENCHAMBER_TEST_CHROME to run the browser regression', timeout: 120_000 }, async (t) => {
   mkdirSync(path.join(repo, 'tmp'), { recursive: true });
   const fixture = mkdtempSync(path.join(repo, 'tmp/json-tree-'));
   writeFileSync(path.join(fixture, 'index.html'), '<!doctype html><html><body><div id="host" style="height:520px;width:320px;overflow:auto"></div><script type="module" src="/fixture.tsx"></script></body></html>');
@@ -202,6 +202,6 @@ test('JSON tree stays bounded and its tail remains reachable', { skip: !chrome &
       if (browser.exitCode === null) browser.kill('SIGKILL');
     }
     await within(server.close(), 3_000);
-    rmSync(fixture, { recursive: true, force: true });
+    rmSync(fixture, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

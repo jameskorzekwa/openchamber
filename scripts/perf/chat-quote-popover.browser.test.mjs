@@ -52,14 +52,14 @@ async function createQuotePopoverFixture() {
     await server.listen();
   } catch (error) {
     await server.close();
-    rmSync(fixture, { recursive: true, force: true });
+    rmSync(fixture, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     throw error;
   }
   return {
     url: server.resolvedUrls.local[0], fixture,
     async close() {
       await server.close();
-      rmSync(fixture, { recursive: true, force: true });
+      rmSync(fixture, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     },
   };
 }
@@ -128,7 +128,7 @@ try {
   if (process.env.OPENCHAMBER_TEST_CHROME) throw error;
 }
 test('saved quote comments stay on screen through repeated editing', {
-  skip: !chrome && 'Set OPENCHAMBER_TEST_CHROME to run the browser regression', timeout: 120_000,
+  skip: process.env.OPENCHAMBER_SKIP_BROWSER_TESTS === '1' ? 'OPENCHAMBER_SKIP_BROWSER_TESTS=1 (J2K release gates)' : !chrome && 'Set OPENCHAMBER_TEST_CHROME to run the browser regression', timeout: 120_000,
 }, async () => {
   const fixture = await createQuotePopoverFixture();
   let browser;
