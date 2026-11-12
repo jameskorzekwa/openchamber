@@ -182,9 +182,10 @@ jobs:
 
       - name: Install frozen dependencies and validate source
         # The Chrome-driven layout regressions in scripts/perf run wherever a
-        # Chrome is found; macOS runners ship one, the Linux runners and
-        # upstream CI do not. They are flaky there (profile-dir cleanup race,
-        # first-paint timing), so the release gates skip them as Linux does.
+        # Chrome is found, and GitHub's macOS and Linux runners both ship one.
+        # They are flaky there (Chrome debug endpoint not starting, profile-dir
+        # cleanup race, first-paint timing), so J2K CI skips them; run them
+        # locally with OPENCHAMBER_TEST_CHROME.
         env:
           OPENCHAMBER_SKIP_BROWSER_TESTS: '1'
         run: |
