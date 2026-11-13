@@ -47,7 +47,7 @@ test('release publication is resumable and keeps candidate code outside the toke
   assert.match(tokenStep, /current_j2k.*EXPECTED_J2K.*SOURCE_COMMIT/s);
   assert.match(tokenStep, /--force-with-lease=refs\/heads\/j2k\/current:/);
   assert.match(release, /persist-credentials: false/);
-  assert.match(release, /runs-on: macos-15/);
+  assert.match(release, /runs-on: \$\{\{ fromJSON\(vars\.J2K_MACOS_RUNS_ON \|\| '"macos-15"'\) \}\}/);
   assert.match(release, /node_abi="\$\(node -p 'process\.versions\.modules'\)"/);
   assert.match(release, /--platform "\$TARGET_PLATFORM"/);
   assert.match(release, /--arch "\$TARGET_ARCH"/);
@@ -91,7 +91,7 @@ test('native candidate jobs build and smoke exact Node 24 ABI 137 targets withou
   const darwin = JSON.stringify(jobs['validate-release']);
   const linux = JSON.stringify(jobs['validate-release-linux']);
   const assembly = JSON.stringify(jobs['assemble-web-bundle']);
-  assert.equal(jobs['validate-release']['runs-on'], 'macos-15');
+  assert.equal(jobs['validate-release']['runs-on'], `\${{ fromJSON(vars.J2K_MACOS_RUNS_ON || '"macos-15"') }}`);
   assert.equal(jobs['validate-release-linux']['runs-on'], 'ubuntu-latest');
   assert.deepEqual(jobs['validate-release'].permissions, { contents: 'read' });
   assert.deepEqual(jobs['validate-release-linux'].permissions, { contents: 'read' });

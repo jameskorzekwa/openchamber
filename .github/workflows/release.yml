@@ -299,7 +299,7 @@ jobs:
 
   validate-release:
     needs: metadata
-    runs-on: macos-15
+    runs-on: ${{ fromJSON(vars.J2K_MACOS_RUNS_ON || '"macos-15"') }}
     timeout-minutes: 60
     permissions:
       contents: read
