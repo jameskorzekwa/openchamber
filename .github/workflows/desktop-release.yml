@@ -555,6 +555,10 @@ jobs:
     needs:
       - metadata
       - sign-and-verify
+    # The packaged app needs a logged-in macOS desktop session to start. The
+    # self-hosted runner (selected by J2K_MACOS_RUNS_ON) is a background
+    # service without one, so the smoke check runs only on GitHub-hosted Macs.
+    if: ${{ !vars.J2K_MACOS_RUNS_ON }}
     runs-on: ${{ fromJSON(vars.J2K_MACOS_RUNS_ON || '"macos-15"') }}
     timeout-minutes: 20
     permissions:

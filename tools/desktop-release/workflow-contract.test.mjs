@@ -229,6 +229,7 @@ test('publication waits for strict final-app verification and a real packaged up
   assert.match(signer, /--artifact-label 'final ZIP app'/);
   assert.match(signer, /--artifact-label 'final DMG app'/);
   assert.match(smoke, /needs:\n      - metadata\n      - sign-and-verify/);
+  assert.match(smoke, /if: \$\{\{ !vars\.J2K_MACOS_RUNS_ON \}\}\n    runs-on: \$\{\{ fromJSON\(vars\.J2K_MACOS_RUNS_ON \|\| '"macos-15"'\) \}\}/);
   assert.match(smoke, /permissions:\n      contents: read/);
   assert.doesNotMatch(smoke, /environment: j2k-release|MACOS_PRIVATE_CERTIFICATE|contents: write/);
   assert.match(smoke, /run-packaged-macos-updater-smoke\.mjs/);
