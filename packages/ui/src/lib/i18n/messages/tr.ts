@@ -753,6 +753,7 @@ export const dict = {
   'sessions.sidebar.session.status.activeFor': '{duration} süredir aktif',
   'sessions.sidebar.session.status.lastTurnDuration': 'Son tur {duration} sürdü',
   'chat.backgroundWork.label': 'Arka planda çalışıyor',
+  'chat.backgroundWork.agentWaiting': 'Ajan bekliyor',
   'chat.backgroundWork.ariaLabel': 'Arka planda çalışıyor: {summary}',
   'chat.backgroundWork.subtaskCountOne': '1 alt görev',
   'chat.backgroundWork.subtaskCountMany': '{count} alt görev',

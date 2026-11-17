@@ -673,6 +673,7 @@ export const dict = {
   'sessions.sidebar.session.status.activeFor': 'Active depuis {duration}',
   'sessions.sidebar.session.status.lastTurnDuration': 'Le dernier tour a duré {duration}',
   'chat.backgroundWork.label': 'En arrière-plan',
+  'chat.backgroundWork.agentWaiting': 'Agent en attente',
   'chat.backgroundWork.ariaLabel': 'En arrière-plan : {summary}',
   'chat.backgroundWork.subtaskCountOne': '1 sous-tâche',
   'chat.backgroundWork.subtaskCountMany': '{count} sous-tâches',

@@ -4032,6 +4032,8 @@ export const dict = {
   'helpDialog.item.searchPromptHistory': "חיפוש בהיסטוריית ההנחיות (קלט צ׳אט)",
 
   'chat.backgroundWork.label': 'פועל ברקע',
+
+  'chat.backgroundWork.agentWaiting': 'הסוכן ממתין',
   'chat.backgroundWork.ariaLabel': 'פועל ברקע: {summary}',
   'chat.backgroundWork.subtaskCountOne': 'משימת משנה אחת',
   'chat.backgroundWork.subtaskCountMany': '{count} משימות משנה',

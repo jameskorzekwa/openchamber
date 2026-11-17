@@ -86,6 +86,8 @@ describe('BackgroundWorkBanner', () => {
     await publish([session(parentId), session('child-a', { parentID: parentId })], { 'child-a': { type: 'busy' } });
     expect(container.textContent).toContain('Title child-a');
     expect(container.querySelectorAll('button[aria-label^="Open "]').length).toBe(1);
+    expect(container.textContent).toContain('Agent waiting');
+    expect(container.querySelector('[role="group"]')?.className).toContain('border-s-primary');
 
     await publish([session(parentId), session('child-a', { parentID: parentId })], { 'child-a': { type: 'idle' } });
     expect(container.textContent).toBe('');
