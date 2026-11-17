@@ -2,6 +2,7 @@ import React from 'react';
 
 import { Icon } from '@/components/icon/Icon';
 import type { IconName } from '@/components/icon/icons';
+import { useWaitingBlink } from '@/hooks/useDurationTicker';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
@@ -14,18 +15,18 @@ import { cn } from '@/lib/utils';
 export const BACKGROUND_ROW_GROUP_CLASS = 'border-b border-edge border-s-2 border-s-primary bg-primary/10';
 
 /**
- * The row's leading icon in the accent color, with a slowly pulsing dot that
- * says the work is live. The pulse stops under reduced motion.
+ * The row's leading icon in the accent color, with a dot that blinks on the
+ * app's shared once-a-second clock (`useWaitingBlink`) to say the work is live.
  */
-export const BackgroundRowIcon: React.FC<{ name: IconName; className?: string }> = ({ name, className }) => (
-  <span className={cn('relative inline-flex shrink-0', className)} aria-hidden="true">
-    <Icon name={name} className="size-3.5 text-primary" />
-    <span className="absolute -end-0.5 -top-0.5 flex size-1.5">
-      <span className="absolute inline-flex size-full rounded-full bg-primary opacity-75 motion-safe:animate-ping" />
-      <span className="relative inline-flex size-1.5 rounded-full bg-primary" />
+export const BackgroundRowIcon: React.FC<{ name: IconName; className?: string }> = ({ name, className }) => {
+  const blink = useWaitingBlink(true);
+  return (
+    <span className={cn('relative inline-flex shrink-0', className)} aria-hidden="true">
+      <Icon name={name} className="size-3.5 text-primary" />
+      <span className={cn('absolute -end-0.5 -top-0.5 inline-flex size-1.5 rounded-full bg-primary', blink)} />
     </span>
-  </span>
-);
+  );
+};
 
 /** The "Agent waiting" tag, shown once per group (its only row, or its header). */
 export const AgentWaitingLabel: React.FC = () => {
