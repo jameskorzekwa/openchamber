@@ -845,6 +845,7 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.session.status.activeFor": "Ativa há {duration}",
   "sessions.sidebar.session.status.lastTurnDuration": "O último turno levou {duration}",
   "chat.backgroundWork.label": "Em segundo plano",
+  "chat.backgroundWork.agentWaiting": "Agente aguardando",
   "chat.backgroundWork.ariaLabel": "Em segundo plano: {summary}",
   "chat.backgroundWork.subtaskCountOne": "1 subtarefa",
   "chat.backgroundWork.subtaskCountMany": "{count} subtarefas",

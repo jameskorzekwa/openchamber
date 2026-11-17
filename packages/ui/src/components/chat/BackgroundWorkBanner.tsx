@@ -9,6 +9,7 @@ import { useDirectorySync } from '@/sync/sync-context';
 import type { State } from '@/sync/types';
 import { areRunningSubtaskListsEqual, listRunningSubtasks, type RunningSubtask } from './runningSubtasks';
 import { useOpenChildSession } from './work-status/useOpenChildSession';
+import { AgentWaitingLabel, BACKGROUND_ROW_GROUP_CLASS, BackgroundRowIcon } from './backgroundRowStyle';
 
 type BackgroundWorkBannerProps = {
   sessionId: string | null | undefined;
@@ -81,7 +82,8 @@ export const BackgroundWorkBanner: React.FC<BackgroundWorkBannerProps> = ({ sess
         title={openLabel}
         className="flex oc-composer-row w-full min-w-0 items-center gap-2 ps-3 pe-3 text-start transition-colors hover:bg-interactive-hover"
       >
-        <Icon name="ai-agent" className="size-3.5 shrink-0 text-muted-foreground" />
+        <BackgroundRowIcon name="ai-agent" />
+        {subtasks.length === 1 ? <AgentWaitingLabel /> : null}
         <span className="min-w-0 flex-1 truncate typography-meta text-foreground">{label}</span>
         <SubtaskElapsed startedAt={subtask.startedAt} />
       </button>
@@ -90,14 +92,14 @@ export const BackgroundWorkBanner: React.FC<BackgroundWorkBannerProps> = ({ sess
 
   if (subtasks.length === 1) {
     return (
-      <div role="group" className="border-b border-edge" aria-label={t('chat.backgroundWork.ariaLabel', { summary })}>
+      <div role="group" className={BACKGROUND_ROW_GROUP_CLASS} aria-label={t('chat.backgroundWork.ariaLabel', { summary })}>
         {rows}
       </div>
     );
   }
 
   return (
-    <div role="group" className="border-b border-edge" aria-label={t('chat.backgroundWork.ariaLabel', { summary })}>
+    <div role="group" className={BACKGROUND_ROW_GROUP_CLASS} aria-label={t('chat.backgroundWork.ariaLabel', { summary })}>
       <div className="flex oc-composer-row items-center gap-2 ps-3 pe-1.5">
         <Button
           type="button"
@@ -109,7 +111,8 @@ export const BackgroundWorkBanner: React.FC<BackgroundWorkBannerProps> = ({ sess
           aria-controls={expanded ? listId : undefined}
           className="min-w-0 flex-1 shrink justify-start gap-2 px-0 text-sm font-normal normal-case text-muted-foreground hover:!bg-transparent hover:text-foreground has-[>svg]:px-0"
         >
-          <Icon name="ai-agent" className="size-3.5 shrink-0" aria-hidden="true" />
+          <BackgroundRowIcon name="ai-agent" />
+          <AgentWaitingLabel />
           <span className="min-w-0 flex-1 truncate text-start">{t('chat.backgroundWork.label')} · {summary}</span>
           <Icon name={expanded ? 'arrow-up-s' : 'arrow-down-s'} className="size-4 shrink-0" aria-hidden="true" />
         </Button>

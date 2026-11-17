@@ -840,6 +840,7 @@ export const dict = {
   'sessions.sidebar.session.status.activeFor': 'Active for {duration}',
   'sessions.sidebar.session.status.lastTurnDuration': 'Last turn took {duration}',
   'chat.backgroundWork.label': 'Running in background',
+  'chat.backgroundWork.agentWaiting': 'Agent waiting',
   'chat.backgroundWork.ariaLabel': 'Running in background: {summary}',
   'chat.backgroundWork.subtaskCountOne': '1 subtask',
   'chat.backgroundWork.subtaskCountMany': '{count} subtasks',

@@ -741,6 +741,7 @@ export const dict = {
   'sessions.sidebar.session.status.activeFor': 'Seit {duration} aktiv',
   'sessions.sidebar.session.status.lastTurnDuration': 'Letzter Durchlauf dauerte {duration}',
   'chat.backgroundWork.label': 'Läuft im Hintergrund',
+  'chat.backgroundWork.agentWaiting': 'Agent wartet',
   'chat.backgroundWork.ariaLabel': 'Läuft im Hintergrund: {summary}',
   'chat.backgroundWork.subtaskCountOne': '1 Teilaufgabe',
   'chat.backgroundWork.subtaskCountMany': '{count} Teilaufgaben',

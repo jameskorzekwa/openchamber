@@ -4032,6 +4032,8 @@ export const dict = {
   'helpDialog.item.searchPromptHistory': "البحث في سجل المطالبات (إدخال الدردشة)",
 
   'chat.backgroundWork.label': 'قيد التشغيل في الخلفية',
+
+  'chat.backgroundWork.agentWaiting': 'الوكيل ينتظر',
   'chat.backgroundWork.ariaLabel': 'قيد التشغيل في الخلفية: {summary}',
   'chat.backgroundWork.subtaskCountOne': 'مهمة فرعية واحدة',
   'chat.backgroundWork.subtaskCountMany': '{count} من المهام الفرعية',

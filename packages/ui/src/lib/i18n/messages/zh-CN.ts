@@ -841,6 +841,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.status.activeFor': '已活动 {duration}',
   'sessions.sidebar.session.status.lastTurnDuration': '上一轮耗时 {duration}',
   'chat.backgroundWork.label': '后台运行中',
+  'chat.backgroundWork.agentWaiting': '代理等待中',
   'chat.backgroundWork.ariaLabel': '后台运行中：{summary}',
   'chat.backgroundWork.subtaskCountOne': '1 个子任务',
   'chat.backgroundWork.subtaskCountMany': '{count} 个子任务',

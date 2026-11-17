@@ -845,6 +845,7 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.session.status.activeFor": "Активна вже {duration}",
   "sessions.sidebar.session.status.lastTurnDuration": "Останній хід тривав {duration}",
   "chat.backgroundWork.label": "Виконується у фоні",
+  "chat.backgroundWork.agentWaiting": "Агент очікує",
   "chat.backgroundWork.ariaLabel": "Виконується у фоні: {summary}",
   "chat.backgroundWork.subtaskCountOne": "1 підзадача",
   "chat.backgroundWork.subtaskCountMany": "Підзадач: {count}",

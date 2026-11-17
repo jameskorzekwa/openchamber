@@ -841,6 +841,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.status.activeFor': 'アクティブ時間 {duration}',
   'sessions.sidebar.session.status.lastTurnDuration': '前回のターンの所要時間 {duration}',
   'chat.backgroundWork.label': 'バックグラウンドで実行中',
+  'chat.backgroundWork.agentWaiting': 'エージェント待機中',
   'chat.backgroundWork.ariaLabel': 'バックグラウンドで実行中：{summary}',
   'chat.backgroundWork.subtaskCountOne': 'サブタスク1件',
   'chat.backgroundWork.subtaskCountMany': 'サブタスク{count}件',

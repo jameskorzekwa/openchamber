@@ -4007,6 +4007,8 @@ export const dict = {
   'helpDialog.item.searchPromptHistory': "Promptgeschiedenis doorzoeken (chatinvoer)",
 
   'chat.backgroundWork.label': 'Draait op de achtergrond',
+
+  'chat.backgroundWork.agentWaiting': 'Agent wacht',
   'chat.backgroundWork.ariaLabel': 'Draait op de achtergrond: {summary}',
   'chat.backgroundWork.subtaskCountOne': '1 subtaak',
   'chat.backgroundWork.subtaskCountMany': '{count} subtaken',
