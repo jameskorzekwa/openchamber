@@ -13,6 +13,29 @@ export function getSpawnSyncBaseOptions() {
   return process.platform === 'win32' ? { windowsHide: true } : {};
 }
 
+export function getPackageManagerCommandCandidates(pm: string) {
+  const candidates = [];
+  const configuredPackageManager = process.env.OPENCHAMBER_PACKAGE_MANAGER?.trim();
+  const configuredCommand = process.env.OPENCHAMBER_PACKAGE_MANAGER_COMMAND?.trim();
+  if (configuredPackageManager === pm && configuredCommand && path.isAbsolute(configuredCommand)) {
+    candidates.push(configuredCommand);
+  }
+  if (pm === 'bun') {
+    const bunExecutable = process.platform === 'win32' ? 'bun.exe' : 'bun';
+    if (process.env.BUN_INSTALL) {
+      candidates.push(path.join(process.env.BUN_INSTALL, 'bin', bunExecutable));
+    }
+    if (process.env.HOME) {
+      candidates.push(path.join(process.env.HOME, '.bun', 'bin', bunExecutable));
+    }
+    if (process.env.USERPROFILE) {
+      candidates.push(path.join(process.env.USERPROFILE, '.bun', 'bin', bunExecutable));
+    }
+  }
+  candidates.push(pm);
+  return [...new Set(candidates.filter(Boolean))];
+}
+
 function readEnv(env: ProbeEnv, name: string) {
   const key = Object.keys(env).find((candidate) => candidate.toUpperCase() === name);
   return key ? env[key] : undefined;

@@ -83,6 +83,14 @@ keeps the original empty-string sentinel and bounded mutable fragments.
 
 ## Decisions
 
+### Why scrollback and creation inputs have separate owners
+
+`scrollback.ts` owns the bounded byte and original UTF-16 history together,
+including split-surrogate handling and trimming. The runtime still orders
+output, snapshots and lifecycle changes. `create-input.ts` normalizes launch
+mode and purpose before session creation; `pty-provider.ts` selects the native
+backend. Their existing public exports remain available from `runtime.ts`.
+
 ### Why PowerShell aliases need a launch probe
 
 Windows Store execution aliases can reject `stat` with `EACCES` while remaining launchable. Shell discovery probes those PowerShell candidates, and only ones inside a `WindowsApps` directory or one of its package folders, with a bounded, profile-free command in PATH order; other executables keep the normal file check. Auto resolves fallback shells as the PTY needs them, so a PowerShell probe cannot delay an earlier usable shell. Explicit selection only probes candidates for that shell. A bare `pwsh` with no PATH match still falls back to the plain executable check.

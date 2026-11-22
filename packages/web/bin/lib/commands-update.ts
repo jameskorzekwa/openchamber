@@ -1,4 +1,8 @@
-import { requestServerShutdown } from './cli-http.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { webPackagePaths } from '../../server/lib/web-package-paths.js';
+import { requestJson, requestServerShutdown } from './cli-http.js';
+import type { JsonRequestOptions } from './cli-http.js';
 import { discoverRunningInstances } from './cli-lifecycle.js';
 import { buildLocalUrl } from './cli-network.js';
 import {
@@ -36,6 +40,8 @@ export interface UpdateDependencies {
     restart: typeof restartStartupService;
   };
   waitForVersion?: typeof waitForServerVersion;
+  requestJsonImpl?: typeof requestJson;
+  managedInstallDetector?: typeof isManagedValidatedInstall;
 }
 
 async function waitForServerVersion({ port, host }: Pick<RunningInstance, 'port' | 'host'>, version: JsonValue | undefined, timeoutMs = 30000) {
@@ -55,6 +61,30 @@ async function waitForServerVersion({ port, host }: Pick<RunningInstance, 'port'
   return false;
 }
 
+const CHANNEL_VERSION_PATTERN = /^\d+\.\d+\.\d+-j2k\.[1-9]\d*$/;
+const PACKAGE_PATH = webPackagePaths.packageJson;
+
+function isManagedValidatedInstall({
+  environment = process.env,
+  cliPath = process.argv[1],
+  readFileSync = fs.readFileSync,
+  realpathSync = fs.realpathSync,
+} = {}) {
+  const installRoot = environment.OPENCHAMBER_MANAGED_INSTALL_ROOT?.trim();
+  const launcher = environment.OPENCHAMBER_MANAGED_LAUNCHER?.trim();
+  if (!cliPath || !installRoot || !path.isAbsolute(installRoot) || launcher !== path.join(installRoot, 'bin', 'openchamber-managed')) return false;
+  try {
+    const packageJson = JSON.parse(readFileSync(PACKAGE_PATH, 'utf8'));
+    const artifact = packageJson.openchamberArtifact;
+    if (artifact?.constructor !== Object || Object.keys(artifact).sort().join(',') !== 'arch,nodeAbi,platform') return false;
+    if (!/^[a-z0-9_-]+$/.test(artifact.platform) || !/^[a-z0-9_-]+$/.test(artifact.arch) || !/^[1-9]\d*$/.test(artifact.nodeAbi)) return false;
+    if (packageJson.name !== '@openchamber/web' || !CHANNEL_VERSION_PATTERN.test(packageJson.version)) return false;
+    return realpathSync(cliPath) === realpathSync(path.join(installRoot, 'current', 'bin', 'cli.js'));
+  } catch {
+    return false;
+  }
+}
+
 function createUpdateCommand({
   importFromFilePath,
   packageManagerPath,
@@ -65,6 +95,8 @@ function createUpdateCommand({
     restart: restartStartupService,
   },
   waitForVersion = waitForServerVersion,
+  requestJsonImpl = requestJson,
+  managedInstallDetector = isManagedValidatedInstall,
 }: UpdateDependencies) {
   return async function updateCommand(options: Partial<CliOptions> = {}) {
     const showOutput = shouldRenderHumanOutput(options);
@@ -77,8 +109,10 @@ function createUpdateCommand({
       getCurrentVersion,
     } = await importFromFilePath(packageManagerPath);
 
-    const runningInstances = await discoverInstances();
     const currentVersion = getCurrentVersion();
+    const managedInstall = managedInstallDetector();
+    const packageManager = managedInstall ? null : detectPackageManager();
+    const runningInstances = await discoverInstances();
 
     if (showOutput) {
       clackIntro('OpenChamber Update');
@@ -86,9 +120,63 @@ function createUpdateCommand({
 
     if (showOutput && !updateSpin) {
       logStatus('info', `current version: ${currentVersion}`);
+      logStatus('info', managedInstall ? 'install: validated managed channel' : `install: ${packageManager} package manager`);
     }
 
-    updateSpin?.start('Checking for updates...');
+    updateSpin?.start(managedInstall ? 'Checking validated channel...' : 'Checking package registry...');
+
+    if (managedInstall) {
+      const candidates = options.explicitPort
+        ? runningInstances.filter((instance) => instance.port === options.port)
+        : runningInstances;
+      const [instance] = candidates;
+      if (candidates.length !== 1 || !instance) {
+        updateSpin?.error('Managed update server unavailable');
+        if (showOutput) clackOutro('update failed');
+        throw new Error(options.explicitPort
+          ? `No running OpenChamber instance was found on port ${options.port}`
+          : 'Managed updates require exactly one running OpenChamber instance; specify one with --port');
+      }
+      const requestOptions: JsonRequestOptions = {
+        timeoutMs: 30_000,
+      };
+      if (options.explicitUiPassword !== undefined) requestOptions.explicitUiPassword = options.explicitUiPassword;
+      if (options.uiPassword !== undefined) requestOptions.uiPassword = options.uiPassword;
+      const checked = await requestJsonImpl(instance.port, '/api/openchamber/update-check?appType=web', requestOptions);
+      if (!checked.response?.ok || checked.body?.error) {
+        updateSpin?.error('Validated update check failed');
+        if (showOutput) clackOutro('update failed');
+        throw new Error(checked.body?.error || `Validated update check failed with HTTP ${checked.response?.status || 'unknown'}`);
+      }
+      const updateInfo = checked.body;
+      if (!updateInfo.available) {
+        updateSpin?.stop('Already up to date');
+        if (isJsonMode(options)) {
+          printJson({ currentVersion, latestVersion: updateInfo.version || currentVersion, updated: false, installationMethod: 'validated-channel' });
+        } else if (showOutput) {
+          clackOutro('no update needed');
+        } else if (isQuietMode(options)) {
+          process.stdout.write(`validated-up-to-date ${currentVersion}\n`);
+        }
+        return;
+      }
+      updateSpin?.message(`Requesting validated update to ${updateInfo.version}...`);
+      const installed = await requestJsonImpl(instance.port, '/api/openchamber/update-install', { ...requestOptions, method: 'POST' });
+      if (installed.response?.status !== 202 || installed.body?.accepted !== true) {
+        updateSpin?.error('Validated update was not accepted');
+        if (showOutput) clackOutro('update failed');
+        throw new Error(installed.body?.error || `Validated update install failed with HTTP ${installed.response?.status || 'unknown'}`);
+      }
+      updateSpin?.stop(`Validated update to ${updateInfo.version} accepted`);
+      if (isJsonMode(options)) {
+        printJson({ currentVersion, latestVersion: updateInfo.version, updated: true, accepted: true, installationMethod: 'validated-channel' });
+      } else if (showOutput) {
+        clackOutro('validated update accepted; the process manager will restart OpenChamber');
+      } else if (isQuietMode(options)) {
+        process.stdout.write(`validated-update-accepted ${updateInfo.version}\n`);
+      }
+      return;
+    }
 
     const updateInfo = await checkForUpdates();
     if (updateInfo.error) {
@@ -104,6 +192,7 @@ function createUpdateCommand({
           currentVersion,
           latestVersion: updateInfo.version || currentVersion,
           updated: false,
+          installationMethod: 'package-manager',
         });
         return;
       }
@@ -153,8 +242,7 @@ function createUpdateCommand({
       }
     }
 
-    const pm = detectPackageManager();
-    const result = executeUpdate(pm, {
+    const result = executeUpdate(packageManager ?? undefined, {
       targetVersion: updateInfo.version,
       silent: isJsonMode(options) || isQuietMode(options),
     });
@@ -211,15 +299,17 @@ function createUpdateCommand({
         latestVersion: updateInfo.version || 'latest',
         updated: true,
         restartedCount: runningInstances.length,
+        installationMethod: 'package-manager',
+        packageManager,
       });
       return;
     }
     if (showOutput) {
       clackOutro('update complete');
     } else if (isQuietMode(options)) {
-      process.stdout.write(`updated ${updateInfo.version || 'latest'}\n`);
+      process.stdout.write(`package-manager-updated ${updateInfo.version || 'latest'}\n`);
     }
   };
 }
 
-export { createUpdateCommand };
+export { createUpdateCommand, isManagedValidatedInstall };

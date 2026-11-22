@@ -1,5 +1,7 @@
 import type { JsonValue } from './shared/json-values.js';
 
+const FORK_CHANNEL_SUFFIX = /^j2k\.(\d+)$/;
+
 function parseVersionForComparison(value: JsonValue | undefined) {
   const [normalized = ''] = String(value || '').replace(/^v/, '').split('+');
   const prereleaseIndex = normalized.indexOf('-');
@@ -9,9 +11,13 @@ function parseVersionForComparison(value: JsonValue | undefined) {
     return Number.isFinite(parsed) ? parsed : 0;
   });
 
+  const suffix = prereleaseIndex >= 0 ? normalized.slice(prereleaseIndex + 1) : '';
+  const forkChannel = FORK_CHANNEL_SUFFIX.exec(suffix);
+
   return {
     parts,
-    prerelease: prereleaseIndex >= 0 ? normalized.slice(prereleaseIndex + 1).split('.') : null,
+    prerelease: prereleaseIndex >= 0 && !forkChannel ? suffix.split('.') : null,
+    forkRevision: forkChannel ? Number.parseInt(forkChannel[1] ?? '0', 10) : 0,
   };
 }
 
@@ -48,7 +54,7 @@ export function compareVersions(left: JsonValue | undefined, right: JsonValue | 
 
   if (!a.prerelease || !b.prerelease) {
     if (a.prerelease) return -1;
-    return b.prerelease ? 1 : 0;
+    return b.prerelease ? 1 : a.forkRevision - b.forkRevision;
   }
 
   return comparePrerelease(a.prerelease, b.prerelease);

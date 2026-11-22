@@ -34,6 +34,7 @@ import {
 } from './config-v2.js';
 import type { AgentEntity } from './config-v2.js';
 import type { JsonValue } from '../shared/json-values.js';
+import { assertProjectMutationAllowed } from './primary-worktree-write-guard.js';
 
 export type AgentScope = 'user' | 'project';
 export interface AgentLookupCache {
@@ -352,6 +353,7 @@ function createAgent(agentName: string, config: JsonValue, workingDirectory: str
   let targetScope;
 
   if (scope === AGENT_SCOPE.PROJECT && workingDirectory && projectPath) {
+    assertProjectMutationAllowed(projectPath);
     ensureProjectAgentDir(workingDirectory);
     targetPath = projectPath;
     targetScope = AGENT_SCOPE.PROJECT;
@@ -433,6 +435,7 @@ function updateAgent(agentName: string, updates: JsonValue, workingDirectory: st
   const entity = applyAgentUpdates(current.config, updates);
 
   if (current.source === 'md') {
+    if (current.scope === AGENT_SCOPE.PROJECT) assertProjectMutationAllowed(current.path);
     writeAgentMd(current.path, entity);
     console.log(`Updated agent: ${agentName} (md: ${current.path})`);
     return { source: 'md', scope: current.scope, path: current.path };
@@ -441,6 +444,7 @@ function updateAgent(agentName: string, updates: JsonValue, workingDirectory: st
   if (current.source === 'json') {
     const layers = readConfigLayers(workingDirectory);
     const jsonSource = getJsonEntrySource(layers, 'agents', agentName);
+    if (jsonSource.path !== null && jsonSource.path === layers.paths.projectPath) assertProjectMutationAllowed(jsonSource.path);
     const config = jsonSource.config || {};
     const section = hasPromptFields(jsonSource.section) ? jsonSource.section : undefined;
     const rawSystem = section?.system ?? section?.prompt;
@@ -450,6 +454,7 @@ function updateAgent(agentName: string, updates: JsonValue, workingDirectory: st
         throw new Error(`Invalid prompt file reference for agent ${agentName}`);
       }
       if (entity.system !== current.config.system) {
+        assertProjectMutationAllowed(promptFilePath);
         writePromptFile(promptFilePath, entity.system ?? '');
       }
       entity.system = rawSystem;
@@ -474,6 +479,7 @@ function deleteAgent(agentName: string, workingDirectory: string | null, scope?:
   if ((!requestedScope || requestedScope === AGENT_SCOPE.PROJECT) && workingDirectory) {
     const projectPath = getProjectAgentPath(workingDirectory, agentName);
     if (fs.existsSync(projectPath)) {
+      assertProjectMutationAllowed(projectPath);
       fs.unlinkSync(projectPath);
       console.log(`Deleted project-level agent .md file: ${projectPath}`);
       return;
@@ -493,6 +499,7 @@ function deleteAgent(agentName: string, workingDirectory: string | null, scope?:
 
   if (requestedScope === AGENT_SCOPE.PROJECT) {
     if (layers.paths.projectPath && deleteSectionEntry(layers.projectConfig, 'agents', agentName)) {
+      assertProjectMutationAllowed(layers.paths.projectPath);
       writeConfig(layers.projectConfig, layers.paths.projectPath);
       console.log(`Removed project-level agent from opencode.json: ${agentName}`);
       return;
@@ -514,6 +521,7 @@ function deleteAgent(agentName: string, workingDirectory: string | null, scope?:
   const jsonSource = getJsonEntrySource(layers, 'agents', agentName);
   if (jsonSource.exists && jsonSource.config && jsonSource.path
     && deleteSectionEntry(jsonSource.config, 'agents', agentName)) {
+    if (jsonSource.path === layers.paths.projectPath) assertProjectMutationAllowed(jsonSource.path);
     writeConfig(jsonSource.config, jsonSource.path);
     console.log(`Removed agent from opencode.json: ${agentName}`);
     return;

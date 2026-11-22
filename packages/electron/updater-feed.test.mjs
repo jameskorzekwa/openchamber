@@ -11,8 +11,13 @@ import {
   isCanaryVersion,
   isUpdateChannel,
   normalizeUpdateChannel,
+  DEFAULT_APP_UPDATE_CONFIG,
+  J2K_MACOS_APP_UPDATE_CONFIG,
+  MACOS_PRODUCTION_UPDATER_FEED,
   parseLoopbackUpdaterUrl,
+  resolveProductionUpdaterFeed,
   resolveUpdaterFeed,
+  resolveUpdaterPrereleasePolicy,
 } from './updater-feed.mjs';
 
 const overrideEnvironment = {
@@ -20,13 +25,26 @@ const overrideEnvironment = {
   OPENCHAMBER_UPDATER_E2E_URL: 'http://127.0.0.1:49152/updates/',
 };
 
-test('production updater feed is immutable GitHub configuration', () => {
+test('production updater feeds have explicit platform ownership', () => {
+  assert.equal(Object.isFrozen(DEFAULT_APP_UPDATE_CONFIG), true);
+  assert.equal(Object.isFrozen(J2K_MACOS_APP_UPDATE_CONFIG), true);
   assert.equal(Object.isFrozen(PRODUCTION_UPDATER_FEED), true);
-  assert.deepEqual(PRODUCTION_UPDATER_FEED, {
-    provider: 'github',
-    owner: 'openchamber',
-    repo: 'openchamber',
+  assert.equal(Object.isFrozen(MACOS_PRODUCTION_UPDATER_FEED), true);
+  assert.equal(resolveProductionUpdaterFeed({ platform: 'darwin' }), PRODUCTION_UPDATER_FEED);
+  assert.deepEqual(resolveProductionUpdaterFeed({ platform: 'darwin', j2kBuild: true }), {
+    provider: J2K_MACOS_APP_UPDATE_CONFIG.provider,
+    url: J2K_MACOS_APP_UPDATE_CONFIG.url,
   });
+  assert.deepEqual(resolveProductionUpdaterFeed({ platform: 'win32' }), {
+    provider: DEFAULT_APP_UPDATE_CONFIG.provider,
+    owner: DEFAULT_APP_UPDATE_CONFIG.owner,
+    repo: DEFAULT_APP_UPDATE_CONFIG.repo,
+  });
+  assert.equal(resolveProductionUpdaterFeed({ platform: 'linux' }), PRODUCTION_UPDATER_FEED);
+  assert.equal(resolveUpdaterPrereleasePolicy({ platform: 'darwin' }), false);
+  assert.equal(resolveUpdaterPrereleasePolicy({ platform: 'darwin', j2kBuild: true }), true);
+  assert.equal(resolveUpdaterPrereleasePolicy({ platform: 'win32' }), false);
+  assert.equal(resolveUpdaterPrereleasePolicy({ platform: 'linux' }), false);
 });
 
 test('the Canary channel reads the canary pre-release; on a release build every other stored value is Stable', () => {
@@ -62,7 +80,11 @@ test('requires the complete E2E environment and embedded build-marker conjunctio
     },
     { environment: overrideEnvironment, testBuild: false },
   ];
-  for (const input of cases) assert.equal(resolveUpdaterFeed(input), PRODUCTION_UPDATER_FEED);
+  for (const input of cases) {
+    assert.equal(resolveUpdaterFeed({ ...input, platform: 'win32' }), PRODUCTION_UPDATER_FEED);
+    assert.equal(resolveUpdaterFeed({ ...input, platform: 'darwin' }), PRODUCTION_UPDATER_FEED);
+    assert.equal(resolveUpdaterFeed({ ...input, platform: 'darwin', j2kBuild: true }), MACOS_PRODUCTION_UPDATER_FEED);
+  }
 });
 
 test('accepts only credential-free loopback HTTP(S) URLs', () => {
@@ -87,6 +109,7 @@ test('accepts only credential-free loopback HTTP(S) URLs', () => {
 test('uses a generic feed only when every test-only gate is valid', () => {
   assert.deepEqual(resolveUpdaterFeed({
     environment: overrideEnvironment,
+    j2kBuild: true,
     testBuild: true,
   }), {
     provider: 'generic',
@@ -99,7 +122,9 @@ test('invalid URLs fall back to the production feed even with both test gates', 
     assert.equal(resolveUpdaterFeed({
       environment: { ...overrideEnvironment, OPENCHAMBER_UPDATER_E2E_URL: url },
       testBuild: true,
-    }), PRODUCTION_UPDATER_FEED);
+      j2kBuild: true,
+      platform: 'darwin',
+    }), MACOS_PRODUCTION_UPDATER_FEED);
   }
 });
 
@@ -115,4 +140,13 @@ test('both channels read the mirror, and GitHub for an hour after the mirror fai
   assert.equal(STABLE_MIRROR_UPDATER_FEED.url, 'https://downloads.openchamber.dev/desktop/stable/');
   assert.equal(CANARY_MIRROR_UPDATER_FEED.url, 'https://downloads.openchamber.dev/desktop/canary/');
   assert.equal(resolveUpdaterFeed({ environment: overrideEnvironment, testBuild: true, channel: 'stable', source: 'mirror' }).url, overrideEnvironment.OPENCHAMBER_UPDATER_E2E_URL);
+});
+
+test('a J2K macOS build keeps the private desktop channel even when Canary is chosen', () => {
+  assert.equal(
+    resolveUpdaterFeed({ environment: {}, platform: 'darwin', j2kBuild: true, channel: 'canary' }),
+    MACOS_PRODUCTION_UPDATER_FEED,
+  );
+  assert.equal(resolveUpdaterFeed({ environment: {}, platform: 'darwin', channel: 'canary' }), CANARY_UPDATER_FEED);
+  assert.equal(resolveUpdaterFeed({ environment: {}, platform: 'linux' }), PRODUCTION_UPDATER_FEED);
 });

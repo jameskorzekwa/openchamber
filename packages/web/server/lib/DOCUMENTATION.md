@@ -10,6 +10,15 @@ belong to `../DOCUMENTATION.md`.
 
 ## Invariants
 
+- Package-manager command candidates belong to `package-manager-probe.ts`.
+  The configured absolute command remains first, followed by Bun's known
+  install locations and the command on PATH.
+
+- J2K suffixes identify fork revisions of an upstream version, not earlier
+  prereleases. Version ordering compares their upstream core first, then
+  `j2k.<revision>`, so a fork install does not offer its unpatched upstream
+  version as an upgrade.
+
 - Relative imports keep `.js` specifiers in both source languages. The source
   hook resolves converted implementations; installed processes use emitted
   JavaScript.

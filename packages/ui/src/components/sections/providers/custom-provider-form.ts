@@ -3,8 +3,18 @@ import { editableCapabilities, resolveDiscoveredCapabilities } from './model-cap
 import type { Model } from '@/lib/opencode/model';
 import type { CustomProviderIcon } from '@/lib/customProviderIcons';
 import { storedCapabilitiesSchema, storedLimitSchema, storedVariantsSchema, type InheritedCanonical, type StoredProviderSource } from './stored-provider-entry';
+import {
+  clientCertificateFieldsOf,
+  EMPTY_CLIENT_CERTIFICATE,
+  isRelativeCertificatePath,
+  storedClientCertificateOf,
+  storedTlsSchema,
+  type ClientCertificateFields,
+  type StoredClientCertificate,
+} from './custom-provider-certificate';
 
 export { storedProviderEntrySchema, type StoredProviderSource } from './stored-provider-entry';
+export { EMPTY_CLIENT_CERTIFICATE, storedClientCertificateOf, type ClientCertificateFields } from './custom-provider-certificate';
 
 
 export const CUSTOM_PROVIDER_PROTOCOLS = {
@@ -64,12 +74,6 @@ export type CustomProviderLogoPlan =
   | { kind: 'remove' }
   | { kind: 'upload'; file: File };
 
-export type ClientCertificateFields = {
-  cert: string;
-  key: string;
-  passphrase: string;
-};
-
 export type CustomProviderFormState = {
   providerID: string;
   name: string;
@@ -119,8 +123,6 @@ export type CustomProviderConfig = {
   headers?: Record<string, string>;
   models: Record<string, CustomProviderModelConfig>;
 };
-
-export type StoredClientCertificate = { cert: string; key: string; passphrase?: string };
 
 export type CustomProviderModelConfig = {
   modelID: string;
@@ -282,8 +284,6 @@ export const createHeaderRow = (): HeaderRow => ({
   value: '',
 });
 
-export const EMPTY_CLIENT_CERTIFICATE: ClientCertificateFields = { cert: '', key: '', passphrase: '' };
-
 export const createEmptyCustomProviderForm = (): CustomProviderFormState => ({
   providerID: '',
   name: '',
@@ -297,55 +297,6 @@ export const createEmptyCustomProviderForm = (): CustomProviderFormState => ({
   tls: EMPTY_CLIENT_CERTIFICATE,
   canonical: '',
 });
-
-const FILE_REFERENCE_PATTERN = /^\{file:([^}]+)\}$/;
-
-const storedTlsSchema = z.object({
-  cert: z.string().optional(),
-  key: z.string().optional(),
-  passphrase: z.string().optional(),
-});
-type StoredTlsFields = z.infer<typeof storedTlsSchema>;
-
-const clientCertificateFieldOf = (value: string | undefined): string => {
-  if (value === undefined) return '';
-  return value.trim().match(FILE_REFERENCE_PATTERN)?.[1]?.trim() ?? value;
-};
-
-const storedClientCertificateValueOf = (value: string): string => {
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.startsWith('{') || trimmed.includes('-----BEGIN')) return trimmed;
-  return `{file:${trimmed}}`;
-};
-
-const isRelativeCertificatePath = (value: string): boolean => {
-  const trimmed = value.trim();
-  const path = trimmed.match(FILE_REFERENCE_PATTERN)?.[1]?.trim()
-    ?? (trimmed.startsWith('{') || trimmed.includes('-----BEGIN') ? '' : trimmed);
-  return Boolean(path) && !/^(\/|~\/|[A-Za-z]:[\\/]|\\\\)/.test(path);
-};
-
-const clientCertificateFieldsOf = (stored: StoredTlsFields | undefined): ClientCertificateFields => {
-  if (!stored) return EMPTY_CLIENT_CERTIFICATE;
-  return {
-    cert: clientCertificateFieldOf(stored.cert),
-    key: clientCertificateFieldOf(stored.key),
-    passphrase: stored.passphrase ?? '',
-  };
-};
-
-export const storedClientCertificateOf = (
-  fields: ClientCertificateFields | null,
-): StoredClientCertificate | null | undefined => {
-  if (fields === null) return undefined;
-  const cert = storedClientCertificateValueOf(fields.cert);
-  const key = storedClientCertificateValueOf(fields.key);
-  const passphrase = fields.passphrase.trim() ? fields.passphrase : '';
-  if (!cert && !key && !passphrase) return null;
-  const stored: StoredClientCertificate = { cert, key };
-  if (passphrase) stored.passphrase = passphrase;
-  return stored;
-};
 
 const NATIVE_CUSTOM_PROVIDER_PACKAGES = {
   '@opencode/ai/providers/openai-compatible': 'openai-chat',

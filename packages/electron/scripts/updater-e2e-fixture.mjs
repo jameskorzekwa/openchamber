@@ -11,6 +11,25 @@ const ARCHITECTURES = new Map([
   ['arm64', 'latest-linux-arm64.yml'],
 ]);
 
+const writeManifest = ({ artifactPath, manifestPath, version }) => {
+  const artifactName = path.basename(artifactPath);
+  const size = fs.statSync(artifactPath).size;
+  const checksum = sha512(artifactPath);
+  const manifest = [
+    `version: ${version}`,
+    'files:',
+    `  - url: ${encodeURIComponent(artifactName)}`,
+    `    sha512: ${checksum}`,
+    `    size: ${size}`,
+    `path: ${encodeURIComponent(artifactName)}`,
+    `sha512: ${checksum}`,
+    `releaseDate: '${new Date().toISOString()}'`,
+    '',
+  ].join('\n');
+  fs.writeFileSync(manifestPath, manifest, { mode: 0o644 });
+  return { checksum, size };
+};
+
 const usage = `Usage:
   updater-e2e-fixture.mjs stage --arch <x64|arm64> --next <N+1.AppImage> --version <N+1> --dir <feed-dir>
   updater-e2e-fixture.mjs serve --dir <feed-dir> [--port <port>]
@@ -60,21 +79,23 @@ export const stageUpdaterFixture = ({ architecture, nextAppImage, version, direc
   const artifactName = path.basename(sourcePath);
   const artifactPath = path.join(feedDirectory, artifactName);
   if (sourcePath !== artifactPath) fs.copyFileSync(sourcePath, artifactPath);
-  const size = fs.statSync(artifactPath).size;
-  const checksum = sha512(artifactPath);
-  const manifest = [
-    `version: ${version}`,
-    'files:',
-    `  - url: ${encodeURIComponent(artifactName)}`,
-    `    sha512: ${checksum}`,
-    `    size: ${size}`,
-    `path: ${encodeURIComponent(artifactName)}`,
-    `sha512: ${checksum}`,
-    `releaseDate: '${new Date().toISOString()}'`,
-    '',
-  ].join('\n');
-  fs.writeFileSync(path.join(feedDirectory, manifestName), manifest, { mode: 0o644 });
+  const { size } = writeManifest({ artifactPath, manifestPath: path.join(feedDirectory, manifestName), version });
   return { artifactPath, manifestName, size };
+};
+
+export const stageMacUpdaterFixture = ({ nextZip, version, directory }) => {
+  const sourcePath = resolveExistingFile(nextZip, 'next');
+  const feedDirectory = path.resolve(directory);
+  fs.mkdirSync(feedDirectory, { recursive: true });
+  const artifactPath = path.join(feedDirectory, path.basename(sourcePath));
+  if (sourcePath !== artifactPath) fs.copyFileSync(sourcePath, artifactPath);
+  const manifestName = 'latest-mac.yml';
+  const { checksum, size } = writeManifest({
+    artifactPath,
+    manifestPath: path.join(feedDirectory, manifestName),
+    version,
+  });
+  return { artifactPath, checksum, manifestName, size };
 };
 
 export const createFixtureServer = ({ directory, port = 0 }) => {
@@ -82,14 +103,17 @@ export const createFixtureServer = ({ directory, port = 0 }) => {
   const files = new Map(fs.readdirSync(feedDirectory, { withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) => [`/${encodeURIComponent(entry.name)}`, path.join(feedDirectory, entry.name)]));
+  const requests = [];
   const server = http.createServer((request, response) => {
     const requestUrl = new URL(request.url || '/', 'http://127.0.0.1');
     const filePath = files.get(requestUrl.pathname);
     if ((request.method !== 'GET' && request.method !== 'HEAD') || !filePath) {
+      requests.push({ method: request.method, path: requestUrl.pathname, status: 404, bytes: 0 });
       response.writeHead(404).end();
       return;
     }
     const stat = fs.statSync(filePath);
+    requests.push({ method: request.method, path: requestUrl.pathname, status: 200, bytes: request.method === 'GET' ? stat.size : 0 });
     response.writeHead(200, {
       'Content-Length': stat.size,
       'Content-Type': filePath.endsWith('.yml') ? 'text/yaml' : 'application/octet-stream',
@@ -101,7 +125,7 @@ export const createFixtureServer = ({ directory, port = 0 }) => {
     server.once('error', reject);
     server.listen(Number(port), '127.0.0.1', () => {
       const address = server.address();
-      resolve({ server, url: `http://127.0.0.1:${address.port}/` });
+      resolve({ requests, server, url: `http://127.0.0.1:${address.port}/` });
     });
   });
 };

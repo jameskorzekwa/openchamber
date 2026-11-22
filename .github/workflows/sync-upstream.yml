@@ -1,0 +1,230 @@
+name: J2K Sync Upstream
+
+on:
+  schedule:
+    # Hourly. Upstream cannot signal a fork, so the mirror and the patch
+    # series only advance when this polls; six-hourly left a merged upstream
+    # fix invisible for most of a day.
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  issues: write
+
+concurrency:
+  group: j2k-upstream-sync
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  sync:
+    if: >-
+      github.ref == 'refs/heads/j2k/current' &&
+      github.workflow_ref == format('{0}/.github/workflows/sync-upstream.yml@refs/heads/j2k/current', github.repository)
+    runs-on: ubuntu-latest
+    environment: j2k-release
+    timeout-minutes: 20
+    steps:
+      - name: Check out fork
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          # Pushes below authenticate with UPSTREAM_SYNC_TOKEN through an
+          # explicit extraheader. Leaving the checkout's GITHUB_TOKEN
+          # credential in place made git send two Authorization headers,
+          # which GitHub rejects ("Duplicate header: Authorization", HTTP
+          # 400) and which silently stalled the mirror for two weeks.
+          # Reads stay anonymous; the fork and upstream are public.
+          persist-credentials: false
+
+      - name: Fetch upstream and fork branches
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/openchamber/openchamber.git
+          git fetch --prune upstream main --tags
+          git fetch --prune origin '+refs/heads/main:refs/remotes/origin/main'
+          git fetch --prune origin '+refs/heads/j2k*:refs/remotes/origin/j2k*'
+
+      - name: Fast-forward mirror main
+        env:
+          # Recovery issues are filed with the owner's token, not GITHUB_TOKEN:
+          # the scoped job token could not create issues here (GraphQL
+          # createIssue: resource not accessible), which left a mirror
+          # divergence unreported for two days. The issue is for the owner or
+          # an interactive session to act on; no automation consumes it.
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          UPSTREAM_SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$UPSTREAM_SYNC_TOKEN" ]]; then
+            echo 'UPSTREAM_SYNC_TOKEN is required to update the upstream mirror.' >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor origin/main upstream/main; then
+            title='Mirror divergence: fork main cannot fast-forward'
+            if [[ "$(gh issue list --state open --search "in:title $title" --json title --jq "map(select(.title == \"$title\")) | length")" == 0 ]]; then
+              gh issue create --title "$title" --body "$(printf '%s\n\n%s\n\n%s' \
+                'The scheduled upstream sync refused to rewrite `main`: `origin/main` is not an ancestor of `openchamber/openchamber:main`.' \
+                '`main` is an exact upstream mirror. Something merged into it directly; every pull request in this fork must target `j2k/current`.' \
+                'Restore `main` to an exact upstream commit (`git push --force-with-lease origin upstream/main:refs/heads/main`), port anything that was merged there onto `j2k/current`, then rerun **J2K Sync Upstream**.')"
+            fi
+            echo 'origin/main is not an ancestor of upstream/main; refusing to force-push the mirror.' >&2
+            exit 1
+          fi
+          authorization="$(printf 'x-access-token:%s' "$UPSTREAM_SYNC_TOKEN" | base64 | tr -d '\n')"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $authorization" \
+            push origin upstream/main:refs/heads/main
+          test "$(git rev-parse upstream/main)" = "$(git ls-remote origin refs/heads/main | cut -f1)"
+
+      - name: Rebase patch series onto newest upstream release
+        id: rebase
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$UPSTREAM_SYNC_TOKEN" ]]; then
+            echo 'UPSTREAM_SYNC_TOKEN is required for candidate ref writes.' >&2
+            exit 1
+          fi
+          push_release_ref() {
+            local authorization
+            authorization="$(printf 'x-access-token:%s' "$UPSTREAM_SYNC_TOKEN" | base64 | tr -d '\n')"
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $authorization" push origin "$@"
+          }
+          latest_tag=''
+          while IFS= read -r candidate; do
+            if [[ "$candidate" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && git merge-base --is-ancestor "$candidate" upstream/main; then
+              latest_tag="$candidate"
+              break
+            fi
+          done < <(git tag --list 'v*' --sort=-v:refname)
+          test -n "$latest_tag"
+
+          if git show-ref --verify --quiet refs/remotes/origin/j2k/current; then
+            series_ref=origin/j2k/current
+          else
+            series_ref=''
+            while IFS= read -r candidate; do
+              series_ref="$candidate"
+              break
+            done < <(git for-each-ref --format='%(refname:short)' --sort=-version:refname 'refs/remotes/origin/j2k/v*')
+            test -n "$series_ref"
+          fi
+
+          current_tag="$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-j2k.*' --abbrev=0 "$series_ref")"
+          if [[ "$current_tag" == "$latest_tag" ]]; then
+            echo "Patch series already targets $latest_tag."
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          newest="$(printf '%s\n%s\n' "${current_tag#v}" "${latest_tag#v}" | sort -V | tail -n 1)"
+          if [[ "$newest" != "${latest_tag#v}" ]]; then
+            echo "Latest upstream tag $latest_tag is older than patch-series base $current_tag." >&2
+            exit 1
+          fi
+
+          branch="j2k/$latest_tag"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch"
+            branch_sha="$(git rev-parse "refs/remotes/origin/$branch")"
+            if ! git merge-base --is-ancestor "$latest_tag" "$branch_sha"; then
+              echo "::error::Upstream sync blocked: remote branch $branch at $branch_sha is not based on $latest_tag. Resolve its recovery issue and rebase the candidate before retrying." >&2
+              exit 1
+            fi
+            runs="$(gh run list --repo "${{ github.repository }}" --workflow validate.yml \
+              --branch "$branch" --limit 30 --json headSha,status,conclusion,createdAt)"
+            run_state="$(RUNS="$runs" SOURCE_COMMIT="$branch_sha" node <<'NODE'
+            const runs = JSON.parse(process.env.RUNS).filter((run) => run.headSha === process.env.SOURCE_COMMIT);
+            if (runs.some((run) => run.status === 'queued' || run.status === 'in_progress')) process.stdout.write('active');
+            else if (runs.some((run) => run.conclusion === 'success')) process.stdout.write('success');
+            else process.stdout.write('retry');
+          NODE
+            )"
+            if [[ "$run_state" == 'active' ]]; then
+              echo "Validation for $branch at $branch_sha is already active."
+              echo 'changed=false' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [[ "$run_state" == 'success' ]]; then
+              echo "Validation for $branch at $branch_sha already succeeded."
+              echo 'changed=false' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Redispatching validation for stranded branch $branch at $branch_sha."
+            printf 'dispatch=true\nbranch=%s\n' "$branch" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          series_commit="$(git rev-parse "$series_ref^{commit}")"
+          upstream_commit="$(git rev-parse "$latest_tag^{commit}")"
+          git switch --create "$branch" "$series_ref"
+          if ! git rebase --onto "$latest_tag" "$current_tag"; then
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            status="$(git status --short)"
+            failed_patch="$(git rev-parse REBASE_HEAD)"
+            git rebase --abort
+            GH_TOKEN="$UPSTREAM_SYNC_TOKEN" gh api --method POST "repos/${{ github.repository }}/git/refs" \
+              -f ref="refs/heads/$branch" -f sha="$series_commit" >/dev/null
+            recovery="$RUNNER_TEMP/upstream-recovery.json"
+            body="$RUNNER_TEMP/rebase-conflict.md"
+            title_file="$RUNNER_TEMP/rebase-conflict-title"
+            UPSTREAM_COMMIT="$upstream_commit" UPSTREAM_TAG="$latest_tag" PREVIOUS_BASE="$current_tag" \
+              SERIES_COMMIT="$series_commit" BRANCH="$branch" FAILED_PATCH="$failed_patch" \
+              CONFLICTS="$conflicts" STATUS="$status" WORKFLOW_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              RECOVERY="$recovery" node <<'NODE'
+            const { writeFileSync } = require('node:fs');
+            const conflicts = process.env.CONFLICTS.split('\n').filter(Boolean);
+            writeFileSync(process.env.RECOVERY, JSON.stringify({
+              failureKind: 'rebase-conflict',
+              upstreamRepository: 'openchamber/openchamber',
+              upstreamTag: process.env.UPSTREAM_TAG,
+              upstreamCommit: process.env.UPSTREAM_COMMIT,
+              previousBaseTag: process.env.PREVIOUS_BASE,
+              patchSeriesSourceCommit: process.env.SERIES_COMMIT,
+              candidateBranch: process.env.BRANCH,
+              failedPatchCommit: process.env.FAILED_PATCH,
+              conflictingFiles: conflicts,
+              logs: process.env.STATUS,
+              workflowUrl: process.env.WORKFLOW_URL,
+              recreateCommands: [
+                'git fetch origin j2k/current ' + process.env.BRANCH,
+                'git fetch https://github.com/openchamber/openchamber.git ' + process.env.UPSTREAM_TAG,
+                'git switch --force-create ' + process.env.BRANCH + ' ' + process.env.SERIES_COMMIT,
+                'git rebase --onto ' + process.env.UPSTREAM_TAG + ' ' + process.env.PREVIOUS_BASE,
+              ],
+            }, null, 2));
+          NODE
+            node tools/desktop-release/upstream-recovery.mjs --input "$recovery" --body "$body" --title "$title_file"
+            title="$(<"$title_file")"
+
+            # Owner token for the recovery issue (see the fast-forward step);
+            # the issue is acted on by the owner or an interactive session.
+            issue_number="$(GH_TOKEN="$UPSTREAM_SYNC_TOKEN" gh issue list --repo "${{ github.repository }}" --state open --search "in:title $title" \
+              --json number,title --jq "map(select(.title == \"$title\")) | first | .number // empty")"
+            if [[ -z "$issue_number" ]]; then
+              GH_TOKEN="$UPSTREAM_SYNC_TOKEN" gh issue create --repo "${{ github.repository }}" --title "$title" --body-file "$body"
+            else
+              GH_TOKEN="$UPSTREAM_SYNC_TOKEN" gh issue edit "$issue_number" --repo "${{ github.repository }}" --body-file "$body"
+              GH_TOKEN="$UPSTREAM_SYNC_TOKEN" gh issue reopen "$issue_number" --repo "${{ github.repository }}" 2>/dev/null || true
+            fi
+            exit 1
+          fi
+
+          push_release_ref "HEAD:refs/heads/$branch"
+          echo 'dispatch=false' >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch validation for rebased branch
+        if: steps.rebase.outputs.dispatch == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run validate.yml --ref "${{ steps.rebase.outputs.branch }}"

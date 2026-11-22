@@ -17,6 +17,11 @@ This folder is the UI half of the in-app browser and of agent browser control. T
 - Every field an annotation consumer dereferences is checked by `isBrowserAnnotationPayload` at the boundary. The overlay script, the prompt formatter and the screenshot renderer never assume a field is present because another one looked right.
 - The annotation overlay runs in a page we do not control. It imports nothing, reads no OpenChamber CSS variable, keeps every piece of chrome in one closed shadow root, and receives every color and label already resolved and translated.
 - Annotation marks the page as it is; a session never modifies the document.
+- `annotationVoiceScript.ts` owns the injected dictation controls, trusted-event
+  checks, transcript insertion and recording indicators. The overlay builder
+  inserts this script into its existing lexical scope after creating the editor;
+  the emitted page script remains self-contained. `annotationOverlayTypes.ts`
+  owns its configuration and message contracts.
 - The overlay tears itself down and waits for a repaint before resolving, so the capture taken afterwards contains the page and none of the overlay.
 - A page action script is a self-contained expression. An input reaches it only through `JSON.stringify`, and every script resolves to `{ ok, ... }` and never throws.
 - A snapshot's numbers belong to one document and one snapshot. A later snapshot of the same frame invalidates the earlier numbers, and a frame that navigates takes its numbers with it.

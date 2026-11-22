@@ -1,10 +1,10 @@
 import { createInterface } from 'node:readline';
-import { z } from 'zod';
+import { z } from 'zod/mini';
 import type { JsonValue } from '@openchamber/sdk';
 
 const requestSchema = z.object({
-  jsonrpc: z.literal('2.0'), id: z.union([z.string(), z.number()]).optional(), method: z.string(),
-  params: z.object({ name: z.string().optional(), protocolVersion: z.string().optional(), arguments: z.object({ scope: z.string().optional(), project: z.string().optional(), key: z.string().optional(), query: z.string().optional() }).optional() }).optional(),
+  jsonrpc: z.literal('2.0'), id: z.optional(z.union([z.string(), z.number()])), method: z.string(),
+  params: z.optional(z.object({ name: z.optional(z.string()), protocolVersion: z.optional(z.string()), arguments: z.optional(z.object({ scope: z.optional(z.string()), project: z.optional(z.string()), key: z.optional(z.string()), query: z.optional(z.string()) })) })),
 });
 type SampleTool = { name: string; description: string; inputSchema: { type: 'object'; properties: { [key: string]: { type: 'string'; description: string } }; required: string[] } };
 const tools: SampleTool[] = [

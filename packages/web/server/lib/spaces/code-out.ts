@@ -1,34 +1,61 @@
-import crypto from 'node:crypto';
-import { constants, createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import readline from 'node:readline';
-
 import {
-  EXT_UNCARRIABLE, INNER_MARGIN_SECONDS, SNAPSHOT_IDENTITY, buildExtUrl, createTransferSession, innerSeconds, line,
-  objectIdPattern, requireInnerMargin, requireTimeout, spaceRefPrefix, startRef, zeroObjectId,
-  transferErrorProperty, transferValue as present, withTransferErrorDetails,
+  EXT_UNCARRIABLE,
+  INNER_MARGIN_SECONDS,
+  SNAPSHOT_IDENTITY,
+  buildExtUrl,
+  createTransferSession,
+  innerSeconds,
+  line,
+  objectIdPattern,
+  requireInnerMargin,
+  requireTimeout,
+  spaceRefPrefix,
+  startRef,
+  zeroObjectId,
+  transferErrorProperty,
+  transferValue as present,
+  withTransferErrorDetails,
 } from './code-transfer.js';
 import type { HostGit } from './code-transfer.js';
-import type { CommandOptions } from './command-contracts.js';
-import type { AllowedNameOptions, ApplyCall, ApplyChangesResult, ApplyRequest, ApplyState, ChangeLimits, ChangeRefusals, CodeOutOptions, CodeOutRequest, CodeOutSummary, ComparedPath, FileReading, GitSide, NameNode, NameOptions, ReadFailureState, RedirectedFolderOptions, ReportedPaths, TransferStepDetails } from './code-out-contracts.js';
+import type {
+  ApplyCall,
+  ApplyChangesResult,
+  ApplyRequest,
+  ApplyState,
+  ChangeLimits,
+  ChangeRefusals,
+  CodeOutOptions,
+  CodeOutRequest,
+  CodeOutSummary,
+  ReportedPaths,
+  TransferStepDetails,
+} from './code-out-contracts.js';
 import { SpaceError } from './errors.js';
 import { tail } from './exec-http.js';
 import { requireSpaceId } from './labels.js';
 import { IMAGE_GIT, IMAGE_ONLY_PATH, IMAGE_SH, IMAGE_TIMEOUT, requireSpaceProjectPath } from './layout.js';
+import { firstRedirectedFolder, nameNotAllowedHere, conflictedPaths, reported } from './code-out-paths.js';
+import {
+  APPLY_TIMEOUT_MS,
+  LIST_MAX_OUTPUT_BYTES,
+  APPLY_OUTPUT_TAIL_BYTES,
+  APPLY_ARGS,
+  listChange,
+  createCodeOutReadback,
+} from './code-out-readback.js';
+export { firstRedirectedFolder, nameNotAllowedHere } from './code-out-paths.js';
 
 const FETCH_TIMEOUT_MS = 10 * 60_000;
 const SNAPSHOT_TIMEOUT_MS = 5 * 60_000;
-const APPLY_TIMEOUT_MS = 10 * 60_000;
 const MAX_TRANSFER_BYTES = 256 * 1024 * 1024;
 const MAX_CHANGED_BYTES = 128 * 1024 * 1024;
 const MAX_OBJECT_BYTES = 4 * 1024 * 1024;
 const MAX_CHANGED_ENTRIES = 100_000;
 const FOLDER_STEPS_PER_ENTRY = 32;
 const FETCH_MAX_OUTPUT_BYTES = 1024 * 1024;
-const LIST_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
-const APPLY_OUTPUT_TAIL_BYTES = 64 * 1024;
 const READ_BACK_TIMEOUT_MS = 5 * 60_000;
 const SIZE_POLL_MS = 100;
 
@@ -45,8 +72,6 @@ const applyingHeadRef = (spaceId: string) => `${spaceRefPrefix(spaceId)}applying
 const BRANCH_FROM_NOW_ON = 'From now on this space is applied as a branch, which holds its whole work, the rounds you already applied included.';
 
 const UNCOMMITTED_MESSAGE = 'openchamber: uncommitted changes from the space\n\nWhat was uncommitted in the space when its work was brought out. Some of it may be the work you had uncommitted when the space was made.';
-
-const MAX_REPORTED_PATHS = 100;
 
 const MAX_REPORT_BYTES = 256 * 1024;
 
@@ -79,8 +104,6 @@ const FETCH_CONFIG = [
 const QUARANTINE_CONFIG = ['-c', 'fetch.unpackLimit=1', '-c', 'transfer.unpackLimit=1'];
 const FETCH_FLAGS = ['--quiet', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', '--no-auto-gc', '--refmap='];
 
-const PATCH_ARGS = ['diff-tree', '-r', '-p', '--binary', '--full-index', '--no-renames', '--no-ext-diff', '--no-textconv', '--no-color', '--src-prefix=a/', '--dst-prefix=b/'];
-const APPLY_ARGS = ['-c', 'apply.whitespace=nowarn', '-c', 'apply.ignoreWhitespace=no', 'apply', '--binary', '--whitespace=nowarn'];
 
 const LIMIT_NAMES = ['maxTransferBytes', 'maxChangedBytes', 'maxChangedEntries'] as const;
 const requireLimit = (value: number, name: string) => {
@@ -95,45 +118,6 @@ const OUT_CODES = new Set([
   'git_version_unreadable', 'git_too_old', 'project_folder_missing', 'not_a_git_work_tree', 'space_start_missing',
   'code_out_failed', 'result_ref_missing', 'result_not_a_commit', 'result_transfer_too_large', 'result_too_large', 'result_too_many_changes',
 ]);
-
-const pause = (milliseconds: number) => new Promise<void>((resolve) => { setTimeout(resolve, milliseconds); });
-
-const READ_AT_ONCE = 8;
-const READ_PIECE_BYTES = 64 * 1024;
-
-const blobId = (algorithm: string, bytes: Buffer) => crypto.createHash(algorithm).update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
-
-const CHANGED_WHILE_READ = Symbol('changed while read');
-const READS_OF_A_CHANGING_FILE = 4;
-const PAUSE_BETWEEN_READS_MS = 100;
-
-async function hashFile(files: Pick<typeof fs, 'open'>, full: string, algorithm: string, until: number) {
-  let handle;
-  try {
-    handle = await files.open(full, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
-  } catch {
-    return null;
-  }
-  try {
-    const stats = await handle.stat();
-    if (!stats.isFile()) return null;
-    const hash = crypto.createHash(algorithm).update(`blob ${stats.size}\0`);
-    const piece = Buffer.allocUnsafe(Math.max(1, Math.min(READ_PIECE_BYTES, stats.size)));
-    let total = 0;
-    for (;;) {
-      if (Date.now() > until) throw new SpaceError('command_timeout', 'Reading a file of the working tree back did not end in time');
-      const { bytesRead } = await handle.read(piece, 0, piece.length, null).catch(() => ({ bytesRead: -1 }));
-      if (bytesRead < 0) return null;
-      if (bytesRead === 0) break;
-      total += bytesRead;
-      if (total > stats.size) return CHANGED_WHILE_READ;
-      hash.update(piece.subarray(0, bytesRead));
-    }
-    return total === stats.size ? hash.digest('hex') : CHANGED_WHILE_READ;
-  } finally {
-    await handle.close();
-  }
-}
 
 const applyTurns = new Map<string, Promise<void>>();
 
@@ -164,161 +148,6 @@ async function folderBytes(directory: string): Promise<number> {
   }
   return total;
 }
-
-const nameFolder = ({ ignoreCase, precompose }: NameOptions) => (name: string) => {
-  if (!ignoreCase) return precompose ? name.normalize('NFC') : name;
-  return name.normalize('NFC').toLowerCase().toUpperCase().toLowerCase().normalize('NFC');
-};
-
-export async function firstRedirectedFolder(top: string, paths: string[], { ignoreCase = false, precompose = false, deletedLinks = [], lstat = fs.lstat, realpath = fs.realpath }: RedirectedFolderOptions = {}) {
-  const root = await realpath(top);
-  const fold = nameFolder({ ignoreCase, precompose });
-  const kinds = new Map<string, string>();
-  const reals = new Map<string, boolean>();
-  const goingLinks = new Set(deletedLinks);
-  const leadsElsewhere = async (relative: string) => {
-    if (!reals.has(relative)) {
-      const real = path.relative(root, await realpath(path.join(top, ...relative.split('/')))).split(path.sep).join('/');
-      reals.set(relative, fold(real) !== fold(relative));
-    }
-    return reals.get(relative);
-  };
-  for (const file of paths) {
-    const folders = file.split('/').slice(0, -1);
-    let relative = '';
-    let deepest = '';
-    for (const folder of folders) {
-      relative = relative === '' ? folder : `${relative}/${folder}`;
-      if (!kinds.has(relative)) {
-        let kind = 'folder';
-        try {
-          const stats = await lstat(path.join(top, ...relative.split('/')));
-          if (stats.isSymbolicLink()) kind = goingLinks.has(relative) ? 'absent' : 'link';
-          else if (!stats.isDirectory()) kind = 'other';
-        } catch (error) {
-          if (transferErrorProperty(error, 'code') !== 'ENOENT' && transferErrorProperty(error, 'code') !== 'ENOTDIR') throw error;
-          kind = 'absent';
-        }
-        kinds.set(relative, kind);
-      }
-      const kind = kinds.get(relative);
-      if (kind === 'link') return relative;
-      if (kind !== 'folder') break;
-      deepest = relative;
-    }
-    if (deepest !== '' && await leadsElsewhere(deepest)) {
-      let above = '';
-      for (const folder of deepest.split('/')) {
-        above = above === '' ? folder : `${above}/${folder}`;
-        if (await leadsElsewhere(above)) return above;
-      }
-    }
-  }
-  return null;
-}
-
-const WINDOWS_RESERVED_CHARACTER = /[<>:"/\\|?*]|(?!\0|[\x7f-\x9f])\p{Cc}/u;
-const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[0-9¹²³]) *(?:[.:]|$)/i;
-const WINDOWS_TRAILING = /[ .]$/;
-const WINDOWS_MAX_PATH = 259;
-const WINDOWS_MAX_FOLDER_PATH = 247;
-const MAX_NAME_BYTES = 255;
-const MAX_PATH_BYTES = 1023;
-
-const nameRule = (name: string, platform: NodeJS.Platform) => {
-  if (Buffer.byteLength(name) > MAX_NAME_BYTES) return 'name_too_long';
-  if (platform !== 'win32') return null;
-  if (WINDOWS_RESERVED_CHARACTER.test(name)) return 'reserved_character';
-  if (WINDOWS_DEVICE_NAME.test(name)) return 'device_name';
-  if (WINDOWS_TRAILING.test(name)) return 'trailing_space_or_period';
-  return null;
-};
-
-export function nameNotAllowedHere(created: string[], all: string[], { platform = process.platform, ignoreCase = false, precompose = false, deleted = [], top = '', longPaths = false }: AllowedNameOptions = {}) {
-  const join = platform === 'win32' ? path.win32.join : path.posix.join;
-  for (const file of created) {
-    const whole = top === '' ? file : join(top, file);
-    if (Buffer.byteLength(whole) > MAX_PATH_BYTES) return { path: file, rule: 'path_too_long', other: null };
-    if (platform === 'win32' && !longPaths && top !== '') {
-      if (whole.length > WINDOWS_MAX_PATH) return { path: file, rule: 'path_too_long', other: null };
-      const folder = file.includes('/') ? join(top, file.slice(0, file.lastIndexOf('/'))) : '';
-      if (folder.length > WINDOWS_MAX_FOLDER_PATH) return { path: file, rule: 'path_too_long', other: null };
-    }
-    for (const name of file.split('/')) {
-      const rule = nameRule(name, platform);
-      if (rule) return { path: file, rule, other: null };
-    }
-  }
-  if ((!ignoreCase && !precompose) || created.length === 0) return null;
-  const fold = nameFolder({ ignoreCase, precompose });
-  const node = (): NameNode => ({ children: new Map(), spellings: new Map() });
-  const root = node();
-  for (const file of created) {
-    let at = root;
-    for (const name of file.split('/')) {
-      const key = fold(name);
-      if (!at.children.has(key)) at.children.set(key, node());
-      at = present(at.children.get(key));
-    }
-  }
-  const mark = (file: string, present: boolean, old: boolean) => {
-    let at: NameNode | undefined = root;
-    let from = 0;
-    for (;;) {
-      const end = file.indexOf('/', from);
-      const name = end === -1 ? file.slice(from) : file.slice(from, end);
-      at = at.children.get(fold(name));
-      if (!at) return;
-      const seen = at.spellings.get(name) ?? { present: false, old: false };
-      at.spellings.set(name, { present: seen.present || present, old: seen.old || old });
-      if (end === -1) return;
-      from = end + 1;
-    }
-  };
-  const isCreated = new Set(created);
-  for (const file of all) mark(file, true, !isCreated.has(file));
-  for (const file of created) mark(file, true, false);
-  for (const file of deleted) mark(file, false, true);
-  for (const file of created) {
-    const names = file.split('/');
-    let at = root;
-    for (let depth = 0; depth < names.length; depth += 1) {
-      at = present(at.children.get(fold(present(names[depth]))));
-      if (present(at.spellings.get(present(names[depth]))).old) continue;
-      const others = [...at.spellings].filter(([name]) => name !== names[depth]);
-      const staying = others.find(([, seen]) => seen.present);
-      const going = others.find(([, seen]) => !seen.present);
-      const other = staying ?? going;
-      if (other) {
-        return { path: file, rule: staying ? 'differs_only_in_case' : 'case_only_rename', other: [...names.slice(0, depth), other[0]].join('/') };
-      }
-    }
-  }
-  return null;
-}
-
-async function conflictedPaths(patch: string) {
-  const paths = [];
-  let file = '';
-  const lines = readline.createInterface({ input: createReadStream(patch), crlfDelay: Infinity });
-  try {
-    for await (const text of lines) {
-      if (text.startsWith('+++ b/')) file = text.slice('+++ b/'.length);
-      else if (file !== '' && text.startsWith('+<<<<<<< ')) {
-        paths.push(file);
-        file = '';
-      }
-    }
-  } finally {
-    lines.close();
-  }
-  return reported(paths);
-}
-
-const reported = (paths: string[]): ReportedPaths => {
-  const all = [...new Set(paths.filter((entry) => entry !== ''))];
-  return { count: all.length, paths: all.slice(0, MAX_REPORTED_PATHS).map((entry) => entry.replace(new RegExp(EXT_UNCARRIABLE, 'gu'), '?')) };
-};
 
 const readReport = (text: string) => {
   const report = String(text ?? '');
@@ -421,8 +250,6 @@ export function createCodeOut({ git, place, temporaryDirectory = os.tmpdir(), re
     maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
     timeoutMs: APPLY_TIMEOUT_MS,
   })).map((object) => [object.id, object]));
-
-  const listChange = async (g: HostGit, where: string, from: string, to: string) => (await g.output(where, ['diff-tree', '-r', '-z', '--no-renames', from, to], { maxOutputBytes: LIST_MAX_OUTPUT_BYTES, timeoutMs: APPLY_TIMEOUT_MS })).split('\0');
 
   const measureChange = async (g: HostGit, where: string, from: string, to: string, { maxChangedBytes, maxChangedEntries, maxFolders, maxFolderSteps }: ChangeLimits & { maxFolders: number; maxFolderSteps: number }, refuse: ChangeRefusals, list = () => listChange(g, where, from, to)) => {
     let fields;
@@ -619,309 +446,17 @@ export function createCodeOut({ git, place, temporaryDirectory = os.tmpdir(), re
 
   const exists = (full: string) => fs.lstat(full).then(() => true, () => false);
 
-  const writePatch = (g: HostGit, top: string, from: string, to: string, file: string) => g.output(top, [...PATCH_ARGS, `--output=${file}`, from, to], { timeoutMs: APPLY_TIMEOUT_MS });
-
-  const dryRun = (g: HostGit, top: string, patch: string, { reverse = false } = {}) => g.run(top, [...APPLY_ARGS, '--check', ...(reverse ? ['--reverse'] : []), patch], {
-    timeoutMs: APPLY_TIMEOUT_MS, maxOutputBytes: APPLY_OUTPUT_TAIL_BYTES, keepTail: true, killTree: true,
-  });
-
-  const startCall = (g: HostGit, directory: string, top: string): ApplyCall => ({
-    g, directory, top, until: Date.now() + readBackTimeoutMs, listings: new Map(), patches: new Map(), files: 0,
-    settings: null, readings: new Map(), folders: new Map(), commits: new Map(),
-  });
-
-  const undecided = (failed: string | null = null) => new SpaceError(
-    'changes_undecided',
-    failed === null
-      ? `Reading your project back took longer than ${Math.round(readBackTimeoutMs / 1000)} seconds, so it is not known how much of what was last applied from this space is still there.`
-      : `Reading your project back failed, so it is not known how much of what was last applied from this space is still there. ${failed}`,
-    failed === null ? { limitMs: readBackTimeoutMs } : { limitMs: readBackTimeoutMs, cause: 'read_back_failed' },
-  );
-
-  const readingBack = (call: ApplyCall): HostGit => {
-    const bounded = <Result>(method: (where: string, args: string[], options?: CommandOptions) => Promise<Result>) => async (where: string, args: string[], options: CommandOptions = {}) => {
-      const left = call.until - Date.now();
-      if (left <= 0) throw undecided();
-      try {
-        return await method(where, args, { ...options, killTree: true, timeoutMs: Math.min(options.timeoutMs ?? APPLY_TIMEOUT_MS, left) });
-      } catch (error) {
-        if (transferErrorProperty(error, 'code') === 'command_timeout' || transferErrorProperty(error, 'code') === 'command_output_too_large') throw undecided();
-        throw error;
-      }
-    };
-    return { run: bounded(call.g.run), output: bounded(call.g.output) };
-  };
-
-  const listed = async (call: ApplyCall, g: HostGit, from: string, to: string) => {
-    const key = `${from} ${to}`;
-    if (!call.listings.has(key)) call.listings.set(key, await listChange(g, call.top, from, to));
-    return present(call.listings.get(key));
-  };
-
-  const patchOf = async (call: ApplyCall, g: HostGit, from: string, to: string) => {
-    const key = `${from} ${to}`;
-    if (!call.patches.has(key)) {
-      call.files += 1;
-      const file = path.join(call.directory, `change-${call.files}.patch`).replaceAll('\\', '/');
-      await writePatch(g, call.top, from, to, file);
-      call.patches.set(key, { file, check: null });
-    }
-    return present(call.patches.get(key));
-  };
-
-  const checkOf = async (call: ApplyCall, g: HostGit, from: string, to: string) => {
-    const patch = await patchOf(call, g, from, to);
-    patch.check ??= await dryRun(g, call.top, patch.file);
-    return patch.check;
-  };
-
-  const ABSENT = '000000';
-  const GITLINK = '160000';
-  const LINK = '120000';
-  const EXECUTABLE = '100755';
-  const isRegular = (side: GitSide) => side.mode === '100644' || side.mode === EXECUTABLE;
-
-  const readFlag = async (g: HostGit, top: string, key: string, fallback: boolean) => {
-    const found = await g.run(top, ['config', '--bool', '--get', key]);
-    return found.code === 0 ? line(found.stdout) === 'true' : fallback;
-  };
-
-  const settingsOf = async (call: ApplyCall) => {
-    call.settings ??= {
-      algorithm: line(await call.g.output(call.top, ['rev-parse', '--show-object-format'])),
-      filemode: await readFlag(call.g, call.top, 'core.filemode', true),
-      symlinks: await readFlag(call.g, call.top, 'core.symlinks', true),
-    };
-    return call.settings;
-  };
-
-  const comparedPaths = async (call: ApplyCall, g: HostGit, from: string, to: string) => {
-    const { filemode } = await settingsOf(call);
-    const fields = await listed(call, g, from, to);
-    const entries = [];
-    for (let index = 0; index + 1 < fields.length; index += 2) {
-      const [oldMode, newMode, oldId, newId] = present(fields[index]).slice(1).split(' ');
-      if (oldMode === GITLINK || newMode === GITLINK) continue;
-      if (!filemode && oldId === newId && oldMode !== LINK && newMode !== LINK) continue;
-      entries.push({ path: present(fields[index + 1]), from: { mode: oldMode, id: oldId }, to: { mode: newMode, id: newId } });
-    }
-    return entries;
-  };
-
-  const plainWay = async (call: ApplyCall, file: string) => {
-    let relative = '';
-    for (const name of file.split('/').slice(0, -1)) {
-      relative = relative === '' ? name : `${relative}/${name}`;
-      if (!call.folders.has(relative)) {
-        call.folders.set(relative, await files.lstat(path.join(call.top, ...relative.split('/'))).then((stats) => stats.isDirectory(), () => false));
-      }
-      if (!call.folders.get(relative)) return false;
-    }
-    return true;
-  };
-
-  const lookAt = async (call: ApplyCall, file: string) => {
-    if (call.readings.has(file)) return call.readings.get(file);
-    const { algorithm } = await settingsOf(call);
-    const full = path.join(call.top, ...file.split('/'));
-    let reading: FileReading = { kind: 'absent' };
-    if (await plainWay(call, file)) {
-      const stats = await files.lstat(full).catch(() => null);
-      if (stats?.isSymbolicLink()) {
-        const target = await files.readlink(full, { encoding: 'buffer' }).catch(() => null);
-        reading = target === null ? { kind: 'other' } : { kind: 'link', raw: blobId(algorithm, target) };
-      } else if (stats?.isFile()) {
-        let raw: string | typeof CHANGED_WHILE_READ | null = CHANGED_WHILE_READ;
-        try {
-          for (let read = 0; raw === CHANGED_WHILE_READ && read < READS_OF_A_CHANGING_FILE; read += 1) {
-            if (read > 0) await pause(PAUSE_BETWEEN_READS_MS);
-            raw = await hashFile(files, full, algorithm, call.until);
-          }
-        } catch (error) {
-          if (transferErrorProperty(error, 'code') === 'command_timeout') throw undecided();
-          throw error;
-        }
-        if (raw === null) throw undecided(`${reported([file]).paths[0]} could not be read as a plain file.`);
-        if (raw === CHANGED_WHILE_READ) throw undecided(`${reported([file]).paths[0]} kept changing while it was read.`);
-        reading = { kind: 'file', executable: (stats.mode & 0o100) !== 0, raw, clean: undefined };
-      } else if (stats) {
-        reading = { kind: 'other' };
-      }
-    }
-    call.readings.set(file, reading);
-    return reading;
-  };
-
-  const cleanIds = async (call: ApplyCall, g: HostGit, paths: string[]) => {
-    const env = { GIT_INDEX_FILE: path.join(call.directory, 'no-index') };
-    const { algorithm } = await settingsOf(call);
-    const idLength = algorithm === 'sha256' ? 64 : 40;
-    const asked = paths.filter((file) => call.readings.get(file)?.kind === 'file' && present(call.readings.get(file)).clean === undefined);
-    const odd = (file: string) => /[\n\r]/.test(file) || file.startsWith('"');
-    const together = asked.filter((file) => !odd(file));
-    const answer = async (args: string[], stdin: string, count: number) => {
-      const done = await g.run(call.top, args, { env, stdin, maxOutputBytes: count * (idLength + 1) + APPLY_OUTPUT_TAIL_BYTES, keepTail: true });
-      const ids = done.stdout.split('\n').filter(Boolean);
-      if (done.code !== 0 || ids.length !== count) throw undecided(`Git said: ${tail(done.stderr) || `exit code ${done.code}`}`);
-      return ids;
-    };
-    if (together.length > 0) {
-      const ids = await answer(['hash-object', '--stdin-paths'], together.map((file) => `${file}\n`).join(''), together.length);
-      together.forEach((file, index) => { present(call.readings.get(file)).clean = ids[index]; });
-    }
-    for (const file of asked.filter(odd)) {
-      [present(call.readings.get(file)).clean] = await answer(['hash-object', '--', file], '', 1);
-    }
-  };
-
-  const fits = (call: ApplyCall, reading: FileReading, side: GitSide) => {
-    if (side.mode === ABSENT) return reading.kind === 'absent';
-    if (side.mode === LINK) return reading.kind === 'link' || (!present(call.settings ?? undefined).symlinks && reading.kind === 'file');
-    return reading.kind === 'file' && (!present(call.settings ?? undefined).filemode || reading.executable === (side.mode === EXECUTABLE));
-  };
-  const holdsRaw = (call: ApplyCall, reading: FileReading, side: GitSide) => fits(call, reading, side) && (side.mode === ABSENT || reading.raw === side.id);
-  const holdsClean = (call: ApplyCall, reading: FileReading, side: GitSide) => isRegular(side) && fits(call, reading, side) && reading.clean === side.id;
-
-  const lookAtAll = async (call: ApplyCall, entries: ComparedPath[]) => {
-    const failed: ReadFailureState = { current: null };
-    let next = 0;
-    const worker = async () => {
-      while (failed.current === null && next < entries.length) {
-        const entry = entries[next];
-        next += 1;
-        try {
-          await lookAt(call, present(entry).path);
-        } catch (error) {
-          failed.current ??= error;
-        }
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(READ_AT_ONCE, entries.length) }, worker));
-    if (failed.current !== null) throw failed.current;
-  };
-
-  const sidesHeld = async (call: ApplyCall, g: HostGit, entries: ComparedPath[]) => {
-    await lookAtAll(call, entries);
-    const reading = (entry: ComparedPath) => present(call.readings.get(entry.path));
-    await cleanIds(call, g, entries
-      .filter((entry) => (isRegular(entry.to) || isRegular(entry.from)) && !holdsRaw(call, reading(entry), entry.to) && !holdsRaw(call, reading(entry), entry.from))
-      .map((entry) => entry.path));
-    return entries.map((entry) => {
-      if (holdsRaw(call, reading(entry), entry.to)) return 'to';
-      if (holdsRaw(call, reading(entry), entry.from)) return 'from';
-      if (holdsClean(call, reading(entry), entry.to)) return 'to';
-      if (holdsClean(call, reading(entry), entry.from)) return 'from';
-      return 'neither';
-    });
-  };
-
-  const committedAmong = async (call: ApplyCall, g: HostGit, since: string | null, head: string | null, paths: string[]) => {
-    if (since === head || head === null || paths.length === 0) return new Set<string>();
-    const range = since === null ? [head] : [head, `^${since}`];
-    const key = range.join(' ');
-    if (!call.commits.has(key)) {
-      const names = await g.output(call.top, ['--literal-pathspecs', 'log', '--format=', '--name-only', '-z', '--no-renames', '--no-show-signature', ...range, '--'], {
-        maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
-      });
-      const changed = new Set<string>();
-      for (const name of names.split('\0')) {
-        if (name !== '') changed.add(name).add(name.replace(/^\n+/, ''));
-      }
-      call.commits.set(key, changed);
-    }
-    const changed = present(call.commits.get(key));
-    return new Set(paths.filter((file) => changed.has(file)));
-  };
-
-  const LOOK_GROWTH = 16;
-  const inLooks = (list: ComparedPath[]) => {
-    const looks = [];
-    for (let at = 0, size = 1; at < list.length; at += size, size *= LOOK_GROWTH) looks.push(list.slice(at, at + size));
-    return looks;
-  };
-
-  const whatBecameOf = async (call: ApplyCall, g: HostGit, before: string, applied: string, { appliedHead, head, untilTrace = false }: { appliedHead: string | null; head: string | null; untilTrace?: boolean }) => {
-    const entries = await comparedPaths(call, g, before, applied);
-    const kept: string[] = [];
-    const edited: string[] = [];
-    const thrown: string[] = [];
-    for (const look of untilTrace ? inLooks(entries) : [entries]) {
-      const held = await sidesHeld(call, g, look);
-      const committed = await committedAmong(call, g, appliedHead, head, look.filter((_, index) => held[index] === 'from').map((entry) => entry.path));
-      look.forEach((entry, index) => {
-        if (held[index] === 'to') kept.push(entry.path);
-        else if (held[index] === 'neither' || committed.has(entry.path)) edited.push(entry.path);
-        else thrown.push(entry.path);
-      });
-      if (untilTrace && kept.length + edited.length > 0) break;
-    }
-    return { kept, edited, thrown, trace: kept.length + edited.length > 0 || thrown.length === 0 };
-  };
-
-  const interruptedApplyState = async (call: ApplyCall, g: HostGit, from: string, to: string) => {
-    const held = await sidesHeld(call, g, await comparedPaths(call, g, from, to));
-    if (held.every((side) => side === 'to')) return 'finished';
-    if (held.every((side) => side === 'from')) return 'not_started';
-    if (!held.includes('to') && (await checkOf(call, g, from, to)).code === 0) return 'not_started';
-    if (!held.includes('from') && (await dryRun(g, call.top, (await patchOf(call, g, from, to)).file, { reverse: true })).code === 0) return 'finished';
-    return 'partly';
-  };
-
-  const readInterrupted = async (call: ApplyCall, g: HostGit, applying: string, base: string, others: (string | null)[]) => {
-    const state = await interruptedApplyState(call, g, base, applying);
-    if (state !== 'partly') return { state, base };
-    for (const other of new Set(others.filter((candidate) => candidate !== null && candidate !== base))) {
-      const again = await interruptedApplyState(call, g, present(other ?? undefined), applying);
-      if (again !== 'partly') return { state: again, base: other };
-    }
-    return { state, base };
-  };
-
-  const decideBase = async (call: ApplyCall, g: HostGit, { start, applied, appliedFrom, appliedHead, head }: { start: string; applied: string | null; appliedFrom: string | null; appliedHead: string | null; head: string | null }) => {
-    if (applied === null) return { from: start };
-    if (appliedFrom === null) return { from: applied };
-    if (appliedFrom !== start && !(await whatBecameOf(call, g, start, applied, { appliedHead, head, untilTrace: true })).trace) return { from: start };
-    const last = await whatBecameOf(call, g, appliedFrom, applied, { appliedHead, head });
-    const stillThere = [...last.kept, ...last.edited];
-    if (last.thrown.length > 0 && stillThere.length > 0) return { partly: { gone: last.thrown, stillThere } };
-    if (last.thrown.length > 0) return { from: appliedFrom };
-    return { from: applied };
-  };
-
-  const filteredInTheWay = async (call: ApplyCall, g: HostGit, from: string, result: string) => {
-    const entries = (await comparedPaths(call, g, from, result)).filter((entry) => isRegular(entry.from));
-    await lookAtAll(call, entries);
-    const bytesAsBefore = entries.filter((entry) => holdsRaw(call, present(call.readings.get(entry.path)), entry.from));
-    if (bytesAsBefore.length === 0) return [];
-    const env = { GIT_INDEX_FILE: path.join(call.directory, 'no-index') };
-    const drivers = new Set((await g.run(call.top, ['config', '-z', '--get-regexp', '^filter\\..*\\.(clean|process)$'])).stdout.split('\0').filter(Boolean)
-      .map((entry) => entry.slice(0, entry.indexOf('\n')).replace(/^filter\./, '').replace(/\.(?:clean|process)$/, '')));
-    const fields = (await g.output(call.top, ['check-attr', '-z', '--stdin', 'filter'], { env, stdin: bytesAsBefore.map((entry) => `${entry.path}\0`).join('') })).split('\0');
-    const covered = new Set();
-    for (let index = 0; index + 2 < fields.length; index += 3) {
-      if (drivers.has(present(fields[index + 2]))) covered.add(fields[index]);
-    }
-    const asked = bytesAsBefore.filter((entry) => covered.has(entry.path));
-    await cleanIds(call, g, asked.map((entry) => entry.path));
-    return asked.filter((entry) => present(call.readings.get(entry.path)).clean !== entry.from.id).map((entry) => entry.path);
-  };
-
-  const differFromHead = async (call: ApplyCall, g: HostGit, head: string | null, paths: string[]) => {
-    const sides = new Map<string, GitSide>();
-    if (head !== null) {
-      const tree = await g.output(call.top, ['ls-tree', '-r', '-z', '--full-tree', head], { maxOutputBytes: LIST_MAX_OUTPUT_BYTES });
-      for (const entry of tree.split('\0')) {
-        const tab = entry.indexOf('\t');
-        if (tab === -1) continue;
-        const [mode, , id] = entry.slice(0, tab).split(' ');
-        sides.set(entry.slice(tab + 1), { mode, id });
-      }
-    }
-    const entries = paths.map((file) => ({ path: file, head: sides.get(file) ?? { mode: ABSENT, id: '' } }));
-    const reading = (entry: { path: string }) => present(call.readings.get(entry.path));
-    await cleanIds(call, g, entries.filter((entry) => isRegular(entry.head) && !holdsRaw(call, reading(entry), entry.head)).map((entry) => entry.path));
-    return entries.some((entry) => !holdsRaw(call, reading(entry), entry.head) && !holdsClean(call, reading(entry), entry.head));
-  };
+  const {
+    startCall,
+    readingBack,
+    listed,
+    patchOf,
+    checkOf,
+    readInterrupted,
+    decideBase,
+    filteredInTheWay,
+    differFromHead,
+  } = createCodeOutReadback({ files, readBackTimeoutMs });
 
   const describeApplyState = (request: ApplyRequest): Promise<ApplyState> => withHostGit('code_out_failed', async (g, directory): Promise<ApplyState> => {
     const { repository, spaceId } = request ?? {};

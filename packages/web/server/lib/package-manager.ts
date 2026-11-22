@@ -8,7 +8,7 @@ import { getWebPackagePaths } from './web-package-paths.js';
 import { fetchUpdateNotes } from './changelog/update-notes.js';
 import { compareVersions } from './version-order.js';
 import { isEnterpriseMode } from './enterprise-mode.js';
-import { getSpawnSyncBaseOptions, spawnPackageManagerProbe } from './package-manager-probe.js';
+import { getPackageManagerCommandCandidates, getSpawnSyncBaseOptions, spawnPackageManagerProbe } from './package-manager-probe.js';
 
 import { resolveNpmRegistryRequest } from './npm/npm-registry-config.js';
 import type { JsonObject, JsonValue } from './shared/json-values.js';
@@ -562,24 +562,6 @@ function detectPackageManagerFromInvocationPath(invokedPath: string | undefined)
   return null;
 }
 
-function getPackageManagerCommandCandidates(pm: string) {
-  const candidates = [];
-  if (pm === 'bun') {
-    const bunExecutable = process.platform === 'win32' ? 'bun.exe' : 'bun';
-    if (process.env.BUN_INSTALL) {
-      candidates.push(path.join(process.env.BUN_INSTALL, 'bin', bunExecutable));
-    }
-    if (process.env.HOME) {
-      candidates.push(path.join(process.env.HOME, '.bun', 'bin', bunExecutable));
-    }
-    if (process.env.USERPROFILE) {
-      candidates.push(path.join(process.env.USERPROFILE, '.bun', 'bin', bunExecutable));
-    }
-  }
-  candidates.push(pm);
-  return [...new Set(candidates.filter(Boolean))];
-}
-
 function resolvePackageManagerCommand(pm: string) {
   const candidates = getPackageManagerCommandCandidates(pm);
   for (const candidate of candidates) {
@@ -592,7 +574,7 @@ function resolvePackageManagerCommand(pm: string) {
 
 function quoteCommand(command: string) {
   if (!command) return command;
-  if (!/\s/.test(command)) return command;
+  if (/^[A-Za-z0-9_./:\\-]+$/.test(command)) return command;
   if (process.platform === 'win32') {
     return `"${command.replace(/"/g, '""')}"`;
   }

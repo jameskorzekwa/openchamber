@@ -22,6 +22,13 @@ These scripts own desktop asset staging, Electron bundling and native-module rep
 - Canary and Stable keep the same app identity, installation, profile, and protocol handler so updates replace each other. Channel-specific icon paths remain complete when the release configuration gains another icon.
 - macOS executable UUIDs derive from appId and remain stable across versions so Local Network consent survives updates. Rewriting the UUID precedes signing. ARM64 receives an ad-hoc signature after the rewrite so unsigned builds launch; x64 runs unsigned and its unsigned Electron framework prevents the same codesign operation.
 - macOS icon assets for old and new OS versions come from the same icon document and the selected channel's directory.
+- The macOS after-pack hook validates archive contents before rewriting the
+  executable, copying icons or writing `app-update.yml`. That configuration is
+  required for electron-updater's download step. Only J2K-marked macOS builds
+  receive the fork feed; other macOS builds retain the upstream GitHub feed.
+  Portable fixture tests run the real hook with an ASAR inventory and a thin x64
+  Mach-O file, checking rejection before mutation as well as the generated YAML.
+  They do not execute the app or verify native signing or installation.
 - Package-content validation checks both accidental inclusions and missing runtime inputs. The UI ships once in Resources/web-dist; helper executables used by git and SSH exist outside ASAR, and the server's package manifest remains available for version reads. Target-specific ripgrep binaries ship in resources while build-host platform packages stay out of the archive.
 - Electron repair validates executable architecture as well as version and presence. A same-version binary for another architecture still cannot launch. Repair removes partial extraction and stale path metadata before rerunning postinstall, preferring Bun extraction and retaining the Node fallback. Architecture selection follows Electron's Rosetta behavior.
 - Native rebuilding uses the hoisted workspace node_modules and forces relinking against Electron. Prebuilt Node-API addons used by the separate speech worker receive architecture verification rather than an Electron rebuild.

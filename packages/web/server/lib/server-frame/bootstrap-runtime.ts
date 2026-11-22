@@ -35,7 +35,7 @@ interface BootstrapDependencies {
 }
 
 type BaseRoutesOptions =
-  & Required<Omit<ServerStatusDependencies, 'express' | 'uiAuthController' | 'tunnelAuthController'>>
+  & Required<Omit<ServerStatusDependencies, 'express' | 'uiAuthController' | 'tunnelAuthController' | 'createRestartAttestation' | 'consumeSupervisorTermination'>>
   & Required<Omit<AuthAndAccessDependencies, 'express' | 'uiAuthController'>>
   & Required<Omit<CommonRequestDependencies, 'express'>>
   & Required<Omit<Notifications, 'uiAuthController' | keyof SessionSnapshots>>
@@ -68,6 +68,7 @@ export const createBootstrapRuntime = (dependencies: BootstrapDependencies) => {
     const {
       process,
       openchamberVersion,
+      openchamberBuildRevision,
       runtimeName,
       serverStartedAt,
       gracefulShutdown,
@@ -75,6 +76,8 @@ export const createBootstrapRuntime = (dependencies: BootstrapDependencies) => {
       readOpenCodeLoad,
       getServerPort,
       getTunnelUrl,
+      updateTransactionPath,
+      runtimePackageRoot,
       verboseRequestLogs,
       uiPassword,
       tunnelAuthController,
@@ -126,6 +129,7 @@ export const createBootstrapRuntime = (dependencies: BootstrapDependencies) => {
       desktopUpdater,
       getOpenCodeCompatibility,
       skipBodyParsing,
+      selfUpdate,
     } = options;
 
     registerHttpResponseDiagnostics(app);
@@ -143,13 +147,16 @@ export const createBootstrapRuntime = (dependencies: BootstrapDependencies) => {
       express,
       process,
       openchamberVersion,
-      runtimeName,
+      openchamberBuildRevision,
       serverStartedAt,
+      runtimeName,
       gracefulShutdown,
       getHealthSnapshot,
       getServerId,
       getServerPort,
       getTunnelUrl,
+      updateTransactionPath,
+      runtimePackageRoot,
       tunnelAuthController,
       uiAuthController,
       readOpenCodeLoad,
@@ -223,6 +230,9 @@ export const createBootstrapRuntime = (dependencies: BootstrapDependencies) => {
       server,
       cliEntry,
       openchamberDataDir,
+      openchamberVersion,
+      openchamberBuildRevision,
+      serverStartedAt,
       modelsDevApiUrl,
       modelsMetadataCacheTtl,
       readSettingsFromDiskMigrated,
@@ -230,6 +240,7 @@ export const createBootstrapRuntime = (dependencies: BootstrapDependencies) => {
       getCachedZenModels,
       desktopUpdater,
       getOpenCodeCompatibility,
+      selfUpdate,
     });
 
     registerExternalBridgeRoutes?.(app);

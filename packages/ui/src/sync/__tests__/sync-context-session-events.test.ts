@@ -1,264 +1,201 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, beforeEach, describe, expect, spyOn, test } from "bun:test"
+import { Window } from "happy-dom"
 import type { SyncEvent } from "@/lib/opencode/events"
 import type { Session } from "@/lib/opencode/model"
 
-let currentSessions: Session[] = []
-const upsertedSessions: Session[] = []
-const removedSessionIds: string[] = []
-let mutationCalls = 0
-let runtimeKey = "runtime-a"
-let runtimeWillChange: (() => void) | null = null
+const browser = new Window({ url: "http://localhost/" })
+Object.assign(globalThis, {
+  window: browser, document: browser.document, navigator: browser.navigator,
+  localStorage: browser.localStorage, CustomEvent: browser.CustomEvent,
+})
+const fetchFixture = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  const path = new URL(input instanceof Request ? input.url : input.toString(), "http://localhost/").pathname
+  if (path.endsWith("/location")) return Response.json({ directory: "/repo", project: { id: "project", directory: "/repo", canonical: "/repo" } })
+  if (path.endsWith("/session")) return Response.json({ data: [] })
+  return Response.json({})
+})
 
-mock.module("@/stores/useGlobalSessionsStore", () => ({
-  mergeSessionDirectoryMetadata: (session: Session) => session,
-  isGlobalSessionDeferrableUpdate: (existing: Session, incoming: Session) => (
-    existing.title === incoming.title && (
-      existing.time?.updated !== incoming.time?.updated
-      || existing.cost !== incoming.cost
-      || JSON.stringify(existing.tokens) !== JSON.stringify(incoming.tokens)
-    )
-  ),
-  useGlobalSessionsStore: {
-    getState: () => ({
-      activeSessions: currentSessions,
-      archivedSessions: [] as Session[],
-      entityById: new Map(currentSessions.map((session) => [session.id, session])),
-      upsertSession: (session: Session) => {
-        upsertedSessions.push(session)
-      },
-      upsertSessions: (sessions: Session[]) => {
-        upsertedSessions.push(...sessions)
-      },
-      removeSessions: (ids: string[]) => {
-        removedSessionIds.push(...ids)
-      },
-      noteDeferredSessionUpdate: () => undefined,
-      applySessionMutations: (mutations: Array<
-        { type: "upsert"; session: Session } | { type: "remove"; sessionId: string }
-      >) => {
-        mutationCalls += 1
-        for (const mutation of mutations) {
-          if (mutation.type === "upsert") upsertedSessions.push(mutation.session)
-          else removedSessionIds.push(mutation.sessionId)
-        }
-      },
-    }),
-  },
-}))
-mock.module("@/lib/runtime-switch", () => ({
-  getRuntimeKey: () => runtimeKey,
-  subscribeRuntimeEndpointWillChange: (callback: () => void) => {
-    runtimeWillChange = callback
-    return () => undefined
-  },
-}))
-import {
+const { useGlobalSessionsStore } = await import("@/stores/useGlobalSessionsStore")
+const { useSessionUIStore } = await import("../session-ui-store")
+const { useProjectsStore } = await import("@/stores/useProjectsStore")
+const { getRuntimeKey, switchRuntimeEndpoint } = await import("@/lib/runtime-switch")
+const {
   applySessionEventsToGlobalSessions,
   applySessionEventToGlobalSessions,
   readDeferredGlobalUpdates,
-} from "../session-event-router"
-import {
+} = await import("../session-event-router")
+const {
   registerBulkArchiveEchoes,
   releaseBulkArchiveEchoes,
   shouldConsumeBulkArchiveEcho,
-} from "../bulk-archive-echo"
+} = await import("../bulk-archive-echo")
+
+afterAll(async () => {
+  await browser.happyDOM.close()
+  fetchFixture.mockRestore()
+})
 
 const buildSession = (title: string, time: Session["time"]): Session => ({
-  id: "ses_1",
-  title,
-  time,
-} as Session)
-
-// v2 reports a changed session as a patch against the record the store holds.
+  id: "ses_1", projectID: "project", directory: "/repo", title, time, cost: 0,
+  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+})
 const buildEvent = (session: Session): SyncEvent => ({
   type: "session.patched",
   properties: {
     sessionID: session.id,
-    patch: { title: session.title, time: session.time },
+    patch: { title: session.title, time: session.time, directory: session.directory },
   },
 })
-
-const buildDeleteEvent = (sessionId: string): SyncEvent => ({
-  type: "session.deleted",
-  properties: { sessionID: sessionId },
-})
-
-const buildLifecycleEvent = (type: "session.idle" | "session.error", sessionId: string): SyncEvent => (
-  type === "session.idle"
-    ? { type, properties: { sessionID: sessionId } }
-    : { type, properties: { sessionID: sessionId, error: { type: "UnknownError", message: "failed" } } }
+const idle: SyncEvent = { type: "session.idle", properties: { sessionID: "ses_1" } }
+const current = () => useGlobalSessionsStore.getState().entityById.get("ses_1")
+const publish = (session: Session) => useGlobalSessionsStore.getState().upsertSession(session)
+const patch = (value: Extract<SyncEvent, { type: "session.patched" }>["properties"]["patch"]) => (
+  applySessionEventToGlobalSessions({ type: "session.patched", properties: { sessionID: "ses_1", patch: value } })
 )
+let runtimeSequence = 0
 
 describe("applySessionEventToGlobalSessions", () => {
   beforeEach(() => {
-    runtimeWillChange?.()
-    runtimeKey = "runtime-a"
-    currentSessions = []
-    upsertedSessions.length = 0
-    removedSessionIds.length = 0
-    mutationCalls = 0
+    switchRuntimeEndpoint({ apiBaseUrl: "http://localhost/api", runtimeKey: `runtime-${++runtimeSequence}` })
+    useGlobalSessionsStore.getState().resetForRuntimeSwitch()
+    useSessionUIStore.setState({ currentSessionId: null, currentSessionDirectory: null })
   })
 
   test("skips stale global session.patched echoes after a newer rename", () => {
-    currentSessions = [buildSession("New Title", { created: 1, updated: 20 })]
-
+    publish(buildSession("New Title", { created: 1, updated: 20 }))
+    const before = current()
     applySessionEventToGlobalSessions(buildEvent(buildSession("Old Title", { created: 1, updated: 10 })))
-
-    expect(upsertedSessions).toEqual([])
+    expect(current()).toBe(before)
   })
 
   test("commits only the latest recency update when a session becomes idle", () => {
-    currentSessions = [buildSession("Initial", { created: 1, updated: 10 })]
-
+    publish(buildSession("Initial", { created: 1, updated: 10 }))
     applySessionEventToGlobalSessions(buildEvent(buildSession("Initial", { created: 1, updated: 20 })))
     applySessionEventToGlobalSessions(buildEvent(buildSession("Initial", { created: 1, updated: 30 })))
-
-    expect(upsertedSessions).toEqual([])
-    applySessionEventToGlobalSessions(buildLifecycleEvent("session.idle", "ses_1"))
-    expect(upsertedSessions.map((session) => session.time.updated)).toEqual([30])
+    expect(current()?.time.updated).toBe(10)
+    applySessionEventToGlobalSessions(idle)
+    expect(current()?.time.updated).toBe(30)
   })
 
   test("keeps every spend patch of a turn in the update committed at idle", () => {
-    currentSessions = [buildSession("Initial", { created: 1, updated: 10 })]
+    publish(buildSession("Initial", { created: 1, updated: 10 }))
     const tokens = { input: 3, output: 4, reasoning: 0, cache: { read: 0, write: 0 } }
-
-    applySessionEventToGlobalSessions({ type: "session.patched", properties: { sessionID: "ses_1", patch: { cost: 1, time: { updated: 20 } } } })
-    applySessionEventToGlobalSessions({ type: "session.patched", properties: { sessionID: "ses_1", patch: { tokens } } })
-
-    expect(upsertedSessions).toEqual([])
+    patch({ cost: 1, time: { updated: 20 } })
+    patch({ tokens })
+    expect(current()?.cost).toBe(0)
     expect(readDeferredGlobalUpdates().get("ses_1")).toMatchObject({ cost: 1, tokens })
-    applySessionEventToGlobalSessions(buildLifecycleEvent("session.idle", "ses_1"))
-    expect(upsertedSessions).toHaveLength(1)
-    expect(upsertedSessions[0]).toMatchObject({ cost: 1, tokens, time: { updated: 20 } })
+    applySessionEventToGlobalSessions(idle)
+    expect(current()).toMatchObject({ cost: 1, tokens, time: { updated: 20 } })
     expect(readDeferredGlobalUpdates().size).toBe(0)
   })
 
   test("a deferred update keeps what another owner published meanwhile", () => {
     const initial = buildSession("Initial", { created: 1, updated: 10 })
-    currentSessions = [initial]
+    publish(initial)
     const tokens = { input: 3, output: 4, reasoning: 0, cache: { read: 0, write: 0 } }
-
-    applySessionEventToGlobalSessions({ type: "session.patched", properties: { sessionID: "ses_1", patch: { cost: 1, time: { updated: 20 } } } })
-    // A view lands on the published record while the turn runs.
-    currentSessions = [{ ...initial, time: { ...initial.time, viewed: 8 } }]
-    applySessionEventToGlobalSessions({ type: "session.patched", properties: { sessionID: "ses_1", patch: { tokens } } })
-    applySessionEventToGlobalSessions(buildLifecycleEvent("session.idle", "ses_1"))
-
-    expect(upsertedSessions).toHaveLength(1)
-    expect(upsertedSessions[0]).toMatchObject({ cost: 1, tokens, time: { updated: 20, viewed: 8 } })
+    patch({ cost: 1, time: { updated: 20 } })
+    publish({ ...initial, time: { ...initial.time, viewed: 8 } })
+    patch({ tokens })
+    applySessionEventToGlobalSessions(idle)
+    expect(current()).toMatchObject({ cost: 1, tokens, time: { updated: 20, viewed: 8 } })
   })
 
   test("spend a refresh published meanwhile wins over the deferred spend", () => {
     const initial = buildSession("Initial", { created: 1, updated: 10 })
-    currentSessions = [initial]
-
-    applySessionEventToGlobalSessions({ type: "session.patched", properties: { sessionID: "ses_1", patch: { cost: 1, time: { updated: 20 } } } })
-    currentSessions = [{ ...initial, cost: 2 }]
-    applySessionEventToGlobalSessions(buildLifecycleEvent("session.idle", "ses_1"))
-
-    expect(upsertedSessions.map((session) => session.cost)).toEqual([2])
+    publish(initial)
+    patch({ cost: 1, time: { updated: 20 } })
+    publish({ ...initial, cost: 2 })
+    applySessionEventToGlobalSessions(idle)
+    expect(current()?.cost).toBe(2)
   })
 
   test("a structural patch publishes with the spend deferred before it", () => {
-    currentSessions = [buildSession("Initial", { created: 1, updated: 10 })]
-
-    applySessionEventToGlobalSessions({ type: "session.patched", properties: { sessionID: "ses_1", patch: { cost: 2, time: { updated: 20 } } } })
-    applySessionEventToGlobalSessions({ type: "session.patched", properties: { sessionID: "ses_1", patch: { title: "Renamed" } } })
-
-    expect(upsertedSessions).toHaveLength(1)
-    expect(upsertedSessions[0]).toMatchObject({ title: "Renamed", cost: 2, time: { updated: 20 } })
-    applySessionEventToGlobalSessions(buildLifecycleEvent("session.idle", "ses_1"))
-    expect(upsertedSessions).toHaveLength(1)
+    publish(buildSession("Initial", { created: 1, updated: 10 }))
+    patch({ cost: 2, time: { updated: 20 } })
+    patch({ title: "Renamed" })
+    expect(current()).toMatchObject({ title: "Renamed", cost: 2, time: { updated: 20 } })
+    const before = current()
+    applySessionEventToGlobalSessions(idle)
+    expect(current()).toBe(before)
   })
 
   test("applies substantive session updates immediately", () => {
-    currentSessions = [buildSession("Initial", { created: 1, updated: 10 })]
-
+    publish(buildSession("Initial", { created: 1, updated: 10 }))
     applySessionEventToGlobalSessions(buildEvent(buildSession("Renamed", { created: 1, updated: 20 })))
-
-    expect(upsertedSessions.map((session) => session.title)).toEqual(["Renamed"])
+    expect(current()?.title).toBe("Renamed")
   })
 
   test("applies a metadata broadcast to the global record at once", () => {
-    currentSessions = [buildSession("Initial", { created: 1, updated: 10 })]
+    publish(buildSession("Initial", { created: 1, updated: 10 }))
+    patch({ metadata: { openchamber: { work: { state: "open" } } } })
+    expect(current()?.metadata).toEqual({ openchamber: { work: { state: "open" } } })
+    expect(current()?.title).toBe("Initial")
+  })
 
-    applySessionEventToGlobalSessions({
-      type: "session.patched",
-      properties: { sessionID: "ses_1", patch: { metadata: { openchamber: { work: { state: "open" } } } } },
-    })
-
-    expect(upsertedSessions.map((session) => session.metadata)).toEqual([{ openchamber: { work: { state: "open" } } }])
-    expect(upsertedSessions[0]?.title).toBe("Initial")
+  test("reconciles an externally moved selected session to its new directory", () => {
+    useProjectsStore.setState({ projects: [{ id: "main", path: "/repo/main" }, { id: "worktree", path: "/repo/worktree" }] })
+    publish({ ...buildSession("Initial", { created: 1, updated: 10 }), directory: "/repo/main" })
+    useSessionUIStore.setState({ currentSessionId: "ses_1", currentSessionDirectory: "/repo/main" })
+    applySessionEventToGlobalSessions(buildEvent({ ...buildSession("Initial", { created: 1, updated: 20 }), directory: "/repo/worktree" }))
+    expect(current()?.directory).toBe("/repo/worktree")
+    expect(useSessionUIStore.getState().currentSessionId).toBe("ses_1")
+    expect(useSessionUIStore.getState().currentSessionDirectory).toBe("/repo/worktree")
   })
 
   test("cancels a pending global update when the session is deleted", () => {
-    currentSessions = [buildSession("Initial", { created: 1, updated: 10 })]
-
-    applySessionEventToGlobalSessions(buildEvent(buildSession("Initial", { created: 1, updated: 20 })))
-    applySessionEventToGlobalSessions(buildDeleteEvent("ses_1"))
-    applySessionEventToGlobalSessions(buildLifecycleEvent("session.idle", "ses_1"))
-
-    expect(upsertedSessions).toEqual([])
-    expect(removedSessionIds).toEqual(["ses_1"])
+    publish(buildSession("Initial", { created: 1, updated: 10 }))
+    patch({ time: { updated: 20 } })
+    applySessionEventToGlobalSessions({ type: "session.deleted", properties: { sessionID: "ses_1" } })
+    applySessionEventToGlobalSessions(idle)
+    expect(current()).toBeUndefined()
+    expect(readDeferredGlobalUpdates().size).toBe(0)
   })
 
   test("discards pending global updates when the runtime changes", () => {
-    currentSessions = [buildSession("Initial", { created: 1, updated: 10 })]
-    applySessionEventToGlobalSessions(buildEvent(buildSession("Initial", { created: 1, updated: 20 })))
-
-    runtimeKey = "runtime-b"
-    runtimeWillChange?.()
-    applySessionEventToGlobalSessions(buildLifecycleEvent("session.idle", "ses_1"))
-
-    expect(upsertedSessions).toEqual([])
+    publish(buildSession("Initial", { created: 1, updated: 10 }))
+    patch({ time: { updated: 20 } })
+    expect(readDeferredGlobalUpdates().size).toBe(1)
+    switchRuntimeEndpoint({ apiBaseUrl: "http://localhost/api", runtimeKey: "runtime-other" })
+    publish(buildSession("Other runtime", { created: 1, updated: 5 }))
+    applySessionEventToGlobalSessions(idle)
+    expect(current()).toMatchObject({ title: "Other runtime", time: { updated: 5 } })
+    expect(readDeferredGlobalUpdates().size).toBe(0)
   })
 
   test("commits an ordered event batch once", () => {
-    const events = Array.from({ length: 1_000 }, (_, index) => ({
-      type: "session.created",
-      properties: {
-        info: {
-          id: `ses_${index}`,
-          title: `Session ${index}`,
-          time: { created: index, updated: index },
-        },
-      },
-    } as SyncEvent))
-
-    applySessionEventsToGlobalSessions(events)
-
-    expect(mutationCalls).toBe(1)
-    expect(upsertedSessions).toHaveLength(1_000)
+    let publications = 0
+    const unsubscribe = useGlobalSessionsStore.subscribe((state, previous) => {
+      if (state.entityById !== previous.entityById) publications += 1
+    })
+    try {
+      const events: SyncEvent[] = Array.from({ length: 1_000 }, (_, index) => ({
+        type: "session.created",
+        properties: { info: { ...buildSession(`Session ${index}`, { created: index, updated: index }), id: `ses_${index}` } },
+      }))
+      applySessionEventsToGlobalSessions(events)
+      expect(publications).toBe(1)
+      expect(useGlobalSessionsStore.getState().entityById.size).toBe(1_000)
+      expect(useGlobalSessionsStore.getState().entityById.get("ses_999")?.title).toBe("Session 999")
+    } finally {
+      unsubscribe()
+    }
   })
 
   test("consumes only the matching bulk archive echo", () => {
-    registerBulkArchiveEchoes(runtimeKey, [{ id: "ses_1", archivedAt: 20 }], 100)
-
-    expect(shouldConsumeBulkArchiveEcho(buildEvent(buildSession("Initial", {
-      created: 1,
-      updated: 20,
-      archived: 20,
-    })), runtimeKey, 101)).toBe(true)
-    expect(shouldConsumeBulkArchiveEcho(buildEvent(buildSession("Initial", {
-      created: 1,
-      updated: 21,
-      archived: 21,
-    })), runtimeKey, 101)).toBe(false)
-    expect(shouldConsumeBulkArchiveEcho(buildEvent(buildSession("Initial", {
-      created: 1,
-      updated: 20,
-      archived: 20,
-    })), "runtime-b", 101)).toBe(false)
+    const runtime = getRuntimeKey()
+    registerBulkArchiveEchoes(runtime, [{ id: "ses_1", archivedAt: 20 }], 100)
+    expect(shouldConsumeBulkArchiveEcho(buildEvent(buildSession("Initial", { created: 1, updated: 20, archived: 20 })), runtime, 101)).toBe(true)
+    expect(shouldConsumeBulkArchiveEcho(buildEvent(buildSession("Initial", { created: 1, updated: 21, archived: 21 })), runtime, 101)).toBe(false)
+    expect(shouldConsumeBulkArchiveEcho(buildEvent(buildSession("Initial", { created: 1, updated: 20, archived: 20 })), "runtime-other", 101)).toBe(false)
   })
 
   test("does not consume an expired or released bulk archive echo", () => {
-    registerBulkArchiveEchoes(runtimeKey, [{ id: "ses_1", archivedAt: 20 }], 100)
+    const runtime = getRuntimeKey()
+    registerBulkArchiveEchoes(runtime, [{ id: "ses_1", archivedAt: 20 }], 100)
     const event = buildEvent(buildSession("Initial", { created: 1, updated: 20, archived: 20 }))
-
-    expect(shouldConsumeBulkArchiveEcho(event, runtimeKey, 30_101)).toBe(false)
-
-    registerBulkArchiveEchoes(runtimeKey, [{ id: "ses_1", archivedAt: 20 }], 100)
-    releaseBulkArchiveEchoes(runtimeKey, ["ses_1"])
-    expect(shouldConsumeBulkArchiveEcho(event, runtimeKey, 101)).toBe(false)
+    expect(shouldConsumeBulkArchiveEcho(event, runtime, 30_101)).toBe(false)
+    registerBulkArchiveEchoes(runtime, [{ id: "ses_1", archivedAt: 20 }], 100)
+    releaseBulkArchiveEchoes(runtime, ["ses_1"])
+    expect(shouldConsumeBulkArchiveEcho(event, runtime, 101)).toBe(false)
   })
 })

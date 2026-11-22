@@ -8,17 +8,26 @@ import {
 import { createTerminalSocketUpgradeHandler } from './socket-upgrade.js';
 import { sanitizeTerminalHistoryChunk } from './history.js';
 import { terminalPlainText } from './plain-text.js';
+import { newHistory, historyText, appendHistory, type TerminalHistory } from './scrollback.js';
+import {
+  MAX_INPUT_CHARS, INTERACTIVE_TERMINAL_MODE, COMMAND_TERMINAL_MODE, TERMINAL_PURPOSE,
+  normalizeCreateMode, normalizeTerminalPurpose,
+} from './create-input.js';
+import type { TerminalPurpose, TerminalAppearanceInput, TerminalRequestFields } from './create-input.js';
+export type { TerminalPurpose } from './create-input.js';
 import { consumeTerminalThemeQueries, terminalThemeModeReport } from './theme-response.js';
 import { buildTerminalShellLaunch, createTerminalShellResolver, normalizeTerminalShell } from './shells.js';
 import { stripAppImageArgv0Leak, stripAppImageLauncherEnv, resolvePosixPtyLaunch } from '../inherited-env.js';
 import { shutdownTerminalProcesses } from './shutdown.js';
-import { bunVersionRunsBunPty } from './bun-pty-support.js';
+import { loadTerminalPtyProvider } from './pty-provider.js';
+import type { TerminalBackend, PtyExit, TerminalPty, TerminalPtyProvider, PtyOptions, Disposable } from './pty-provider.js';
+export { loadTerminalPtyProvider } from './pty-provider.js';
+export type { TerminalPtyProvider } from './pty-provider.js';
 import { isString as isText } from '../shared/object-guards.js';
 import type { Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { Stats } from 'node:fs';
 import type * as nodePath from 'node:path';
-import type { IWindowsPtyForkOptions, IPtyForkOptions } from 'node-pty';
 import type { Application } from '../shared/http-contracts.js';
 import type { WebSocket, WebSocketServer as TerminalWebSocketServer } from '../shared/websocket-contracts.js';
 import type { RequestOriginChecker } from '../security/request-security.js';
@@ -30,30 +39,7 @@ import type { TerminalHistoryPending } from './history.js';
 import type { TerminalThemeMode } from './theme-response.js';
 import type { TerminalWsFrameOptions, TerminalWsJsonObject, TerminalWsJsonValue } from './terminal-ws-protocol.js';
 
-export type TerminalPurpose = { type: 'terminal' } | { type: 'project-action'; actionId: string; executionId: string };
 type TerminalStatus = 'running' | 'exited';
-type TerminalBackend = 'bun-pty' | 'node-pty';
-type PtyOptions = IPtyForkOptions & IWindowsPtyForkOptions;
-type PtyExit = { exitCode: number; signal?: number | string | undefined };
-type Disposable = { dispose(): void };
-
-interface TerminalPty {
-  pid: number;
-  onData(listener: (data: string) => void): Disposable;
-  onExit(listener: (event: PtyExit) => void): Disposable;
-  write(data: string): void;
-  resize(cols: number, rows: number): void;
-  kill(signal?: string): void;
-}
-
-interface TerminalPtyModule {
-  spawn(executable: string, args: string[], options: PtyOptions): TerminalPty | Promise<TerminalPty>;
-}
-
-export interface TerminalPtyProvider extends TerminalPtyModule {
-  backend: TerminalBackend;
-}
-
 export interface TerminalRuntimeOptions extends Pick<TerminalShellResolverOptions, 'searchPathFor' | 'isExecutable'> {
   app: Pick<Application, 'get' | 'post' | 'delete'>;
   server: Pick<Server, 'on' | 'off'>;
@@ -73,25 +59,6 @@ export interface TerminalRuntimeOptions extends Pick<TerminalShellResolverOption
   logger?: { warn?: typeof console.warn };
 }
 
-interface TerminalAppearanceInput {
-  themeMode?: unknown;
-  terminalBackground?: unknown;
-  terminalForeground?: unknown;
-}
-
-interface TerminalRequestFields extends TerminalAppearanceInput {
-  cwd?: unknown;
-  sessionId?: unknown;
-  sessionIds?: unknown;
-  cols?: unknown;
-  rows?: unknown;
-  shell?: unknown;
-  loginShell?: unknown;
-  mode?: unknown;
-  command?: unknown;
-  purpose?: unknown;
-}
-
 interface TerminalErrorBody {
   error: unknown;
   code?: string;
@@ -109,16 +76,6 @@ interface TerminalSpawnOptions extends Pick<TerminalShellLaunchOptions, 'mode' |
 interface TerminalStartOptions extends Omit<TerminalSpawnOptions, 'cwd' | 'themeMode'>, TerminalAppearanceInput {
   cwd: unknown;
   purpose?: TerminalPurpose;
-}
-
-interface TerminalHistory {
-  chunks: { buffer: Buffer; length: number }[];
-  head: number;
-  offset: number;
-  bytes: number;
-  original: string[] | null;
-  originalTail: string;
-  originalLast: string | undefined;
 }
 
 type PtyEvent = ({ type: 'output'; data: string } | ({ type: 'exit'; signal: PtyExit['signal'] } & Pick<PtyExit, 'exitCode'>)) & { process: TerminalPty };
@@ -198,65 +155,21 @@ interface Attachment { initializing: boolean; pending: PublishedEvent[] }
 interface Connection { socket: WebSocket; attachments: Map<string, Attachment> }
 
 const MAX_SESSIONS = 20;
-const MAX_HISTORY_BYTES = 512 * 1024;
 const DEFAULT_TERMINAL_READ_BYTES = 32 * 1024;
 const MAX_TERMINAL_READ_BYTES = 256 * 1024;
-const HISTORY_SEGMENT_BYTES = 8 * 1024;
 const MAX_SOCKET_BUFFER_BYTES = 4 * 1024 * 1024;
 const OUTPUT_BATCH_MS = 12;
 const MAX_OUTPUT_BATCH_CHARS = 32 * 1024;
-const MAX_INPUT_CHARS = 65_536;
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const TERMINATION_GRACE_MS = 1000;
-const INTERACTIVE_TERMINAL_MODE = 'interactive';
-const COMMAND_TERMINAL_MODE = 'command';
 const TERMINAL_CWD_MISSING_CODE = 'TERMINAL_CWD_MISSING';
-const TERMINAL_PURPOSE = Object.freeze({ type: 'terminal' });
-const MAX_PURPOSE_ID_CHARS = 128;
-const OBJECT_TAG = '[object Object]';
 const isInteger = (value: unknown): value is number => Number.isInteger(value);
 const validateSize = (value: unknown, max: number): value is number => isInteger(value) && value >= 1 && value <= max;
-const isString = (value: unknown): value is string => String(value) === value;
 const isBoolean = (value: unknown): value is boolean => typeof value === 'boolean';
 const hasRequestFields = (value: unknown): value is TerminalRequestFields => value != null;
 const hasErrorFields = (value: unknown): value is { message?: unknown; code?: unknown } => value != null;
 type DecodedFrame = TerminalWsJsonObject | TerminalWsJsonValue[];
 const hasFrameFields = (value: DecodedFrame | null): value is DecodedFrame & { v?: unknown; t?: unknown; s?: unknown; z?: unknown; d?: unknown } => value !== null;
-const isObjectRecord = (value: unknown): value is { type?: unknown; actionId?: unknown; executionId?: unknown } => value != null && !Array.isArray(value) && Object.prototype.toString.call(value) === OBJECT_TAG;
-type CreateMode = { mode: 'interactive'; command: null } | { mode: 'command'; command: string };
-const normalizeCreateMode = ({ mode, command }: Pick<TerminalRequestFields, 'mode' | 'command'>): CreateMode => {
-  const normalizedMode = mode == null ? INTERACTIVE_TERMINAL_MODE : mode;
-  if (normalizedMode !== INTERACTIVE_TERMINAL_MODE && normalizedMode !== COMMAND_TERMINAL_MODE) throw new Error('Invalid terminal mode');
-  if (normalizedMode === INTERACTIVE_TERMINAL_MODE) {
-    if (command != null) throw new Error('Interactive terminal create does not accept a command');
-    return { mode: INTERACTIVE_TERMINAL_MODE, command: null };
-  }
-  if (!isString(command) || !command.trim()) throw new Error('Terminal command is required');
-  const trimmedCommand = command.trim();
-  if (trimmedCommand.length > MAX_INPUT_CHARS) throw new Error('Terminal command exceeds the input limit');
-  return { mode: COMMAND_TERMINAL_MODE, command: trimmedCommand };
-};
-const normalizePurposeId = (value: string, errorMessage: string) => {
-  if (!value.trim()) throw new Error(errorMessage);
-  const normalized = value.trim();
-  if (normalized.length > MAX_PURPOSE_ID_CHARS) throw new Error(errorMessage);
-  return normalized;
-};
-const normalizeTerminalPurpose = ({ purpose: value }: Pick<TerminalRequestFields, 'purpose'>): TerminalPurpose => {
-  if (value == null) return TERMINAL_PURPOSE;
-  if (!isObjectRecord(value)) throw new Error('Invalid terminal purpose');
-  if (value.type === 'terminal') return TERMINAL_PURPOSE;
-  if (value.type !== 'project-action') throw new Error('Invalid terminal purpose');
-  const actionIdError = 'Terminal project action id is required';
-  const executionIdError = 'Terminal execution id is required';
-  const rawActionId = value.actionId;
-  if (!isString(rawActionId)) throw new Error(actionIdError);
-  const actionId = normalizePurposeId(rawActionId, actionIdError);
-  const rawExecutionId = value.executionId;
-  if (!isString(rawExecutionId)) throw new Error(executionIdError);
-  const executionId = normalizePurposeId(rawExecutionId, executionIdError);
-  return { type: 'project-action', actionId, executionId };
-};
 const getSessionPurpose = (session: TerminalSession) => session.purpose ?? TERMINAL_PURPOSE;
 const isPurposeActionMatch = (left: TerminalPurpose, right: TerminalPurpose) => {
   if (left.type !== right.type) return false;
@@ -280,112 +193,6 @@ const findPendingActionCreate = (pendingSessionCreates: Map<string, PendingCreat
   }
   return null;
 };
-const newHistory = (): TerminalHistory => ({ chunks: [], head: 0, offset: 0, bytes: 0, original: [], originalTail: '', originalLast: '' });
-const historyText = (history: TerminalHistory) => history.original
-  ? history.original.join('') + history.originalTail
-  : Buffer.concat(history.chunks.slice(history.head).map((chunk, index) => chunk.buffer.subarray(index === 0 ? history.offset : 0, chunk.length))).toString('utf8');
-const appendHistoryBytes = (history: TerminalHistory, bytes: Buffer) => {
-  let offset = 0;
-  while (offset < bytes.length) {
-    let tail = history.chunks.at(-1);
-    if (!tail || tail.length === HISTORY_SEGMENT_BYTES) {
-      tail = { buffer: Buffer.allocUnsafe(HISTORY_SEGMENT_BYTES), length: 0 };
-      history.chunks.push(tail);
-    }
-    const length = Math.min(bytes.length - offset, HISTORY_SEGMENT_BYTES - tail.length);
-    bytes.copy(tail.buffer, tail.length, offset, offset + length);
-    tail.length += length;
-    offset += length;
-  }
-  history.bytes += bytes.length;
-};
-const removeHistoryTail = (history: TerminalHistory, count: number) => {
-  history.bytes -= count;
-  while (count > 0) {
-    const tail = history.chunks.at(-1);
-    if (!tail) throw new TypeError("Cannot read properties of undefined (reading 'length')");
-    const removed = Math.min(tail.length, count);
-    tail.length -= removed;
-    count -= removed;
-    if (!tail.length) history.chunks.pop();
-  }
-};
-const appendOriginal = (history: TerminalHistory, original: string[], text: string) => {
-  let offset = 0;
-  while (offset < text.length) {
-    const length = Math.min(text.length - offset, HISTORY_SEGMENT_BYTES - history.originalTail.length);
-    history.originalTail += text.slice(offset, offset + length);
-    offset += length;
-    if (history.originalTail.length === HISTORY_SEGMENT_BYTES) {
-      original.push(history.originalTail);
-      history.originalTail = '';
-    }
-  }
-  history.originalLast = text.at(-1);
-};
-const appendHistory = (history: TerminalHistory, text: string) => {
-  if (!text) return;
-  let encoded = text;
-  if (history.original && /[\uD800-\uDBFF]/.test(String(history.originalLast)) && /^[\uDC00-\uDFFF]/.test(text)) {
-    removeHistoryTail(history, 3);
-    encoded = history.originalLast + text;
-  }
-  const bytes = Buffer.from(encoded);
-  if (history.bytes + bytes.length <= MAX_HISTORY_BYTES) {
-    appendHistoryBytes(history, bytes);
-    if (history.original) appendOriginal(history, history.original, text);
-    return;
-  }
-
-  if (bytes.length >= MAX_HISTORY_BYTES) {
-    let start = bytes.length - MAX_HISTORY_BYTES;
-    while (start < bytes.length && ((bytes[start] ?? 0) & 0xc0) === 0x80) start += 1;
-    history.chunks = []; history.head = 0; history.offset = 0; history.bytes = 0;
-    appendHistoryBytes(history, bytes.subarray(start));
-    history.original = null;
-    history.originalTail = '';
-    return;
-  }
-
-  appendHistoryBytes(history, bytes);
-
-  let remove = history.bytes - MAX_HISTORY_BYTES;
-  let removed = 0;
-  while (remove > 0) {
-    const chunk = history.chunks[history.head];
-    if (!chunk) throw new TypeError("Cannot read properties of undefined (reading 'length')");
-    const available = chunk.length - history.offset;
-    if (remove < available) { history.offset += remove; removed += remove; break; }
-    remove -= available;
-    removed += available;
-    history.head += 1;
-    history.offset = 0;
-  }
-  while (history.head < history.chunks.length) {
-    const chunk = history.chunks[history.head];
-    if (!chunk) throw new TypeError("Cannot read properties of undefined (reading 'length')");
-    if (history.offset === chunk.length) { history.head += 1; history.offset = 0; continue; }
-    if (((chunk.buffer[history.offset] ?? 0) & 0xc0) !== 0x80) break;
-    history.offset += 1;
-    removed += 1;
-  }
-  history.bytes -= removed;
-  history.original = null;
-  history.originalTail = '';
-  if (history.head > 128) { history.chunks = history.chunks.slice(history.head); history.head = 0; }
-};
-
-export async function loadTerminalPtyProvider(
-  bunVersion: string | null | undefined = globalThis.Bun?.version,
-  importPty: (name: TerminalBackend) => Promise<TerminalPtyModule> = (name) => name === 'bun-pty' ? import('bun-pty') : import('node-pty'),
-): Promise<TerminalPtyProvider> {
-  if (bunVersionRunsBunPty(bunVersion)) {
-    try { const pty = await importPty('bun-pty'); return { spawn: pty.spawn, backend: 'bun-pty' }; } catch { void 0; }
-  }
-  const pty = await importPty('node-pty');
-  return { spawn: pty.spawn, backend: 'node-pty' };
-}
-
 export function createTerminalRuntime({
   app, server, fs, path, uiAuthController, tunnelAuthController, buildAugmentedPath, searchPathFor, isExecutable,
   isRequestOriginAllowed, rejectWebSocketUpgrade, TERMINAL_INPUT_WS_HEARTBEAT_INTERVAL_MS,

@@ -1,0 +1,27 @@
+name: J2K Recovery Watchdog
+on:
+  schedule:
+    - cron: '43 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: j2k-recovery-watchdog
+  cancel-in-progress: false
+jobs:
+  inspect:
+    if: github.repository == 'jameskorzekwa/openchamber'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - name: Check bee2 heartbeat and pending decisions
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          script: |
+            const { watchdog } = await import(`${process.env.GITHUB_WORKSPACE}/tools/upstream-recovery/watchdog.mjs`);
+            const reason = await watchdog(github, context.repo);
+            if (reason) core.setFailed(reason);

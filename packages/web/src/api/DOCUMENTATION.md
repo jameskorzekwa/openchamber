@@ -25,6 +25,14 @@ Reference-picker reads cover searched lists, an item's detail, and listed change
 
 ## Decisions
 
+### Why mutation codecs receive the repository-owner predicate
+
+`source-control-mutations.ts` owns mutation request validation and strict receipt
+parsing. Its owner predicate reads the adapter's live provider-instance registry,
+so path-style repositories keep the same rules after descriptors are refreshed.
+The codec captures the predicate, never a snapshot of the registry. Transport and
+account selection remain in `source-control.ts`.
+
 ### Why the settings surface is a query parameter and not a header
 
 The server resolves per-surface profile fields from the surface kind. A query parameter needs no CORS preflight; the packaged desktop shell and the phone app are cross-origin, and an older instance refuses an unknown header.

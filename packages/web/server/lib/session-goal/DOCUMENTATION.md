@@ -412,6 +412,14 @@ ordering used by create and scheduled goals.
 
 ## Decisions
 
+### Why input interpretation is separate from the control loop
+
+`goal-state.ts` owns settings, metadata normalization and event projections.
+`messages.ts` owns the message projection, token snapshots and truncation
+chronology. The runtime retains all timers, live checks, accounting writes,
+interruptions and continuations. Those owners share the same interpreted
+records, preserving the existing wire coercions and stale-write checks.
+
 ### Why objective content includes JSON values
 
 The HTTP route passes JSON `content` through to objective storage. Storage keeps

@@ -18,7 +18,6 @@ import { resolveGlobalSessionDirectory, useGlobalSessionsStore } from '@/stores/
 import { formatSessionDateLabel, normalizePath } from '@/components/session/sidebar/utils';
 import { useShallow } from 'zustand/react/shallow';
 import { SessionSearchInput } from '@/components/session/SessionSearchInput';
-import { requestReasoningReveal } from '@/components/chat/search/reasoningReveal';
 import { refreshSpaceArchives, useSpaceArchivesStore } from '@/lib/spaces/space-archives';
 import { selectArchivedSessions, selectActiveArchiveSessions, selectArchiveParentTitles } from './archive/sessionSelectors';
 import { createSessionOwnershipIndex } from '@/components/session/sidebar/sessions/sessionOwnership';
@@ -34,26 +33,15 @@ import { useWorktreeArchiveActions } from './archive/useWorktreeArchiveActions';
 import { isSessionDirectoryAdmitted } from '@/sync/session-admission-rule';
 import { openSessionLink } from '@/lib/router/openSessionFromRoute';
 import { useConversationSearch, type ConversationResult } from '@/hooks/useConversationSearch';
-import { useMessageSearch } from '@/hooks/useMessageSearch';
-import { ConversationResultRow } from '@/components/search/ConversationResultRow';
 import { conversationContextFromLocation, type ConversationResultContext, type ConversationResultProject } from '@/components/search/conversationResultContext';
 import type { SearchMetaItem } from '@/components/search/SearchMetaList';
 import { SearchInMenu } from '@/components/search/SearchInMenu';
 import { effectiveSearchScope, useSearchScopes } from '@/components/search/searchScopes';
 import { SearchStatusMark } from '@/components/search/SearchStatusMark';
 import { useSearchFailureText } from '@/components/search/searchStatusText';
-import { searchScopeQuery, type OmniAuthor, type SearchScope } from '@/lib/search/omniQuery';
-import { MatchHighlight } from '@/components/ui/MatchHighlight';
-import { leadWithMatch, splitSnippet } from '@/lib/messageSearch';
-
-type ArchiveBucket = {
-  key: string;
-  kind: 'project' | 'space' | 'other';
-  label: string;
-  directory: string;
-  projectId?: string;
-  sessions: Session[];
-};
+import { searchScopeQuery, type SearchScope } from '@/lib/search/omniQuery';
+import { ArchiveSearchResultRow } from './archive/ArchiveSearchResultRow';
+import { groupByParent, type ArchiveBucket } from './archive/archiveGroups';
 
 const OTHER_BUCKET_KEY = '\u0000other';
 
@@ -61,76 +49,6 @@ const PAGE_SIZE = 100;
 
 const NO_SEARCH_LOCATIONS: ReadonlyMap<string, SidebarSessionLocation> = new Map();
 const NO_DIRECTORIES: readonly string[] = [];
-
-type SearchResultRowsProps = {
-  result: ConversationResult;
-  query: string;
-  context: ConversationResultContext;
-  mobile: boolean;
-  onOpen: () => void;
-  onOpenExcerpt: (messageId: string) => void;
-  onRestore: () => void;
-  restoreLabel: string;
-  restorable: boolean;
-  author: OmniAuthor;
-  includeReasoning: boolean;
-  contentAvailable: boolean;
-};
-
-function ArchiveSearchResultRow({ result, query, context, mobile, onOpen, onOpenExcerpt, onRestore, restoreLabel, restorable, author, includeReasoning, contentAvailable }: SearchResultRowsProps): React.ReactNode {
-  const { t } = useI18n();
-  const [expandedKey, setExpandedKey] = React.useState<string | null>(null);
-  const expansionKey = `${query}\0${author}\0${includeReasoning}\0${contentAvailable}`;
-  const showMatches = expandedKey === expansionKey;
-  const matches = useMessageSearch({ query, enabled: showMatches && contentAvailable, limit: PAGE_SIZE, sessionId: result.sessionId, lifecycle: 'archived', role: author === 'any' ? null : author, includeReasoning });
-  const openHit = (messageId: string, hitRole: string): void => {
-    requestReasoningReveal(hitRole === 'reasoning' ? messageId : null);
-    onOpenExcerpt(messageId);
-  };
-  return <div data-archive-search-result={result.sessionId}>
-    <ConversationResultRow
-      result={result}
-      context={context}
-      mobile={mobile}
-      onOpen={onOpen}
-      onOpenExcerpt={() => {
-        if (result.excerpt) openHit(result.excerpt.messageId, result.excerpt.role);
-      }}
-      onShowMoreMatches={result.moreMatches > 0 && contentAvailable ? () => setExpandedKey(expansionKey) : undefined}
-      trailing={restorable ? <Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size={mobile ? 'lg' : 'xs'} className={mobile ? 'min-h-11 min-w-11' : undefined} onClick={onRestore} aria-label={restoreLabel}><Icon name="inbox-unarchive" className="size-3.5" /></Button></TooltipTrigger><TooltipContent>{restoreLabel}</TooltipContent></Tooltip> : null}
-    />
-    {showMatches ? <div className="ms-3 space-y-0.5" data-archive-other-matches={result.sessionId} aria-live="polite">
-      {'hits' in matches.state ? matches.state.hits.filter((hit) => hit.id !== result.excerpt?.messageId).map((hit) => <button key={hit.id} type="button" className="block w-full truncate text-start typography-micro text-muted-foreground hover:text-foreground" onClick={() => openHit(hit.id, hit.role)}><MatchHighlight segments={leadWithMatch(splitSnippet(hit.snippet))} /></button>) : null}
-      {matches.state.status === 'loading' ? <span className="typography-micro text-muted-foreground">{t('search.omni.status.searching')}</span> : null}
-      {matches.state.status === 'error' || (matches.state.status === 'ready' && matches.state.pageError) ? <span className="typography-micro text-muted-foreground">{t('search.omni.status.error')}</span> : null}
-      {matches.state.status === 'unavailable' ? <span className="typography-micro text-muted-foreground">{t('search.omni.status.unsupported')}</span> : null}
-      {matches.state.status === 'too-short' ? <span className="typography-micro text-muted-foreground">{t('search.omni.status.tooShort')}</span> : null}
-      {matches.state.status === 'ready' && matches.state.next ? <button type="button" className="typography-micro text-muted-foreground hover:text-foreground hover:underline" onClick={matches.loadMore} disabled={matches.state.loadingMore}>{t('search.omni.result.loadMore')}</button> : null}
-    </div> : null}
-  </div>;
-}
-
-const groupByParent = (sessions: Session[]): Session[] => {
-  const byParent = new Map<string, Session[]>();
-  for (const session of sessions) {
-    if (!session.parentID) continue;
-    const siblings = byParent.get(session.parentID);
-    if (siblings) siblings.push(session);
-    else byParent.set(session.parentID, [session]);
-  }
-  const grouped: Session[] = [];
-  const placedParents = new Set<string>();
-  for (const session of sessions) {
-    if (!session.parentID) {
-      grouped.push(session);
-      continue;
-    }
-    if (placedParents.has(session.parentID)) continue;
-    placedParents.add(session.parentID);
-    grouped.push(...(byParent.get(session.parentID) ?? []));
-  }
-  return grouped;
-};
 
 export function ArchiveSessionsView({ layout, onLeave }: {
   layout: 'page' | 'mobile';

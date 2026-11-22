@@ -46,6 +46,13 @@ Image capture still needs the page after its source fallback succeeds, so detach
 
 The library owns shared session metadata readers, runtime transport and credentials, project API clients, file and selection helpers, and device-local coordination. Subfolder documents own their specialized contracts. The OpenChamber server owns stored project data and execution; the native shells own privileged device operations; sync owns authoritative session and transcript state.
 
+### Build revision reload guard
+
+The control stream's ready event checks the server's build revision against the
+client bundle. A reload requires the session-storage guard to succeed. Embedded
+and private contexts can deny storage; those clients continue reconnecting and
+dispatching ready events, because reloading without a persistent guard could loop.
+
 ## Invariants
 
 ### Session identity and side conversations

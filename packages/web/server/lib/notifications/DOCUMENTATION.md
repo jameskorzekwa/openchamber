@@ -254,6 +254,15 @@ The `settings` parameter for `prepareNotificationLastMessage` supports `maxLastM
 
 ## Decisions
 
+### Why event dispatch owns its debounce state
+
+`trigger-dispatch.ts` owns event routing, cooldowns, question and permission
+debounces, and assistant-step memory. `trigger-inputs.ts` interprets event
+fields and fallback text. The runtime retains tag clearing, session ancestry,
+delivery channels and settlement notifications. The dispatcher reads mutable
+focus and auto-accept callbacks at call time, so replacing a callback also
+affects work already waiting in a debounce.
+
 ### Why channel delivery has a server-side notification kind
 
 The server already forwards `share-answer` to extension channels. The SDK's
