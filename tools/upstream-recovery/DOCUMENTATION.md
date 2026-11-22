@@ -16,7 +16,11 @@ HEAD, after integration.
 
 ## Invariants
 
-- Recovery branches begin `recovery/upstream-`. Workers publish only their
+- Recovery branches begin `recovery/upstream-`. Validation runs on pushes
+  matching `recovery/upstream-*`, independently of PR mergeability: GitHub
+  does not run pull-request validation for conflicting PRs. These runs retain
+  read-only permissions; release publication remains limited to `j2k/current`.
+  Workers publish only their
   branch and a PR targeting `j2k/current`.
 - Discovery considers only tags fetched from upstream into `refs/tags/upstream/`.
   The newest stable tag must be an ancestor of upstream `main`. Fork-only
