@@ -82,6 +82,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   'quota.family.zen': 'Modelos Zen',
@@ -296,6 +297,7 @@ export const dict: Record<I18nKey, string> = {
   ...tooltipsWorkspaceI18n['pt-BR'],
   ...tooltipsPanelI18n['pt-BR'],
   ...tooltipsChatI18n['pt-BR'],
+  ...updateStatusI18n['pt-BR'],
   'terminalView.actions.attachSelection': 'Anexar saída selecionada',
   'terminalView.actions.copySelection': 'Copiar saída selecionada',
   'terminalView.toast.selectionCopied': 'Saída copiada',
@@ -894,6 +896,12 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.session.status.questionPendingOpen": "Pergunta pendente. Abre a sessão que está pedindo",
   "sessions.sidebar.session.status.activeFor": "Ativa há {duration}",
   "sessions.sidebar.session.status.lastTurnDuration": "O último turno levou {duration}",
+  "chat.backgroundWork.label": "Em segundo plano",
+  "chat.backgroundWork.agentWaiting": "Agente aguardando",
+  "chat.backgroundWork.ariaLabel": "Em segundo plano: {summary}",
+  "chat.backgroundWork.subtaskCountOne": "1 subtarefa",
+  "chat.backgroundWork.subtaskCountMany": "{count} subtarefas",
+  "chat.backgroundWork.subtaskUntitled": "Subtarefa",
   "sessions.sidebar.session.subsessions.collapse": "Recolher subsessões",
   "sessions.sidebar.session.subsessions.expand": "Expandir subsessões",
   "sessions.sidebar.dialogs.deleteSession.title": "Excluir sessão?",
@@ -4100,4 +4108,16 @@ export const dict: Record<I18nKey, string> = {
   'chat.promptHistorySearch.hint': "↑ ↓ para navegar · Enter para carregar · Esc para fechar",
   'helpDialog.item.searchPromptHistory': "Pesquisar histórico de prompts (entrada de chat)",
 
+  'chat.backgroundShells.openOutput': 'Mostrar saída',
+  'chat.backgroundShells.openOutputAria': 'Mostrar a saída de {command}',
+  'shellOutput.status.loading': 'Carregando…',
+  'shellOutput.status.running': 'Em execução',
+  'shellOutput.status.finished': 'Concluído',
+  'shellOutput.status.finishedWithCode': 'Concluído (código {code})',
+  'shellOutput.status.stopped': 'Interrompido',
+  'shellOutput.status.notFound': 'Este comando não está mais disponível',
+  'shellOutput.readOnly': 'Somente leitura',
+  'shellOutput.earlierOmitted': '… saída anterior omitida',
+  'contextPanel.mode.pty': 'Processo',
+  'contextRail.surface.pty.description': 'Saída de um comando que o agente executa em segundo plano',
 };

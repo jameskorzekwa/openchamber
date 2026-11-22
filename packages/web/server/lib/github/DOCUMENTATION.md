@@ -69,6 +69,12 @@ GitHub sits on the shared source-control route shell (`../source-control/provide
 
 ## Host trust
 
+Mutation operations receive the exact Octokit selected by the mutation session.
+They do not resolve accounts or repositories themselves. The coordinator keeps
+network membership, expected-target checks, reconciliation and cache invalidation
+together; extracting request mechanics must preserve that order and the persisted
+mutation kinds and digests.
+
 - A non-github.com host is trusted when the server's own `GH_HOST` names it, gh has a `hosts.yml` login for it, or the user already stored a per-host PAT for it (registering the PAT is what trusts a host; the async gates use `isTrustedGitHubHostOrStored(host)`, and the sync `isTrustedGitHubHost(host)` stays gh/env-only for its sync consumers). The trust gate runs before any token lookup, nothing here throws or talks to the network, and nothing here talks to a host.
 - `github.com` (and an omitted host) is always trusted. The server's own `GH_HOST` is trusted. A gh login is recorded by a top-level host key in `hosts.yml` with a direct `oauth_token`, a bare `user` for an OS-keyring login, or a non-empty `users` map. Host trust and credential-cache invalidation share `ghConfigDir()` in `gh-config.js`. It selects the first non-empty value in gh's order: `GH_CONFIG_DIR`, `$XDG_CONFIG_HOME/gh`, `%APPDATA%/GitHub CLI` on Windows, then `~/.config/gh`. Only the selected directory is read; an unreadable or malformed file means "not trusted" with no fallback to another directory.
 - The gate is two layers. `resolveGitHubRepoFromDirectory` refuses unapproved hosts at the single choke point every remote resolution passes through (so `resolveRemoteCandidates` skips them too, and `/pr/status` reports `project: null` for GitLab-style remotes). `getOctokitOrNull(host)` re-checks before ANY token lookup as defense in depth, so a direct caller with a client-supplied host can never mint a token for an untrusted host.

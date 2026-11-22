@@ -151,7 +151,7 @@
     {
       "id": "custom",
       "name": "Custom provider drafts and validation",
-      "sources": ["packages/ui/src/components/sections/providers/ProvidersPage.tsx", "packages/ui/src/components/sections/providers/CustomProviderForm.tsx", "packages/ui/src/components/sections/providers/CustomProviderModelRow.tsx", "packages/ui/src/components/sections/providers/custom-provider-form.ts"],
+      "sources": ["packages/ui/src/components/sections/providers/ProvidersPage.tsx", "packages/ui/src/components/sections/providers/CustomProviderForm.tsx", "packages/ui/src/components/sections/providers/CustomProviderModelRow.tsx", "packages/ui/src/components/sections/providers/custom-provider-form.ts", "packages/ui/src/components/sections/providers/custom-provider-certificate.ts"],
       "what": "A custom provider draft chooses a protocol and models, validates connection details, headers and certificates, and keeps edits when saving fails.",
       "reach": "Settings > Providers > Connect provider > Custom provider.",
       "proof": "Invalid fields and duplicate rows show errors; model rows add, collapse and remove; protocol changes show their selection; a failed write keeps the form.",

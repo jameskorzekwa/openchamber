@@ -66,7 +66,10 @@ test('emits server and CLI with declarations, inline source maps and runtime sib
       });
       expect(startup.status, startup.stderr).toBe(0);
       const unit = await fs.readFile(path.join(home, '.config', 'systemd', 'user', 'openchamber.service'), 'utf8');
-      expect(unit).toContain(`"${stableEntry}"`);
+      const launcherPath = path.join(home, '.local/share/openchamber/bin/openchamber-managed');
+      expect(unit).toContain(`"${launcherPath}"`);
+      const launcher = await fs.readFile(launcherPath, 'utf8');
+      expect(launcher).toContain(stableEntry);
     }
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
       await import(${JSON.stringify(pathToFileURL(path.join(output, 'server/index.js')).href)});

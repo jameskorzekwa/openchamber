@@ -99,6 +99,14 @@ dashes run continuously around the corners and the pattern closes without a
 seam. A CSS mask over a solid border was tried first; it can only stripe each
 side on its own.
 
+### Why PDF previews own their object URLs
+
+`DocumentPreviewDialog` owns decoding the tool's base64 document, creating its
+PDF object URL, and revoking that URL when the document changes or the dialog
+closes. Keeping that lifecycle beside the PDF viewer leaves `ToolOutputDialog`
+responsible for choosing the preview without sharing PDF resources with image,
+Mermaid or text previews. Malformed data still produces no viewer.
+
 ### Why HTTP Mermaid sources use runtime URL classification
 
 A Mermaid source URL can name the UI origin, the active remote server or an external host. `runtimeFetch` owns that distinction so active-server reads retain authentication even when the UI has another origin; external URLs keep their destination without runtime credentials. Inline data/blob image reads use `fetchBypassingRuntimeBridge`.

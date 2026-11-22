@@ -1166,6 +1166,14 @@ The live test plants the hanging hook above and checks that no host process name
 
 ## Code out
 
+The coordinator in `code-out.ts` owns quarantine, ref transactions, apply turns
+and writes. `code-out-readback.ts` owns the bounded comparison of the working
+tree with earlier applies, including its per-call caches, filters and interrupted
+apply decisions. `code-out-paths.ts` owns host filename and redirection checks
+and redacted path reports. Both apply and describe use the same read-back
+implementation, so their choice of a base and their uncertainty rules agree.
+The process-wide apply queue remains in the coordinator.
+
 The space's work travels back as git objects over the same exec channel, this time `git fetch` over `ext::`, and is applied to the user's repository in one of two ways. Everything that comes out of a space is untrusted data. The command sequences are below, most of them from the maintainer's probe of 2026-09-22 on macOS with Colima, on Debian 13 over `DOCKER_HOST=ssh://`, and on Windows 11 with Docker Desktop. Nothing calls this yet.
 
 `createCodeOut({ git, place, temporaryDirectory, removeDirectory, platform, readBackTimeoutMs, files })` in `code-out.js` returns four functions. `platform` is `process.platform` unless a test says otherwise, and decides which file names this computer can hold. `readBackTimeoutMs`, five minutes unless a test says otherwise, bounds the time one apply, or one `describeApplyState`, spends reading the working tree back; see "Apply". `files` is how the working tree is read back, `node:fs/promises` unless a test counts what is read. It shares its host git session, the version floor and the `ext::` URL builder with code in, through `code-transfer.js`.

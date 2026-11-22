@@ -95,7 +95,7 @@ import { relaunchAfterExit } from './linux-relaunch.mjs';
 import { installLinuxPackage } from './linux-package-install.mjs';
 import { checkForDesktopUpdate, markDesktopUpdateDownloaded } from './updater-check.mjs';
 import { downloadDesktopUpdateWithProgress, handleDesktopUpdatePreferenceCommand, isAutoUpdateSupported, readAutoUpdateEnabled, startBackgroundDesktopUpdateDownload, tryInstallUpdateOnQuit } from './auto-update.mjs';
-import { resolveUpdaterChannel } from './updater-channel.mjs';
+import { createUpdaterChannelApplier } from './updater-channel-application.mjs';
 import { convertShortcutComboToAccelerator, MINI_CHAT_GLOBAL_SHORTCUT_SETTING_KEY, normalizeStoredShortcutCombo, selectMiniChatGlobalShortcutAction } from './mini-chat-global-shortcut.mjs';
 import {
   computeQuakeBounds,
@@ -113,16 +113,11 @@ import { menuAccelerator, normalizeMenuShortcuts } from './menu-shortcuts.mjs';
 import { createCopyLinkMenuHook } from './context-menu-clipboard.mjs';
 import { createCopyMenuAction } from './menu-copy-action.mjs';
 import {
-  CANARY_MIRROR_UPDATER_FEED,
-  CANARY_UPDATER_FEED,
-  PRODUCTION_UPDATER_FEED,
-  STABLE_MIRROR_UPDATER_FEED,
-  isCanaryVersion,
   isUpdateChannel,
   normalizeUpdateChannel,
-  pickUpdaterSource,
-  resolveUpdaterFeed,
+  resolveUpdaterPrereleasePolicy,
 } from './updater-feed.mjs';
+import { runPackagedUpdaterSmoke, shouldRunPackagedUpdaterSmoke } from './packaged-updater-smoke.mjs';
 import {
   buildLinuxInstalledApps,
   buildLinuxOpenSpecs,
@@ -165,7 +160,13 @@ const execFileAsync = promisify(execFile);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// external: #3399 Increase Node auto-family connection timeout because 250 ms aborts handshakes to distant providers.
+const updaterE2eBuild = typeof __OPENCHAMBER_UPDATER_E2E_BUILD__ !== 'undefined'
+  && __OPENCHAMBER_UPDATER_E2E_BUILD__ === true;
+const packagedUpdaterSmokeRequested = shouldRunPackagedUpdaterSmoke({
+  app,
+  environment: process.env,
+  testBuild: updaterE2eBuild,
+});
 applyConnectAttemptTimeout();
 
 try {
@@ -245,7 +246,7 @@ try {
 }
 
 try {
-  if (!app.isDefaultProtocolClient(DEEP_LINK_PROTOCOL)) {
+  if (!packagedUpdaterSmokeRequested && !app.isDefaultProtocolClient(DEEP_LINK_PROTOCOL)) {
     app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL);
   }
 } catch (error) {
@@ -2250,7 +2251,7 @@ const hideQuakeWindow = (browserWindow, { restoreFullScreen = true } = {}) => {
   try {
     debounceWindowStatePersist(browserWindow, true);
   } catch {
-    // Persist is best-effort; hiding must not fail because of it.
+    void 0;
   }
   hideWindow(browserWindow, process.platform, { restoreFullScreen });
 };
@@ -2375,7 +2376,7 @@ const isAppUiNavigationTarget = (raw) => {
     try {
       if (new URL(base).origin === url.origin) return true;
     } catch {
-      // A malformed configured base cannot match anything.
+      void 0;
     }
   }
   return false;
@@ -3160,7 +3161,7 @@ const resolveInitialUrl = async ({ onPlainLocalBoot = null } = {}) => {
     try {
       remoteHostName = new URL(apiBaseUrl).host;
     } catch {
-      // A malformed stored URL fails the probe below; the label is cosmetic.
+      void 0;
     }
     showSplashConnecting(remoteLabel || remoteHostName || apiBaseUrl);
     remoteProbe = await probeHostWithTimeout(apiBaseUrl, 2_000, clientToken, requestHeaders);
@@ -3202,8 +3203,8 @@ const resolveInitialUrl = async ({ onPlainLocalBoot = null } = {}) => {
   return { initialUrl, localOrigin, localUiUrl, bootOutcome, apiBaseUrl, clientToken, requestHeaders };
 };
 
-const UPDATER_E2E_BUILD = typeof __OPENCHAMBER_UPDATER_E2E_BUILD__ !== 'undefined'
-  && __OPENCHAMBER_UPDATER_E2E_BUILD__ === true;
+const UPDATER_E2E_BUILD = updaterE2eBuild;
+const J2K_DESKTOP_BUILD = process.env.OPENCHAMBER_J2K_DESKTOP_BUILD === '1';
 
 const readUpdateChannel = () => normalizeUpdateChannel(readSettingsRoot().desktopUpdateChannel, APP_VERSION);
 const isDesktopAutoUpdateEnabled = () => readAutoUpdateEnabled(readSettingsRoot);
@@ -3213,39 +3214,24 @@ const maybeDownloadUpdateInBackground = () => {
   });
 };
 
-const applyUpdaterChannel = (channel, source = pickUpdaterSource({ mirrorFailedAt: state.updaterMirrorFailedAt })) => {
-  if (state.updaterChannel === channel && state.updaterSource === source) return;
-  if (state.updaterChannel !== null && state.updaterChannel !== channel) {
-    state.pendingUpdate = null;
-    void idleUpdateController.noteRelease(null);
-  }
-  const feed = resolveUpdaterFeed({ testBuild: UPDATER_E2E_BUILD, channel, source });
-  const updaterChannel = [PRODUCTION_UPDATER_FEED, CANARY_UPDATER_FEED, STABLE_MIRROR_UPDATER_FEED, CANARY_MIRROR_UPDATER_FEED].includes(feed)
-    ? resolveUpdaterChannel({ platform: process.platform, architecture: process.arch })
-    : null;
-  if (updaterChannel) {
-    autoUpdater.channel = updaterChannel;
-  }
-  autoUpdater.setFeedURL(feed);
-  autoUpdater.allowDowngrade = channel === 'stable' && isCanaryVersion(APP_VERSION);
-  state.updaterChannel = channel;
-  state.updaterSource = source;
-  log.info('[electron] updater feed configured', {
-    channel,
-    source,
-    provider: feed.provider,
-    target: feed.provider === 'github' ? `${feed.owner}/${feed.repo}` : feed.url,
-    manifest: updaterChannel || 'latest',
-    allowDowngrade: autoUpdater.allowDowngrade,
-  });
-};
+const applyUpdaterChannel = createUpdaterChannelApplier({
+  autoUpdater,
+  state,
+  appVersion: APP_VERSION,
+  platform: process.platform,
+  architecture: process.arch,
+  testBuild: UPDATER_E2E_BUILD,
+  j2kBuild: J2K_DESKTOP_BUILD,
+  log,
+  onChannelSwitch: () => { void idleUpdateController.noteRelease(null); },
+});
 
 const setupAutoUpdater = () => {
   if (!app.isPackaged) return;
   enableMacosDirectContentsUpdates({ app, systemPreferences });
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
-  autoUpdater.allowPrerelease = false;
+  autoUpdater.allowPrerelease = resolveUpdaterPrereleasePolicy({ platform: process.platform, j2kBuild: J2K_DESKTOP_BUILD });
   autoUpdater.fullChangelog = true;
   autoUpdater.disableWebInstaller = false;
   autoUpdater.logger = log;
@@ -5589,6 +5575,11 @@ const scheduleCompileCacheSettle = () => {
 
 app.whenReady().then(async () => {
   if (wasEarlyWindowClosed()) return;
+  if (packagedUpdaterSmokeRequested) {
+    await runPackagedUpdaterSmoke({ app, autoUpdater });
+    app.exit(0);
+    return;
+  }
   const loginItemSettings = readLoginItemSettings();
   const isBackgroundStart = shouldStartInBackground(loginItemSettings);
   const mainWindowShown = isBackgroundStart ? null : showMainWindowWithSplash();

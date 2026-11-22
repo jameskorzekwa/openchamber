@@ -13,7 +13,7 @@ import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useUIStore } from '@/stores/useUIStore';
-import { getDeferredSafeStorage } from '@/stores/utils/safeStorage';
+import { useRememberedProjectSessions } from './sidebar/projects/useRememberedProjectSessions';
 import { useGitStore, useGitAllBranches, useGitRepoStatusMap } from '@/stores/useGitStore';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
@@ -52,7 +52,6 @@ import { streamPerfCount, streamPerfMark } from '@/stores/utils/streamDebug';
 import { runBackgroundNetworkTask } from '@/lib/background-network';
 import { buildKnownSessionDirectories } from './sidebar/list/sessionListDirectories';
 import { sortProjectsByOrder } from './sidebar/list/projectSort';
-import { z } from 'zod';
 import { subscribeOpenchamberEvents } from '@/lib/openchamberEvents';
 import {
   commitDiscoveredRawWorktreesByProject,
@@ -68,9 +67,6 @@ import { resolveProjectRef } from '@/lib/worktreeSessionCreator';
 import type { SearchScope } from '@/lib/search/omniQuery';
 import { effectiveSearchScope, useSearchScopes } from '@/components/search/searchScopes';
 import type { ContentSearchStatus } from '@/hooks/useConversationSearch';
-
-const PROJECT_ACTIVE_SESSION_STORAGE_KEY = 'oc.sessions.activeSessionByProject';
-const activeSessionByProjectSchema = z.record(z.string(), z.string().min(1).catch(''));
 
 interface SessionSidebarProps {
   isVisible?: boolean;
@@ -112,33 +108,11 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
   const [searchStatus, setSearchStatus] = React.useState<ContentSearchStatus>(IDLE_SEARCH_STATUS);
   const sessionSearchInputRef = React.useRef<HTMLInputElement | null>(null);
   const [editingProjectDialogId, setEditingProjectDialogId] = React.useState<string | null>(null);
-  const safeStorage = React.useMemo(() => getDeferredSafeStorage(), []);
   const [projectRepoStatus, setProjectRepoStatus] = React.useState<Map<string, boolean | null>>(new Map());
   const newWorktreeDialogOpen = useUIStore((state) => state.isNewWorktreeDialogOpen);
   const setNewWorktreeDialogOpen = useUIStore((state) => state.setNewWorktreeDialogOpen);
   const [updateDialogOpen, setUpdateDialogOpen] = React.useState(false);
-  const initialActiveSessionByProject = React.useMemo<Map<string, string>>(() => {
-    try {
-      const raw = safeStorage.getItem(PROJECT_ACTIVE_SESSION_STORAGE_KEY);
-      if (!raw) {
-        return new Map();
-      }
-      const parsed = activeSessionByProjectSchema.safeParse(JSON.parse(raw));
-      if (!parsed.success) return new Map();
-      const next = new Map<string, string>();
-      Object.entries(parsed.data).forEach(([projectId, sessionId]) => {
-        if (sessionId) next.set(projectId, sessionId);
-      });
-      return next;
-    } catch {
-      return new Map();
-    }
-  }, [safeStorage]);
-  const persistActiveSessionByProject = React.useCallback((value: Map<string, string>) => {
-    try {
-      safeStorage.setItem(PROJECT_ACTIVE_SESSION_STORAGE_KEY, JSON.stringify(Object.fromEntries(value.entries())));
-    } catch { /* ignored */ }
-  }, [safeStorage]);
+  const { initialActiveSessionByProject, persistActiveSessionByProject } = useRememberedProjectSessions();
 
   const [projectRootBranches, setProjectRootBranches] = React.useState<Map<string, string>>(new Map());
 
@@ -590,7 +564,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
     <SidebarSearchEmptyState />
   ), []);
 
-  const showInlineArchived = isVSCode && showArchivedSessions;
+  const showInlineArchived = !isVSCode || showArchivedSessions;
   const useGroupedSections = !isVSCode;
   const desktopHeaderActionButtonClass =
     'inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-md leading-none text-foreground hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed';

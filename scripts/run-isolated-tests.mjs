@@ -49,7 +49,10 @@ const resolveCommand = (file) => {
   // `@openchamber/web` exports its emitted build by default; tests run on its
   // sources, which CI's test job never builds.
   if (isTypeScript || /(?:from\s+|require\(\s*)['"]bun:test['"]/.test(source)) {
-    return { label: 'bun', command: bunExecutable, args: ['test', '--conditions=openchamber-source', file] };
+    // CI gates on loaded runners may opt into retrying a failing case
+    // (OPENCHAMBER_TEST_RETRY, also read by the web vitest config).
+    const retry = Number(process.env.OPENCHAMBER_TEST_RETRY) || 0;
+    return { label: 'bun', command: bunExecutable, args: ['test', '--conditions=openchamber-source', ...(retry > 0 ? [`--retry=${retry}`] : []), file] };
   }
   if (/(?:from\s+|require\(\s*)['"]node:test['"]/.test(source)) {
     return { label: 'node', command: 'node', args: ['--test', file] };

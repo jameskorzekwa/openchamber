@@ -18,6 +18,14 @@ The fake servers are in-memory test doubles of their role's contract: `source-co
 
 ## Decisions
 
+### Why the Tool Gallery uses Zod Mini
+
+The MCP fixture needs only object, string, number, literal, union and optional schemas. Zod Mini preserves their validation and unknown-key stripping while keeping the shipped standalone Node bundle free of the full fluent schema API.
+
+### Why remote repository matching has its own service bundle
+
+`source-control-provider/service/remote-repository.ts` owns matching a Git remote to the account's forge origin and extracting its owner and repository name. It ships beside the service as a separately loaded bundle, like diff splitting and reviewer states, so the service entry keeps its request handlers together. Web URLs must match the origin's port as well as its host; SSH and scp-style remotes match the hostname.
+
 ### Why the Git graph lanes copy the app's Git view
 
 `git-graph-status/status/graph.ts` owns the example's lane layout. The Git view no longer draws a commit graph (its history is a plain list), so there is no app copy to keep in step with.

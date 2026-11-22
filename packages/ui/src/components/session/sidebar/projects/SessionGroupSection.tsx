@@ -23,14 +23,13 @@ import { compareSessionsByLifecycleOrder, EMPTY_SESSION_ORDER_RANKS } from '@/sy
 import {
   collectSubtreeContainingId,
   computeNodeStructureKey,
-  nodeHasPinnedMembershipChange,
-  nodeContainsSessionId,
   normalizeFolderRoots,
   resolveMenuOpenSessionId,
   selectFolderIdsForProjection,
   selectFolderRootNodes,
 } from '../sessions/sessionNodeItemUtils';
 import { useSessionFoldersStore } from '@/stores/useSessionFoldersStore';
+import { isSessionGroupCollapsed } from '../sessionSidebarRowModel';
 
 type FolderScope = { scopeKey: string; directory: string | null };
 import { useOpenTrackerItem } from '@/components/sourceBoard/openTrackerItem';
@@ -45,6 +44,12 @@ import { SessionTreeItem, type SessionTreeItemProps } from '../sessions/SessionT
 import { FolderDeleteConfirmDialog } from '../shell/ConfirmDialogs';
 import { getSessionFolderOwnerKey } from '../sessions/sessionFolderIdentity';
 import { refTintStyle } from '@/lib/source-control/prVisualState';
+import {
+  groupContainsSessionId,
+  groupHasPinnedMembershipChange,
+  groupHasSessionOrderChange,
+  groupHasExpansionMembershipChange,
+} from './sessionGroupMembership';
 
 type DeleteFolderConfirm = {
   scopeKey: string;
@@ -102,53 +107,6 @@ const CollapsedFolderActivity: React.FC<{
   children: (state: ReturnType<typeof useCollapsedSessionActivityState>) => React.ReactNode;
 }> = ({ nodes, children }) => children(useCollapsedSessionActivityState({ nodes }));
 
-const groupContainsSessionId = (group: SessionGroup, sessionId: string | null): boolean => {
-  if (!sessionId) return false;
-  return group.sessions.some((node) => nodeContainsSessionId(node, sessionId));
-};
-
-const groupHasPinnedMembershipChange = (
-  group: SessionGroup,
-  prevPinnedSessionIds: Set<string>,
-  nextPinnedSessionIds: Set<string>,
-): boolean => {
-  return group.sessions.some((node) => nodeHasPinnedMembershipChange(
-    node,
-    node,
-    prevPinnedSessionIds,
-    nextPinnedSessionIds,
-    group.directory,
-    group.directory,
-  ));
-};
-
-const groupHasSessionOrderChange = (
-  group: SessionGroup,
-  prevSessionOrderIndex: Map<string, number>,
-  nextSessionOrderIndex: Map<string, number>,
-): boolean => {
-  const visit = (node: SessionNode): boolean => {
-    const sessionId = node.session.id;
-    if (prevSessionOrderIndex.get(sessionId) !== nextSessionOrderIndex.get(sessionId)) return true;
-    return node.children.some(visit);
-  };
-  return group.sessions.some(visit);
-};
-
-const groupHasExpansionMembershipChange = (
-  group: SessionGroup,
-  prevExpandedParents: Set<string>,
-  nextExpandedParents: Set<string>,
-): boolean => {
-  const bucketTag = group.isArchivedBucket ? 'archived' : 'active';
-  const visit = (node: SessionNode): boolean => {
-    const key = `project:${bucketTag}:${node.session.id}`;
-    if (prevExpandedParents.has(key) !== nextExpandedParents.has(key)) return true;
-    return node.children.some(visit);
-  };
-  return group.sessions.some(visit);
-};
-
 const areGroupPropsEqual = (prev: SessionGroupSectionProps, next: SessionGroupSectionProps): boolean => {
   if (prev.group !== next.group) return false;
   if (prev.groupKey !== next.groupKey) return false;
@@ -159,7 +117,7 @@ const areGroupPropsEqual = (prev: SessionGroupSectionProps, next: SessionGroupSe
   if (prev.sessionBatchSize !== next.sessionBatchSize) return false;
 
   if (prev.collapsedGroups !== next.collapsedGroups
-    && prev.collapsedGroups.has(prev.groupKey) !== next.collapsedGroups.has(next.groupKey)) {
+    && isSessionGroupCollapsed(prev.collapsedGroups, prev.groupKey, prev.group) !== isSessionGroupCollapsed(next.collapsedGroups, next.groupKey, next.group)) {
     return false;
   }
 
@@ -278,7 +236,7 @@ function SessionGroupSectionBase(props: SessionGroupSectionProps): React.ReactNo
     return compareSessionsByLifecycleOrder(a.session, b.session, pinnedSessionIds, EMPTY_SESSION_ORDER_RANKS);
   }, [pinnedSessionIds, sessionOrderIndex]);
 
-  const isCollapsed = collapsedGroups.has(groupKey);
+  const isCollapsed = isSessionGroupCollapsed(collapsedGroups, groupKey, group);
   const childStores = useChildStoreManager();
   const bootstrapDirectories = React.useMemo(() => {
     const directories = group.folderScopes?.map((scope) => normalizePath(scope.directory))
@@ -910,7 +868,9 @@ function SessionGroupSectionBase(props: SessionGroupSectionProps): React.ReactNo
               {group.isArchivedBucket ? (
                 <span className="inline-flex min-w-0 max-w-full items-center gap-0.5">
                   {headerSlot(<Icon name="archive" className="h-3 w-3 shrink-0 text-muted-foreground" />)}
-                  <span className="min-w-0 flex-1 truncate">{group.label}</span>
+                  <span className="min-w-0 truncate">{group.label}</span>
+                  <span className="ms-1 shrink-0 tabular-nums text-muted-foreground">{sourceGroupNodes.length}</span>
+                  <span className="min-w-0 flex-1" />
                   {groupActivityIndicator}
                 </span>
               ) : !group.isMain ? (

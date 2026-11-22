@@ -81,6 +81,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
   'quota.family.zen': 'Modèles Zen',
@@ -285,6 +286,7 @@ export const dict = {
   ...tooltipsWorkspaceI18n['fr'],
   ...tooltipsPanelI18n['fr'],
   ...tooltipsChatI18n['fr'],
+  ...updateStatusI18n.fr,
   'terminalView.actions.attachSelection': 'Joindre la sortie sélectionnée',
   'terminalView.actions.copySelection': 'Copier la sortie sélectionnée',
   'terminalView.toast.selectionCopied': 'Sortie copiée',
@@ -726,6 +728,12 @@ export const dict = {
   'sessions.sidebar.session.status.questionPendingOpen': 'Question en attente. Ouvre la session qui le demande',
   'sessions.sidebar.session.status.activeFor': 'Active depuis {duration}',
   'sessions.sidebar.session.status.lastTurnDuration': 'Le dernier tour a duré {duration}',
+  'chat.backgroundWork.label': 'En arrière-plan',
+  'chat.backgroundWork.agentWaiting': 'Agent en attente',
+  'chat.backgroundWork.ariaLabel': 'En arrière-plan : {summary}',
+  'chat.backgroundWork.subtaskCountOne': '1 sous-tâche',
+  'chat.backgroundWork.subtaskCountMany': '{count} sous-tâches',
+  'chat.backgroundWork.subtaskUntitled': 'Sous-tâche',
   'sessions.sidebar.session.subsessions.collapse': 'Réduire les sous-sessions',
   'sessions.sidebar.session.subsessions.expand': 'Développer les sous-sessions',
   'sessions.sidebar.dialogs.deleteSession.title': 'Supprimer la session ?',
@@ -4098,4 +4106,16 @@ export const dict = {
   'chat.promptHistorySearch.hint': "↑ ↓ pour parcourir · Enter pour charger · Esc pour fermer",
    'helpDialog.item.searchPromptHistory': "Rechercher dans l'historique des prompts (saisie du chat)",
 
+  'chat.backgroundShells.openOutput': 'Afficher la sortie',
+  'chat.backgroundShells.openOutputAria': 'Afficher la sortie de {command}',
+  'shellOutput.status.loading': 'Chargement…',
+  'shellOutput.status.running': 'En cours',
+  'shellOutput.status.finished': 'Terminé',
+  'shellOutput.status.finishedWithCode': 'Terminé (code {code})',
+  'shellOutput.status.stopped': 'Arrêté',
+  'shellOutput.status.notFound': 'Cette commande n’est plus disponible',
+  'shellOutput.readOnly': 'Lecture seule',
+  'shellOutput.earlierOmitted': '… sortie précédente omise',
+  'contextPanel.mode.pty': 'Processus',
+  'contextRail.surface.pty.description': 'Sortie d’une commande que l’agent exécute en arrière-plan',
 } as const;

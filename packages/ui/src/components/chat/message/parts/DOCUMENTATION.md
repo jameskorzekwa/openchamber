@@ -119,6 +119,15 @@ Use this doc when you ask an agent to change tool/header/description behavior.
 
 ## Current important behavior
 
+### Why workflow tool results have their own renderer
+
+`WorkflowToolOutput` owns workflow result validation, state labels, structured
+answers and the live run's panel action. The general OpenChamber renderer keeps
+action dispatch and raw-result context. Run links still require an available
+panel and a directory from the live workflow store; a stored tool result alone
+does not establish that directory. Invalid results stay empty, and plain text
+answers remain unquoted while structured answers retain JSON formatting.
+
 ### Why editor interaction sends an empty dismissal report
 
 Focusing or clicking a page editor dismisses stale prose menus in other frames

@@ -123,6 +123,8 @@ so it survives the sidebar closing and reopening. A folder change remounts the t
   source consumes the source action even when it misses a target.
 - A zone renders only its own tabs. During closing it keeps the last visible
   tab, because store reconciliation can already select another surface.
+- The rail selects surfaces. The panel's tab strip lists only instances of the
+  active multi-instance surface, such as files, split chats or browser targets.
 - Zone frames register body and toolbar hosts and start layout animations
   before keep-alive panes attach. Settle hooks run after the effect that starts
   the animation, so detachment and interactivity settle in the same commit.

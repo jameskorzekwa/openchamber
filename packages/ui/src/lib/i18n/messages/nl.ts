@@ -81,6 +81,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
   'quota.family.zen': 'Zen-modellen',
@@ -285,6 +286,7 @@ export const dict = {
   ...tooltipsWorkspaceI18n['nl'],
   ...tooltipsPanelI18n['nl'],
   ...tooltipsChatI18n['nl'],
+  ...updateStatusI18n.nl,
   'terminalView.actions.attachSelection': 'Geselecteerde uitvoer toevoegen',
   'terminalView.actions.copySelection': 'Geselecteerde uitvoer kopiëren',
   'terminalView.toast.selectionCopied': 'Uitvoer gekopieerd',
@@ -4099,4 +4101,23 @@ export const dict = {
   'chat.promptHistorySearch.hint': "↑ ↓ om te bladeren · Enter om te laden · Esc om te sluiten",
   'helpDialog.item.searchPromptHistory': "Promptgeschiedenis doorzoeken (chatinvoer)",
 
+  'chat.backgroundWork.label': 'Draait op de achtergrond',
+
+  'chat.backgroundWork.agentWaiting': 'Agent wacht',
+  'chat.backgroundWork.ariaLabel': 'Draait op de achtergrond: {summary}',
+  'chat.backgroundWork.subtaskCountOne': '1 subtaak',
+  'chat.backgroundWork.subtaskCountMany': '{count} subtaken',
+  'chat.backgroundWork.subtaskUntitled': 'Subtaak',
+  'chat.backgroundShells.openOutput': 'Uitvoer tonen',
+  'chat.backgroundShells.openOutputAria': 'Uitvoer van {command} tonen',
+  'shellOutput.status.loading': 'Laden…',
+  'shellOutput.status.running': 'Actief',
+  'shellOutput.status.finished': 'Voltooid',
+  'shellOutput.status.finishedWithCode': 'Voltooid (exitcode {code})',
+  'shellOutput.status.stopped': 'Gestopt',
+  'shellOutput.status.notFound': 'Deze opdracht is niet meer beschikbaar',
+  'shellOutput.readOnly': 'Alleen-lezen',
+  'shellOutput.earlierOmitted': '… eerdere uitvoer weggelaten',
+  'contextPanel.mode.pty': 'Proces',
+  'contextRail.surface.pty.description': 'Uitvoer van een opdracht die de agent op de achtergrond uitvoert',
 } as const;

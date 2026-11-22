@@ -1,6 +1,5 @@
 import React from 'react';
-import { checkConnectedServerForUpdates, useUpdateStore } from '@/stores/useUpdateStore';
-import type { UpdateInfo } from '@/lib/desktop';
+import { useUpdateStore } from '@/stores/useUpdateStore';
 import { getClientPlatform, isCapacitorApp } from '@/lib/platform';
 import { openExternalUrl } from '@/lib/url';
 import { useShallow } from 'zustand/react/shallow';
@@ -12,16 +11,16 @@ import { AboutLogo } from '@/components/ui/AboutLogo';
 import { Icon } from "@/components/icon/Icon";
 import { Spinner } from '@/components/ui/spinner';
 import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
-import { getDesktopUpdateChannel, setDesktopUpdateChannel } from '@/lib/desktop';
+import { getDesktopUpdateChannel, setDesktopUpdateChannel, type UpdateInfo } from '@/lib/desktop';
 import { formatCanaryBuild, parseCanaryVersion, type UpdateChannel } from '@/lib/updateChannel';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { loadDesktopSettings, updateDesktopSettings } from '@/lib/persistence';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { reloadOpenCodeConfiguration } from '@/stores/useAgentsStore';
-import { fetchOpenCodeUpgradeStatus, runOpenCodeUpgrade, type OpenCodeUpgradeStatus } from '@/components/update/openCodeUpgrade';
+import { useConnectedServerUpdate } from './useConnectedServerUpdate';
+import { useOpenCodeUpgrade } from './useOpenCodeUpgrade';
 import { useDesktopRemoteHostActive } from '@/hooks/useDesktopRemoteHostActive';
 import { getDesktopAppVersion } from '@/lib/desktopNative';
-import { getUpdateCheckErrorMessage } from '@/lib/updateCheckError';
 import { InstanceServiceUrls } from './InstanceServiceUrls';
 import { DesktopAutoUpdateRow } from './DesktopAutoUpdateRow';
 import { AboutReleaseNotes } from './AboutReleaseNotes';
@@ -45,85 +44,6 @@ const loadServerUpdateChannel = async (serverVersion: string): Promise<UpdateCha
   if (!settings) return null;
   return settings.serverUpdateChannel ?? (parseCanaryVersion(serverVersion) ? 'canary' : 'stable');
 };
-
-type ConnectedServerUpdate = {
-  info: UpdateInfo | null;
-  checking: boolean;
-  available: boolean;
-  error: string | null;
-};
-
-const IDLE_SERVER_UPDATE: ConnectedServerUpdate = { info: null, checking: false, available: false, error: null };
-
-function useConnectedServerUpdate(enabled: boolean) {
-  const [state, setState] = React.useState<ConnectedServerUpdate>(IDLE_SERVER_UPDATE);
-
-  const check = React.useCallback(async () => {
-    if (!enabled) return;
-    setState((current) => ({ ...current, checking: true, error: null }));
-    try {
-      const info = await checkConnectedServerForUpdates();
-      setState({ info, checking: false, available: info.available, error: null });
-    } catch (error) {
-      setState({
-        info: null,
-        checking: false,
-        available: false,
-        error: error instanceof Error ? getUpdateCheckErrorMessage(error) : String(error),
-      });
-    }
-  }, [enabled]);
-
-  return { ...state, check };
-}
-
-type OpenCodeUpgradePhase =
-  | { kind: 'idle' }
-  | { kind: 'upgrading' }
-  | { kind: 'installed'; version: string | null }
-  | { kind: 'failed'; error: string };
-
-function useOpenCodeUpgrade(failedFallback: string) {
-  const [status, setStatus] = React.useState<OpenCodeUpgradeStatus | null>(null);
-  const [phase, setPhase] = React.useState<OpenCodeUpgradePhase>({ kind: 'idle' });
-
-  const refresh = React.useCallback(async (): Promise<OpenCodeUpgradeStatus | null> => {
-    try {
-      const next = await fetchOpenCodeUpgradeStatus();
-      setStatus(next);
-      return next;
-    } catch {
-      return null;
-    }
-  }, []);
-
-  React.useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  const upgrade = React.useCallback(async () => {
-    setPhase({ kind: 'upgrading' });
-    try {
-      const version = await runOpenCodeUpgrade(failedFallback);
-      setPhase({ kind: 'installed', version });
-    } catch (error) {
-      setPhase({ kind: 'failed', error: error instanceof Error ? error.message : failedFallback });
-    }
-  }, [failedFallback]);
-
-  const reloadAfterUpgrade = React.useCallback(async (reload: () => Promise<void>) => {
-    await reload().catch(() => undefined);
-    const next = await refresh();
-    if (!next?.currentVersion) return;
-    setPhase((current) => {
-      if (current.kind !== 'installed') return current;
-      if (current.version && current.version.replace(/^v/, '') !== next.currentVersion) return current;
-      return { kind: 'idle' };
-    });
-  }, [refresh]);
-
-  return { status, phase, refresh, upgrade, reloadAfterUpgrade };
-}
 
 function useNativeAppVersion(enabled: boolean): string | null {
   const [version, setVersion] = React.useState<string | null>(null);
@@ -164,6 +84,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
     installing: s.installing, idlePhase: s.idlePhase, idleReason: s.idleReason, idleRemainingMs: s.idleRemainingMs,
     progress: s.progress,
     runtimeType: s.runtimeType,
+    installation: s.installation,
     checkForUpdates: s.checkForUpdates,
     downloadUpdate: s.downloadUpdate,
     restartToUpdate: s.restartToUpdate, queueIdleInstall: s.queueIdleInstall, cancelIdleInstall: s.cancelIdleInstall,
@@ -257,8 +178,11 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
   const [isWebServer, setIsWebServer] = React.useState(false);
   const isNpmServer = updateStore.runtimeType === 'web' && isWebServer && openChamberVersion !== null;
   const [updateChannel, setUpdateChannel] = React.useState<UpdateChannel | null>(null);
+  // J2K fork builds (`<upstream>-j2k.<n>`) update only from the fork's
+  // validated channel, so upstream's Stable/Canary choice is not offered.
+  const isJ2kBuild = /-j2k\.\d+$/.test(openChamberVersion ?? '');
   React.useEffect(() => {
-    if (!isDesktopApp && !isNpmServer) return;
+    if ((!isDesktopApp && !isNpmServer) || isJ2kBuild) return;
     let cancelled = false;
     const load = isDesktopApp ? getDesktopUpdateChannel() : loadServerUpdateChannel(openChamberVersion ?? '');
     void load.then((channel) => {
@@ -267,7 +191,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
     return () => {
       cancelled = true;
     };
-  }, [isDesktopApp, isNpmServer, openChamberVersion]);
+  }, [isDesktopApp, isJ2kBuild, isNpmServer, openChamberVersion]);
   const openCode = useOpenCodeUpgrade(t('opencodeUpdate.toast.failed.description'));
   const openCodeVersion = openCode.status?.currentVersion ?? null;
   const openCodeUpdateVersion = openCode.phase.kind === 'installed' ? null : openCode.status?.availableVersion ?? null;
@@ -531,7 +455,8 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
       const timer = setTimeout(() => {
         setShowChecking(false);
         const remoteHostPending = remoteHostUpdateChecking || remoteHostUpdateAvailable;
-        if (didInitiateCheck.current && !update.available && !update.error && !remoteHostPending) {
+        if (didInitiateCheck.current && !update.available && !update.error && !remoteHostPending
+          && (isNativeApp || updateStore.installation?.state !== 'no-validated-release')) {
           toast.success(appUpdateOffered
             ? t('settings.openchamber.about.toast.serverLatestAppUpdate')
             : isNativeApp
@@ -542,9 +467,16 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
       }, MIN_CHECKING_DURATION);
       return () => clearTimeout(timer);
     }
-  }, [t, isNativeApp, update.checking, showChecking, update.available, update.error, remoteHostUpdateChecking, remoteHostUpdateAvailable, appChecking, appUpdateOffered]);
+  }, [t, isNativeApp, update.checking, showChecking, update.available, update.error, remoteHostUpdateChecking, remoteHostUpdateAvailable, appChecking, appUpdateOffered, updateStore.installation?.state]);
 
   const isChecking = update.checking || showChecking;
+  // A J2K server found no validated fork release for the newest upstream version.
+  const hasNoValidatedRelease = !isNativeApp && updateStore.installation?.state === 'no-validated-release';
+  const noValidatedReleaseNotice = hasNoValidatedRelease ? (
+    <p className="rounded-xl border border-border px-3 py-2 typography-meta text-muted-foreground">
+      {t('updateDialog.status.noValidatedRelease')}
+    </p>
+  ) : null;
 
   if (isMobile) {
     return (
@@ -576,6 +508,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
         </div>
 
         {updateChannelControl && <div className="flex justify-center">{updateChannelControl}</div>}
+        {noValidatedReleaseNotice}
 
         <div className="flex justify-center">
           {!update.available && !update.error && (
@@ -699,7 +632,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
         {t('settings.openchamber.about.state.checking')}
       </span>
     </>
-  ) : !update.available && !update.error ? (
+  ) : !update.available && !update.error && !hasNoValidatedRelease ? (
     <>
       {statusSeparator}
       <span className="typography-meta text-muted-foreground">{t('settings.openchamber.about.state.upToDate')}</span>
@@ -712,6 +645,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
   const notes = [
     manualUpdateNotice,
     remoteHostUpdateNotice,
+    noValidatedReleaseNotice,
     openCodeUpdate?.note ?? null,
     ...[update.error, remoteHostUpdate?.error].filter(Boolean).map((error) => (
       <p key={error} className="rounded-lg bg-[var(--status-error-background)] px-3 py-2 typography-meta text-[var(--status-error)]">

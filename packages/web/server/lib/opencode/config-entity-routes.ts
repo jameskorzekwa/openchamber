@@ -1,6 +1,7 @@
 import path from 'path';
 import { buildAppliedResponse } from './config-mutation-response.js';
 import { isString } from '../shared/object-guards.js';
+import { z } from 'zod';
 import type { Application, Request, Response } from '../shared/http-contracts.js';
 import type { JsonObject, JsonValue } from '../shared/json-values.js';
 import type { OpenCodeConfigLayer } from './config-files.js';
@@ -39,11 +40,19 @@ const requiredBodyFields = <Value>(value: Value) => {
   throw new TypeError(`Cannot destructure property 'scope' of 'req.body' as it is ${value}.`);
 };
 const hasErrorFields = (value: unknown): value is { message?: unknown; stack?: unknown } => value != null;
+const mutationErrorSchema = z.object({
+  statusCode: z.number().optional(),
+  code: z.string().optional(),
+});
 const optionalErrorFields = <Value>(value: Value) => hasErrorFields(value) ? value : undefined;
 const errorFields = <Value>(value: Value, property: 'message' | 'stack' = 'message') => {
   if (hasErrorFields(value)) return value;
   throw new TypeError(`Cannot read properties of ${value} (reading '${property}')`);
 };
+interface AgentMutationFailure {
+  error: ReturnType<typeof errorFields>['message'];
+  code?: string;
+}
 interface IncludesMethod<Result> {
   (search: string): Result;
 }
@@ -199,7 +208,12 @@ export const registerConfigEntityRoutes = <Snippet>(app: Application, dependenci
       ));
     } catch (error) {
       console.error('Failed to create agent:', error);
-      res.status(500).json({ error: errorFields(error).message || 'Failed to create agent' });
+      const mutation = mutationErrorSchema.safeParse(error).data;
+      const response: AgentMutationFailure = {
+        error: errorFields(error).message || 'Failed to create agent',
+      };
+      if (mutation?.code) response.code = mutation.code;
+      res.status(mutation?.statusCode || 500).json(response);
     }
   });
 
@@ -227,7 +241,12 @@ export const registerConfigEntityRoutes = <Snippet>(app: Application, dependenci
     } catch (error) {
       console.error('[Server] Failed to update agent:', error);
       console.error('[Server] Error stack:', errorFields(error, 'stack').stack);
-      res.status(500).json({ error: errorFields(error).message || 'Failed to update agent' });
+      const mutation = mutationErrorSchema.safeParse(error).data;
+      const response: AgentMutationFailure = {
+        error: errorFields(error).message || 'Failed to update agent',
+      };
+      if (mutation?.code) response.code = mutation.code;
+      res.status(mutation?.statusCode || 500).json(response);
     }
   });
 
@@ -246,7 +265,12 @@ export const registerConfigEntityRoutes = <Snippet>(app: Application, dependenci
       ));
     } catch (error) {
       console.error('Failed to delete agent:', error);
-      res.status(500).json({ error: errorFields(error).message || 'Failed to delete agent' });
+      const mutation = mutationErrorSchema.safeParse(error).data;
+      const response: AgentMutationFailure = {
+        error: errorFields(error).message || 'Failed to delete agent',
+      };
+      if (mutation?.code) response.code = mutation.code;
+      res.status(mutation?.statusCode || 500).json(response);
     }
   });
 

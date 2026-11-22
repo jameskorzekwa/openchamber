@@ -1,7 +1,4 @@
-import fs from 'fs';
-import path from 'path';
 import { createHash, randomUUID } from 'node:crypto';
-import { z } from 'zod';
 
 import {
   WAITS_CHECK_BATCH_MAX,
@@ -9,8 +6,6 @@ import {
   WAITS_START_PATH,
   WAITS_WIRE_VERSION,
   WAIT_REQUEST_TIMEOUT_MS,
-  isGuestApproved,
-  requestedGuestCapabilities,
   resolveWaitInterval,
 } from '@openchamber/sdk';
 import { waitArgsSchema, waitCheckOutcomeSchema, waitCheckResultSchema, waitStartResultSchema } from '@openchamber/sdk/schemas';
@@ -19,7 +14,7 @@ import { assertOpenCodeApiResponse } from '../opencode/prompt-response.js';
 import { unwrapOpenCodeResponse } from '../opencode/response-envelope.js';
 import { createMessageId } from '../dispatch-results/runtime.js';
 import { EXTENSION_WAIT_SOURCE, buildWakeMessage, subjectOf } from './wake-message.js';
-import { BUILT_IN_EXTENSION, createBuiltInWaits, isBuiltIn } from './builtin-waits.js';
+import { createBuiltInWaits, isBuiltIn } from './builtin-waits.js';
 import type { ScriptAutomationRequest } from './script-wait.js';
 import type { PreparedWait } from './builtin-waits.js';
 import type { GuestWaitParam, WaitContribution } from '@openchamber/sdk';
@@ -29,11 +24,17 @@ import type { Application, Response } from '../shared/http-contracts.js';
 import type { SessionActivityOptions } from '../opencode/session-activity.js';
 import type { PrWatchEventHub } from '../pr-watch/runtime.js';
 import type { WaitArgs, WakingWait } from './wake-message.js';
+import {
+  sessionIdSchema, statusEventSchema, deletedEventSchema, parse, parseJson, isWaitProvider,
+  sourceOf, toPublicWait, toPublicSource,
+} from './wait-model.js';
+import type { Wait, WaitProvider, ExtensionWaitsSnapshot, PublicWaitSource } from './wait-model.js';
+import { createWaitStore } from './wait-store.js';
+export { isWaitProvider } from './wait-model.js';
+export type { PublicWait, PublicWaitSource, ExtensionWaitsSnapshot, Wait } from './wait-model.js';
 
 export { EXTENSION_WAIT_SOURCE };
 
-const FILE_NAME = 'extension-waits.json';
-const FILE_VERSION = 1;
 const MAX_WAITS = 200;
 const MAX_WAITS_PER_SESSION = 20;
 const QUIET_MS = 500;
@@ -53,41 +54,6 @@ const ENDED_REASONS = {
   failing: 'every check of it failed for six hours',
 };
 
-const sessionIdSchema = z.string().regex(/^[A-Za-z0-9_-]{4,128}$/);
-const argsSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]));
-const waitSchema = z.object({
-  id: z.string().regex(/^wait_[A-Za-z0-9-]{8,64}$/),
-  sessionID: sessionIdSchema,
-  directory: z.string().min(1).nullable(),
-  guestId: z.string().min(1).nullable(),
-  extensionName: z.string().min(1).nullable().catch(null),
-  type: z.string().min(1),
-  title: z.string().min(1),
-  label: z.string().min(1).nullable(),
-  args: argsSchema,
-  state: z.unknown(),
-  startedAt: z.number().finite().nonnegative(),
-  nextCheckAt: z.number().finite().nonnegative(),
-  failingSince: z.number().finite().nonnegative().nullable().catch(null),
-  wake: z.object({
-    outcome: z.enum(['fired', 'ended']),
-    summary: z.string().min(1),
-    messageID: z.string().nullable(),
-  }).nullable(),
-});
-const storedFileSchema = z.object({ revision: z.number().int().nonnegative().optional(), waits: z.array(z.unknown()) });
-const errorCodeSchema = z.object({ code: z.string() });
-const statusEventSchema = z.object({
-  type: z.literal('session.status'),
-  properties: z.object({ sessionID: z.string().min(1), status: z.object({ type: z.string().min(1) }) }),
-});
-const deletedEventSchema = z.object({
-  type: z.literal('session.deleted'),
-  properties: z.object({ sessionID: z.string().min(1) }),
-});
-
-export type Wait = Omit<z.output<typeof waitSchema>, 'args'> & { args: WaitArgs };
-type WaitProvider = GuestRecord & { waits: WaitContribution[] };
 type WaitTimer = ReturnType<typeof setTimeout>;
 type Release = () => void;
 type ProxyRequest = Omit<Parameters<typeof proxyGuestServiceRequest>[0], 'service'> & { service: GuestRecord['service'] };
@@ -96,32 +62,6 @@ type WaitServiceBody = { v: number; requestId: string } & (
   | { waits: Pick<Wait, 'id' | 'type' | 'args' | 'state'>[] }
 );
 type OpenCodeRequestHeaders = { Accept: string; 'Content-Type'?: string };
-
-export interface PublicWait {
-  waitId: string;
-  sessionID: string;
-  directory: string | null;
-  source: string;
-  extension: string;
-  title: string;
-  label: string | null;
-  args: WaitArgs;
-  startedAt: number;
-  status: 'waking' | 'waiting';
-}
-
-export interface PublicWaitSource {
-  source: string;
-  extension: string;
-  title: string;
-  description: string;
-  params: Record<string, GuestWaitParam>;
-}
-
-export interface ExtensionWaitsSnapshot {
-  revision: number;
-  waits: PublicWait[];
-}
 
 export interface StartWaitInput {
   sessionID: unknown;
@@ -180,57 +120,9 @@ const isWakingWait = (wait: Wait): wait is Wait & WakingWait => Boolean(wait.wak
 const hasCheckId = (value: unknown): value is { id: string } => value !== null
   && typeof value === 'object' && 'id' in value && typeof value.id === 'string';
 
-const parse = <S extends z.ZodType>(schema: S, value: Parameters<S['safeParse']>[0]): z.output<S> | null => {
-  const parsed = schema.safeParse(value);
-  return parsed.success ? parsed.data : null;
-};
-
-const parseJson = (text: string) => {
-  try {
-    const value: unknown = JSON.parse(text);
-    return value;
-  } catch {
-    return undefined;
-  }
-};
-
 const httpError = (message: string, status: number) => Object.assign(new Error(message), { status });
 
 const retryDelay = (failures: number) => Math.min(RETRY_BASE_DELAY_MS * 2 ** Math.max(failures - 1, 0), RETRY_MAX_DELAY_MS);
-
-export const isWaitProvider = (guest: GuestRecord | null | undefined): guest is WaitProvider => {
-  const granted = Array.isArray(guest?.capabilityGrants) ? guest.capabilityGrants : [];
-  return !!guest
-    && guest.enabled !== false
-    && Array.isArray(guest.waits)
-    && guest.waits.length > 0
-    && granted.includes('service')
-    && granted.includes('wake')
-    && isGuestApproved({ requested: requestedGuestCapabilities(guest), granted });
-};
-
-const sourceOf = (wait: Wait) => (isBuiltIn(wait) ? wait.type : `${wait.guestId}/${wait.type}`);
-
-const toPublicWait = (wait: Wait): PublicWait => ({
-  waitId: wait.id,
-  sessionID: wait.sessionID,
-  directory: wait.directory,
-  source: sourceOf(wait),
-  extension: wait.extensionName ?? wait.guestId ?? BUILT_IN_EXTENSION,
-  title: wait.title,
-  label: wait.label,
-  args: { ...wait.args },
-  startedAt: wait.startedAt,
-  status: wait.wake ? 'waking' : 'waiting',
-});
-
-const toPublicSource = (guest: WaitProvider, wait: WaitContribution): PublicWaitSource => ({
-  source: `${guest.id}/${wait.id}`,
-  extension: guest.name || guest.id,
-  title: wait.title,
-  description: wait.description,
-  params: { ...(wait.params ?? {}) },
-});
 
 const UNAVAILABLE_CODES = new Set(['NO_SERVICE', 'DISABLED', 'CANCELLED']);
 
@@ -252,7 +144,7 @@ export function createExtensionWaitsRuntime({
   retryDelayMs = retryDelay,
   warn = (...args) => console.warn(...args),
 }: ExtensionWaitsOptions) {
-  const filePath = path.join(dataDir, FILE_NAME);
+  const store = createWaitStore(dataDir, now, warn);
   const waits = new Map<string, Wait>();
   let revision = 0;
   let loadPromise: Promise<void> | null = null;
@@ -275,28 +167,9 @@ export function createExtensionWaitsRuntime({
   const isCurrent = (wait: Wait) => !stopped && waits.get(wait.id) === wait;
 
 
-  const readFile = async () => {
-    let raw;
-    try {
-      raw = await fs.promises.readFile(filePath, 'utf8');
-    } catch (error) {
-      if (parse(errorCodeSchema, error)?.code === 'ENOENT') return { waits: [], revision: 0 };
-      throw error;
-    }
-    const stored = parse(storedFileSchema, parseJson(raw));
-    if (!stored) {
-      const backup = `${filePath}.corrupt-${now()}`;
-      await fs.promises.rename(filePath, backup).catch(() => undefined);
-      warn(`[extension-waits] file was unreadable and moved to ${backup}`);
-      return { waits: [], revision: 0 };
-    }
-    const restored = stored.waits.map((value) => parse(waitSchema, value)).filter((wait) => wait !== null);
-    return { waits: restored, revision: stored.revision ?? 0 };
-  };
-
   const load = () => {
     if (!loadPromise) {
-      loadPromise = readFile()
+      loadPromise = store.readFile()
         .then((stored) => {
           for (const wait of stored.waits) if (!waits.has(wait.id)) waits.set(wait.id, wait);
           revision = Math.max(revision, stored.revision, now());
@@ -309,13 +182,7 @@ export function createExtensionWaitsRuntime({
     return loadPromise;
   };
 
-  const writeWaits = async () => {
-    const payload = JSON.stringify({ version: FILE_VERSION, revision, waits: Array.from(waits.values()) });
-    await fs.promises.mkdir(dataDir, { recursive: true });
-    const tmpPath = `${filePath}.${process.pid}.tmp`;
-    await fs.promises.writeFile(tmpPath, payload, { encoding: 'utf8', mode: 0o600 });
-    await fs.promises.rename(tmpPath, filePath);
-  };
+  const writeWaits = () => store.writeFile(revision, waits);
 
   const enqueue = <T>(step: () => Promise<T>) => {
     const run = writePromise.then(step);

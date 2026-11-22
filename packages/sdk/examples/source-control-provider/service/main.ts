@@ -3,6 +3,7 @@ import http from 'node:http';
 import type { GiteaPerson, GiteaReview, ReviewerStatesApi } from './reviewer-states.ts';
 import type { DiffApi } from './diff.ts';
 import type { ReferencesApi } from './references.ts';
+import type { RemoteRepositoryApi } from './remote-repository.ts';
 import {
   SOURCE_CONTROL_PROVIDER_ERROR_MESSAGE_MAX,
   SOURCE_CONTROL_PROVIDER_PATH,
@@ -32,6 +33,7 @@ const modulePath = (name: string) => `./${name}${'.js'}`;
 const { readReviews, reviewDismissal, withReviewerStates }: ReviewerStatesApi = await import(modulePath('reviewer-states'));
 const { readReferences, withReferences, itemReferences }: ReferencesApi & { itemReferences: typeof import('./references.ts').itemReferences } = await import(modulePath('references'));
 const { mapChangedFile, splitUnifiedDiff }: DiffApi = await import(modulePath('diff'));
+const { repositoryOfRemote }: RemoteRepositoryApi = await import(modulePath('remote-repository'));
 
 const port = Number(process.env.OPENCHAMBER_SERVICE_PORT);
 const serviceToken = process.env.OPENCHAMBER_SERVICE_TOKEN ?? '';
@@ -125,32 +127,6 @@ const remoteUrl = (directory: string, remote: string): Promise<string> => new Pr
     else resolve(stdout.trim());
   });
 });
-
-const repositoryOfRemote = (raw: string, instance: string): { owner: string; name: string } | null => {
-  const origin = new URL(instance);
-  let host: string;
-  let path: string;
-  const scp = raw.includes('://') ? null : raw.match(/^(?:[^@\s]+@)?([^:/\s]+):(?!\/)(.+)$/);
-  if (scp) {
-    host = scp[1].toLowerCase();
-    path = scp[2];
-    if (host !== origin.hostname.toLowerCase()) return null;
-  } else {
-    let url: URL;
-    try {
-      url = new URL(raw);
-    } catch {
-      return null;
-    }
-    const web = url.protocol === 'https:' || url.protocol === 'http:';
-    if (web && url.host.toLowerCase() !== origin.host.toLowerCase()) return null;
-    if (!web && url.hostname.toLowerCase() !== origin.hostname.toLowerCase()) return null;
-    path = decodeURIComponent(url.pathname);
-  }
-  const segments = path.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '').split('/');
-  if (segments.length !== 2 || segments.some((segment) => !/^[A-Za-z0-9_.-]+$/.test(segment) || segment === '.' || segment === '..')) return null;
-  return { owner: segments[0], name: segments[1] };
-};
 
 type Identity = { provider: string; instance: string };
 type Project = Identity & {

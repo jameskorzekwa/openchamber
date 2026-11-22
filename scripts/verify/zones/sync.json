@@ -6,7 +6,7 @@
     {
       "id": "list",
       "name": "Sessions in the sidebar",
-      "sources": ["packages/ui/src/components/session/SessionSidebar.tsx", "packages/ui/src/components/session/sidebar/SessionSidebarRows.tsx", "packages/ui/src/components/session/sidebar/sessionSidebarRowModel.ts", "packages/ui/src/components/session/sidebar/list/useSessionListSync.ts", "packages/ui/src/components/session/sidebar/sessions/SessionNodeItem.tsx", "packages/ui/src/components/session/sidebar/sessions/useSessionRowInteractions.ts", "packages/ui/src/components/session/sidebar/sessions/useSessionActions.ts", "packages/ui/src/components/session/sidebar/shell/SidebarHeader.tsx", "packages/ui/src/components/session/sidebar/list/SessionProjectCollection.tsx"],
+      "sources": ["packages/ui/src/components/session/SessionSidebar.tsx", "packages/ui/src/components/session/sidebar/projects/useRememberedProjectSessions.ts", "packages/ui/src/components/session/sidebar/SessionSidebarRows.tsx", "packages/ui/src/components/session/sidebar/sessionSidebarRowModel.ts", "packages/ui/src/components/session/sidebar/sessionRunEntries.ts", "packages/ui/src/components/session/sidebar/list/useSessionListSync.ts", "packages/ui/src/components/session/sidebar/sessions/SessionNodeItem.tsx", "packages/ui/src/components/session/sidebar/sessions/useSessionRowInteractions.ts", "packages/ui/src/components/session/sidebar/sessions/useSessionActions.ts", "packages/ui/src/components/session/sidebar/shell/SidebarHeader.tsx", "packages/ui/src/components/session/sidebar/list/SessionProjectCollection.tsx"],
       "what": "The sidebar lists the project's sessions; a click opens one, and the open one is highlighted.",
       "reach": "The left sidebar, under In work and under the project.",
       "proof": "Every session has a row with its title; a click shows that session's chat, highlights its row and puts its id in the URL.",
@@ -472,7 +472,7 @@
     {
       "id": "row-actions",
       "name": "A row's hover buttons",
-      "sources": ["packages/ui/src/components/session/sidebar/sessions/SessionRowActions.tsx", "packages/ui/src/components/session/sidebar/sessions/QuickSessionAction.tsx", "packages/ui/src/components/session/sidebar/sessions/sessionRowLayout.ts", "packages/ui/src/components/session/sidebar/sessions/useSessionRowWork.ts", "packages/ui/src/components/session/sidebar/sessions/sessionWorkToggle.ts", "packages/ui/src/components/session/sidebar/shell/ConfirmDialogs.tsx", "packages/ui/src/components/session/sidebar/pages/SidebarPageRow.tsx", "packages/ui/src/components/views/ArchiveView.tsx"],
+      "sources": ["packages/ui/src/components/session/sidebar/sessions/SessionRowActions.tsx", "packages/ui/src/components/session/sidebar/sessions/QuickSessionAction.tsx", "packages/ui/src/components/session/sidebar/sessions/sessionRowLayout.ts", "packages/ui/src/components/session/sidebar/sessions/useSessionRowWork.ts", "packages/ui/src/components/session/sidebar/sessions/sessionWorkToggle.ts", "packages/ui/src/components/session/sidebar/shell/ConfirmDialogs.tsx", "packages/ui/src/components/session/sidebar/pages/SidebarPageRow.tsx", "packages/ui/src/components/views/ArchiveView.tsx", "packages/ui/src/components/views/archive/ArchiveSearchResultRow.tsx", "packages/ui/src/components/views/archive/archiveGroups.ts"],
       "what": "Pointing at a row shows its buttons: Track as in work for a session that is not in work, and Archive, which turns into Delete while Shift is held and then deletes without asking.",
       "reach": "Point at a session row in the sidebar.",
       "proof": "Track puts the session under In work; with Shift held the button reads Delete, and its click removes the session with no dialog, for good.",
@@ -706,7 +706,7 @@
     {
       "id": "row-select",
       "name": "Selecting several sessions",
-      "sources": ["packages/ui/src/components/session/sidebar/shell/SidebarHeader.tsx", "packages/ui/src/components/session/sidebar/sessions/useSessionRowInteractions.ts", "packages/ui/src/components/session/sidebar/sessions/sessionRowOrder.tsx", "packages/ui/src/components/session/sidebar/sessions/SessionNodeItem.tsx", "packages/ui/src/components/session/sidebar/sessionSidebarRowModel.ts"],
+      "sources": ["packages/ui/src/components/session/sidebar/shell/SidebarHeader.tsx", "packages/ui/src/components/session/sidebar/sessions/useSessionRowInteractions.ts", "packages/ui/src/components/session/sidebar/sessions/sessionRowOrder.tsx", "packages/ui/src/components/session/sidebar/sessions/SessionNodeItem.tsx", "packages/ui/src/components/session/sidebar/sessionSidebarRowModel.ts", "packages/ui/src/components/session/sidebar/sessionRunEntries.ts"],
       "what": "In Select sessions mode a click picks a row instead of opening it, Shift+click picks every row between; the open session is filled once even when it is listed twice.",
       "reach": "Display mode in the sidebar header > Select sessions.",
       "proof": "Picked rows say so and the open session stays open; a session listed in In work and under its project has one filled row.",
@@ -867,7 +867,7 @@
     {
       "id": "sections",
       "name": "Sidebar sections and their order",
-      "sources": ["packages/ui/src/components/session/sidebar/list/SessionProjectCollection.tsx", "packages/ui/src/components/session/sidebar/list/sessionCollection.ts", "packages/ui/src/components/session/sidebar/projects/useSessionSidebarSections.ts", "packages/ui/src/components/session/sidebar/projects/useSessionGrouping.ts", "packages/ui/src/components/session/sidebar/sessionSidebarRowModel.ts"],
+      "sources": ["packages/ui/src/components/session/sidebar/list/SessionProjectCollection.tsx", "packages/ui/src/components/session/sidebar/list/sessionCollection.ts", "packages/ui/src/components/session/sidebar/projects/useSessionSidebarSections.ts", "packages/ui/src/components/session/sidebar/projects/useSessionGrouping.ts", "packages/ui/src/components/session/sidebar/sessionSidebarRowModel.ts", "packages/ui/src/components/session/sidebar/sessionRunEntries.ts"],
       "what": "The sidebar lists Pinned first, then In work, then the projects; each session shows under the section its state puts it in, and moves when that state changes.",
       "reach": "The left sidebar with a pinned session, one that ran a turn and a plain one.",
       "proof": "Section headers and rows stand in that order, a pinned session is listed under Pinned and in its project, and a session enters or leaves a section as its state changes.",
@@ -1017,7 +1017,7 @@
     {
       "id": "search",
       "name": "Searching sessions from the sidebar",
-      "sources": ["packages/ui/src/components/session/sidebar/shell/SidebarHeader.tsx", "packages/ui/src/components/session/sidebar/sidebarConversationSearch.ts", "packages/ui/src/components/session/sidebar/useSidebarConversationSearch.ts", "packages/ui/src/components/session/sidebar/SidebarConversationRow.tsx", "packages/ui/src/components/session/sidebar/list/SessionProjectCollection.tsx", "packages/ui/src/components/session/sidebar/list/sessionCollection.ts", "packages/ui/src/components/session/sidebar/sessionSidebarRowModel.ts"],
+      "sources": ["packages/ui/src/components/session/sidebar/shell/SidebarHeader.tsx", "packages/ui/src/components/session/sidebar/sidebarConversationSearch.ts", "packages/ui/src/components/session/sidebar/useSidebarConversationSearch.ts", "packages/ui/src/components/session/sidebar/SidebarConversationRow.tsx", "packages/ui/src/components/session/sidebar/list/SessionProjectCollection.tsx", "packages/ui/src/components/session/sidebar/list/sessionCollection.ts", "packages/ui/src/components/session/sidebar/sessionSidebarRowModel.ts", "packages/ui/src/components/session/sidebar/sessionRunEntries.ts"],
       "what": "Typing in the sidebar's search field lists the sessions whose title matches, in place of the tree; Escape brings the tree back.",
       "reach": "The Search field at the top of the left sidebar.",
       "proof": "Only the matching session is listed while the query stands, and every row is back after Escape.",

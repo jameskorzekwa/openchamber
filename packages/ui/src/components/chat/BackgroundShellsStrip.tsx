@@ -19,6 +19,8 @@ import {
 import { isForegroundShellStopping, useForegroundShellStopping, useForegroundShellStoppingIds } from './message/parts/foregroundShellStop';
 import { backgroundImagesOfSessions, useBackgroundImagesStore } from '@/sync/background-images';
 import type { RunningImageJob } from '@/lib/opencode/background-image';
+import { useOpenShellOutput } from './useOpenShellOutput';
+import { AgentWaitingLabel, BACKGROUND_ROW_GROUP_CLASS, BackgroundRowIcon } from './backgroundRowStyle';
 
 interface BackgroundShellsStripProps {
   sessionId: string | null;
@@ -105,13 +107,18 @@ const ShellRow: React.FC<{
   fromSubagent: boolean;
   stopping: boolean;
   onStop: (shell: TrackedShell) => void;
-}> = ({ shell, fromSubagent, stopping, onStop }) => {
+  /** Opens the read-only output panel; null where there is no side panel. */
+  onOpenOutput: ((shell: TrackedShell) => void) | null;
+  /** The group's only row carries the "Agent waiting" tag. */
+  showWaiting?: boolean;
+}> = ({ shell, fromSubagent, stopping, onStop, onOpenOutput, showWaiting = false }) => {
   const { t } = useI18n();
   const stoppingFromRow = useForegroundShellStopping(shell.id);
 
   return (
     <div className="flex oc-composer-row items-center gap-2 ps-3 pe-1.5">
-      <Icon name="terminal-box" className="size-3.5 shrink-0 text-muted-foreground" />
+      <BackgroundRowIcon name="terminal-box" />
+      {showWaiting ? <AgentWaitingLabel /> : null}
       <Tooltip delayDuration={COMMAND_TOOLTIP_DELAY_MS}>
         <TooltipTrigger asChild>
           <span className="min-w-0 flex-1 truncate font-mono typography-code text-foreground">
@@ -128,6 +135,26 @@ const ShellRow: React.FC<{
         <span className="shrink-0 typography-meta text-muted-foreground">{t('chat.backgroundShells.subagent')}</span>
       ) : null}
       <ShellElapsed startedAt={shell.startedAt} />
+      {onOpenOutput ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex shrink-0">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => onOpenOutput(shell)}
+                onMouseDown={(event) => event.preventDefault()}
+                aria-label={t('chat.backgroundShells.openOutputAria', { command: shell.command })}
+                className="shrink-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
+              >
+                <Icon name="terminal-window" className="size-3.5" aria-hidden="true" />
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top" sideOffset={6}>{t('chat.backgroundShells.openOutput')}</TooltipContent>
+        </Tooltip>
+      ) : null}
       <Tooltip>
         <TooltipTrigger asChild>
           <span className="inline-flex shrink-0">
@@ -153,12 +180,17 @@ const ShellRow: React.FC<{
 
 const imageName = (path: string): string => path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
 
-const ImageRow: React.FC<{ job: RunningImageJob; fromSubagent: boolean }> = ({ job, fromSubagent }) => {
+/**
+ * An image being generated. OpenCode has no route that cancels an image job,
+ * so the row has no Stop.
+ */
+const ImageRow: React.FC<{ job: RunningImageJob; fromSubagent: boolean; showWaiting?: boolean }> = ({ job, fromSubagent, showWaiting = false }) => {
   const { t } = useI18n();
 
   return (
     <div className="flex oc-composer-row items-center gap-2 ps-3 pe-3">
-      <Icon name="image" className="size-3.5 shrink-0 text-muted-foreground" />
+      <BackgroundRowIcon name="image" />
+      {showWaiting ? <AgentWaitingLabel /> : null}
       <span className="shrink-0 typography-ui-label text-foreground">{t('chat.backgroundImages.generating')}</span>
       <Tooltip delayDuration={COMMAND_TOOLTIP_DELAY_MS}>
         <TooltipTrigger asChild>
@@ -188,6 +220,11 @@ export const BackgroundShellsStrip: React.FC<BackgroundShellsStripProps> = React
   const { stoppingIds, stop } = useStopShells(sessionId ?? '', directory);
   const stopOne = React.useCallback((shell: TrackedShell) => stop([shell]), [stop]);
   const foregroundStoppingIds = useForegroundShellStoppingIds();
+  const openShellOutput = useOpenShellOutput(directory ?? null);
+  const openOutput = React.useMemo(
+    () => (openShellOutput ? (shell: TrackedShell) => openShellOutput(shell.id, shell.directory, shell.command) : null),
+    [openShellOutput],
+  );
 
   const count = shells.length + images.length;
   if (!sessionId || count === 0) return null;
@@ -201,21 +238,23 @@ export const BackgroundShellsStrip: React.FC<BackgroundShellsStripProps> = React
         fromSubagent={shell.sessionID !== sessionId}
         stopping={stoppingIds.has(shell.id)}
         onStop={stopOne}
+        onOpenOutput={openOutput}
+        showWaiting={count === 1}
       />
     )),
-    ...images.map((job) => <ImageRow key={job.id} job={job} fromSubagent={job.sessionID !== sessionId} />),
+    ...images.map((job) => <ImageRow key={job.id} job={job} fromSubagent={job.sessionID !== sessionId} showWaiting={count === 1} />),
   ];
 
   if (count === 1) {
     return (
-      <div role="group" className="border-b border-edge" aria-label={ariaLabel}>
+      <div role="group" className={BACKGROUND_ROW_GROUP_CLASS} aria-label={ariaLabel}>
         {rows}
       </div>
     );
   }
 
   return (
-    <div role="group" className="border-b border-edge" aria-label={ariaLabel}>
+    <div role="group" className={BACKGROUND_ROW_GROUP_CLASS} aria-label={ariaLabel}>
       <div className="flex oc-composer-row items-center gap-2 ps-3 pe-1.5">
         <Tooltip>
           <TooltipTrigger asChild>
@@ -229,7 +268,8 @@ export const BackgroundShellsStrip: React.FC<BackgroundShellsStripProps> = React
               aria-controls={expanded ? listId : undefined}
               className="min-w-0 flex-1 shrink justify-start gap-2 px-0 text-sm font-normal normal-case text-muted-foreground hover:!bg-transparent hover:text-foreground has-[>svg]:px-0"
             >
-              <Icon name={shells.length === 0 ? 'image' : 'terminal-box'} className="size-3.5 shrink-0" aria-hidden="true" />
+              <BackgroundRowIcon name={shells.length === 0 ? 'image' : 'terminal-box'} />
+              <AgentWaitingLabel />
               <span className="min-w-0 flex-1 truncate text-start">
                 {images.length === 0
                   ? t('chat.backgroundShells.count', { count })

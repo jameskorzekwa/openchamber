@@ -99,10 +99,13 @@ describe('hostState and unexpectedChanges', () => {
     const { repo } = makeBait(host);
     const before = hostState(repo);
     // A socket path has a short length limit, so it is made in a short folder and moved in.
-    const short = fs.mkdtempSync('/tmp/oc-');
+    const short = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-'));
     const server = net.createServer();
     let writer = null;
-    await new Promise((resolve) => { server.listen(path.join(short, 's'), resolve); });
+    await new Promise((resolve, reject) => {
+      server.listen(path.join(short, 's'), resolve);
+      server.once('error', reject);
+    });
     try {
       fs.renameSync(path.join(short, 's'), path.join(repo, '.git', 'daemon.ipc'));
       const fifo = path.join(repo, '.git', 'a-fifo');

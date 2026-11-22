@@ -82,6 +82,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   'quota.family.zen': 'Zen 模型',
@@ -286,6 +287,7 @@ export const dict: Record<I18nKey, string> = {
   ...tooltipsWorkspaceI18n['zh-CN'],
   ...tooltipsPanelI18n['zh-CN'],
   ...tooltipsChatI18n['zh-CN'],
+  ...updateStatusI18n['zh-CN'],
   'terminalView.actions.attachSelection': '附加所选输出',
   'terminalView.actions.copySelection': '复制所选输出',
   'terminalView.toast.selectionCopied': '已复制输出',
@@ -890,6 +892,12 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.status.questionPendingOpen': '待回答问题。打开发出请求的会话',
   'sessions.sidebar.session.status.activeFor': '已活动 {duration}',
   'sessions.sidebar.session.status.lastTurnDuration': '上一轮耗时 {duration}',
+  'chat.backgroundWork.label': '后台运行中',
+  'chat.backgroundWork.agentWaiting': '代理等待中',
+  'chat.backgroundWork.ariaLabel': '后台运行中：{summary}',
+  'chat.backgroundWork.subtaskCountOne': '1 个子任务',
+  'chat.backgroundWork.subtaskCountMany': '{count} 个子任务',
+  'chat.backgroundWork.subtaskUntitled': '子任务',
   'sessions.sidebar.session.subsessions.collapse': '折叠子会话',
   'sessions.sidebar.session.subsessions.expand': '展开子会话',
   'sessions.sidebar.dialogs.deleteSession.title': '删除会话？',
@@ -4100,4 +4108,16 @@ export const dict: Record<I18nKey, string> = {
   'chat.promptHistorySearch.hint': "↑ ↓ 浏览 · Enter 加载 · Esc 关闭",
   'helpDialog.item.searchPromptHistory': "搜索提示历史记录（聊天输入）",
 
+  'chat.backgroundShells.openOutput': '显示输出',
+  'chat.backgroundShells.openOutputAria': '显示 {command} 的输出',
+  'shellOutput.status.loading': '加载中…',
+  'shellOutput.status.running': '运行中',
+  'shellOutput.status.finished': '已结束',
+  'shellOutput.status.finishedWithCode': '已结束（退出码 {code}）',
+  'shellOutput.status.stopped': '已停止',
+  'shellOutput.status.notFound': '此命令已不可用',
+  'shellOutput.readOnly': '只读',
+  'shellOutput.earlierOmitted': '… 已省略之前的输出',
+  'contextPanel.mode.pty': '进程',
+  'contextRail.surface.pty.description': '代理在后台运行的命令的输出',
 };

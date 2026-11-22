@@ -70,6 +70,23 @@ This folder owns runtime-independent controls and their Base UI integration, inc
 
 ## Decisions
 
+### Why update dialogs subscribe to an update session
+
+`updateDialogSession` owns the dialog's native-host installation operation and
+the combined display snapshot. Opening a web dialog refreshes the authoritative
+server installation state. Closing retires native-host work for that opening;
+late completions cannot publish into a replacement dialog.
+
+An old persisted `installed` record displays availability. Only an installation
+observed through its active lifecycle triggers the existing half-second reload.
+Native hosts still wait for their exact target version. The last subscriber
+retires pending reload work. Desktop, VS Code and mobile app-update buttons keep
+their native callbacks; connected-server updates explicitly target the web host.
+Leaving `installed` cancels its reload delay; a later installed transition earns
+a new delay. Native verification receives the session's abort signal. The last
+subscriber aborts its request and retry wait, so a retired dialog stops network
+traffic as well as rejecting late publications.
+
 ### Why wheel scrolling checks the DOM target
 
 React wheel events from a tab's portalled context menu bubble through the strip even while the pointer is over the popup. The shared wheel handler checks DOM containment so scrolling the menu leaves the tabs behind it unchanged.

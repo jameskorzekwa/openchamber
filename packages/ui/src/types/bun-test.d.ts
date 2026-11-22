@@ -16,6 +16,7 @@ declare module "bun:test" {
       toThrow(expected?: string | RegExp | (new (...args: never[]) => unknown)): Promise<void>;
       toBeInstanceOf(expected: new (...args: never[]) => object): Promise<void>;
     };
+    toBeCloseTo(expected: number, numDigits?: number): void;
     toBeGreaterThan(expected: number): void;
     toBeGreaterThanOrEqual(expected: number): void;
     toBeLessThan(expected: number): void;
@@ -26,6 +27,8 @@ declare module "bun:test" {
     toHaveBeenCalledTimes(expected: number): void;
     toBeInstanceOf(expected: unknown): void;
     toHaveProperty(path: string): void;
+    toHaveBeenCalledTimes(expected: number): void;
+    toMatchObject(expected: unknown): void;
     not: {
       toHaveBeenCalled(): void;
       toEqual(expected: unknown): void;
@@ -65,6 +68,7 @@ declare module "bun:test" {
     function restore(): void;
   }
   export namespace jest {
+    function getTimerCount(): number;
     function useFakeTimers(): void;
     function useRealTimers(): void;
     function advanceTimersByTime(ms: number): void;

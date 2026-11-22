@@ -21,6 +21,19 @@ import { trackedItemRecordsSchema } from './trackedItems/model';
 import type { SyncEvent } from './opencode/events';
 import { classifyStreamPayload } from '@/sync/event-pipeline';
 import { dispatchAppearanceChangedEvent, type AppearanceChangedEvent } from './appearanceEvents';
+import { shouldReloadForBuildRevision } from './buildRevision';
+import {
+  routingUpdatedSchema,
+  routingDecisionSchema,
+  routingPermissionHeldSchema,
+  routingSafetySkippedSchema,
+  type RoutingUpdatedEvent,
+  type RoutingDecisionEvent,
+  type RoutingPermissionHeldEvent,
+  type RoutingSafetySkippedEvent,
+} from './openchamberRoutingEvents';
+
+declare const __BUILD_REVISION__: string | undefined;
 
 type ScheduledTaskRanEvent = {
   type: 'scheduled-task-ran';
@@ -115,47 +128,6 @@ const limitFailoverSchema = z.discriminatedUnion('kind', [
   }),
 ]);
 type LimitFailoverEvent = { type: 'limit-failover'; failover: z.infer<typeof limitFailoverSchema> };
-
-const routingUpdatedSchema = z.object({
-  available: z.boolean(),
-  autoReady: z.boolean(),
-  jevAvailable: z.boolean().default(true),
-  tokenPresent: z.boolean(),
-  jevSource: z.enum(['typesafe', 'zen-free']),
-});
-
-const routingDecisionSchema = z.object({
-  sessionId: z.string().min(1),
-  at: z.number(),
-  category: z.string().nullable(),
-  confidence: z.number(),
-  reason: z.enum(['routed', 'low-confidence', 'unknown-category', 'error', 'not-ready']),
-  providerID: z.string().optional(),
-  modelID: z.string().optional(),
-  variant: z.string().nullable().optional(),
-  agent: z.string().nullable().optional(),
-  error: z.string().optional(),
-});
-
-const routingPermissionHeldSchema = z.object({
-  permissionId: z.string().min(1),
-  sessionId: z.string().min(1),
-  directory: z.string().nullable().default(null),
-  score: z.number(),
-  kind: z.string().nullable(),
-});
-
-const routingSafetySkippedSchema = z.object({
-  permissionId: z.string().min(1),
-  sessionId: z.string().min(1),
-  directory: z.string().nullable().default(null),
-  error: z.string(),
-});
-
-type RoutingUpdatedEvent = { type: 'routing-updated' } & z.infer<typeof routingUpdatedSchema>;
-type RoutingDecisionEvent = { type: 'routing-decision'; decision: z.infer<typeof routingDecisionSchema> };
-type RoutingPermissionHeldEvent = { type: 'routing-permission-held' } & z.infer<typeof routingPermissionHeldSchema>;
-type RoutingSafetySkippedEvent = { type: 'routing-safety-skipped' } & z.infer<typeof routingSafetySkippedSchema>;
 
 export type PermissionPolicySyncEvent = Extract<SyncEvent, { type: 'openchamber.permission-auto-accept' | 'openchamber.permission-left-for-user' }>;
 type PermissionPolicyEvent = { type: 'permission-policy'; event: PermissionPolicySyncEvent };
@@ -266,6 +238,17 @@ let readyEvent: Extract<OpenChamberEvent, { type: 'event-stream-ready' }> | null
 
 const MAX_RECONNECT_DELAY_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 45_000;
+const CLIENT_BUILD_REVISION = typeof __BUILD_REVISION__ === 'string' ? __BUILD_REVISION__ : '';
+
+const reloadForServerRevision = (serverRevision: string): void => {
+  try {
+    if (shouldReloadForBuildRevision(serverRevision, CLIENT_BUILD_REVISION, window.sessionStorage)) {
+      window.location.reload();
+    }
+  } catch {
+    return;
+  }
+};
 
 const clearHeartbeatTimer = () => {
   if (!heartbeatTimer) {
@@ -435,6 +418,9 @@ const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) =
 
   if (envelope.type === 'openchamber:event-stream-ready') {
     reconnectAttempt = 0;
+    const properties = getEventProperties(envelope.properties);
+    const serverRevision = typeof properties?.buildRevision === 'string' ? properties.buildRevision : '';
+    reloadForServerRevision(serverRevision);
     const ready = eventStreamReadySchema.safeParse(envelope.properties);
     const connectionId = ready.success ? ready.data.connectionId ?? null : null;
     const event = { type: 'event-stream-ready', connectionId } as const;

@@ -29,6 +29,17 @@ every source, the repository's provider, each tracker and each extension, as its
 
 ## Decisions
 
+### Why preview presentation is separate from reference data
+
+`ReferencePreviewPresentation` owns the pinned frame and image-preview lifetime,
+state/check labels, revision picker and change flags; metadata rows live in
+`ReferenceMetaEditors`.
+`ReferencePreview` still selects provider capabilities, cached details and edit
+actions. This keeps shared presentation independent of repository and tracker
+data orchestration. Its existing state/check and revision-choice exports remain
+available through `ReferencePreview`; selecting the latest revision still sends
+`null`, and a draft still suppresses the redundant work-in-progress flag.
+
 ### Why the picker remounts on open and not resets in effects
 
 Each opening starts with the remembered tab and an empty search. Remounting establishes both before the first paint; effect-based resets would first show the previous opening's state.

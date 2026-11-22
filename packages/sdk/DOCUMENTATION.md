@@ -8,8 +8,8 @@ Public author pages live in `packages/docs/content/docs/sdk.mdx`, `sdk/host.mdx`
 
 ## Entrypoints
 
-- `src/index.ts`: public exports. Host and guest protocol.
-- `src/parse.ts`: `package.json` / bare-block parse. Fails closed.
+- `src/index.ts`: public exports. Host and guest protocol. `host-contract-exports.ts` holds the explicit public type selection from `contract.ts`; it is type-only, so reorganizing that list cannot add runtime initialization or expose private contract types.
+- `src/parse.ts`: `package.json` / bare-block parse. Fails closed. `manifest-errors.ts` owns the mapping from the first schema issue to the public error code and field-relative message, shared by bare manifests and package envelopes.
 - `src/host-version.ts`: `engines.openchamber` parse and compare. Install uses this against `OPENCHAMBER_VERSION`.
 - `src/protocol.ts`: envelope parse for host and guest messages.
 - `src/host.ts`: iframe client. Posts to `parent`. Ignores messages whose `source` is not `parent`. In-flight RPCs time out at `GUEST_REQUEST_TIMEOUT_MS` (20s) as `HOST_TIMEOUT`. `onDirectory` / `onSession` / `onSessionLifecycle` / `onItem` replay and stay current after later pushes, same as connection and settings. `onResolve` holds one handler for host `resolve` requests and answers each with `resolve-result` (the clamped chip, `null`, or the thrown error's message; no handler answers with an error). `setBadge` posts `badge` with the count clamped to 0..`GUEST_BADGE_MAX`.

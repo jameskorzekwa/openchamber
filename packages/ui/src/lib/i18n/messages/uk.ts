@@ -82,6 +82,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   'quota.family.zen': 'Моделі Zen',
@@ -296,6 +297,7 @@ export const dict: Record<I18nKey, string> = {
   ...tooltipsWorkspaceI18n['uk'],
   ...tooltipsPanelI18n['uk'],
   ...tooltipsChatI18n['uk'],
+  ...updateStatusI18n.uk,
   'terminalView.actions.attachSelection': 'Прикріпити вибраний вивід',
   'terminalView.actions.copySelection': 'Скопіювати вибраний вивід',
   'terminalView.toast.selectionCopied': 'Вивід скопійовано',
@@ -894,6 +896,12 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.session.status.questionPendingOpen": "Запитання очікує відповіді. Відкриває сесію, яка запитує",
   "sessions.sidebar.session.status.activeFor": "Активна вже {duration}",
   "sessions.sidebar.session.status.lastTurnDuration": "Останній хід тривав {duration}",
+  "chat.backgroundWork.label": "Виконується у фоні",
+  "chat.backgroundWork.agentWaiting": "Агент очікує",
+  "chat.backgroundWork.ariaLabel": "Виконується у фоні: {summary}",
+  "chat.backgroundWork.subtaskCountOne": "1 підзадача",
+  "chat.backgroundWork.subtaskCountMany": "Підзадач: {count}",
+  "chat.backgroundWork.subtaskUntitled": "Підзадача",
   "sessions.sidebar.session.subsessions.collapse": "Згорнути підсесії",
   "sessions.sidebar.session.subsessions.expand": "Розгорнути підсесії",
   "sessions.sidebar.dialogs.deleteSession.title": "Видалити сесію?",
@@ -4100,4 +4108,16 @@ export const dict: Record<I18nKey, string> = {
   'chat.promptHistorySearch.hint': "↑ ↓ для перегляду · Enter для завантаження · Esc для закриття",
   'helpDialog.item.searchPromptHistory': "Пошук в історії запитів (поле чату)",
 
+  'chat.backgroundShells.openOutput': 'Показати вивід',
+  'chat.backgroundShells.openOutputAria': 'Показати вивід {command}',
+  'shellOutput.status.loading': 'Завантаження…',
+  'shellOutput.status.running': 'Виконується',
+  'shellOutput.status.finished': 'Завершено',
+  'shellOutput.status.finishedWithCode': 'Завершено (код {code})',
+  'shellOutput.status.stopped': 'Зупинено',
+  'shellOutput.status.notFound': 'Ця команда більше недоступна',
+  'shellOutput.readOnly': 'Лише читання',
+  'shellOutput.earlierOmitted': '… попередній вивід пропущено',
+  'contextPanel.mode.pty': 'Процес',
+  'contextRail.surface.pty.description': 'Вивід команди, яку агент виконує у фоні',
 };

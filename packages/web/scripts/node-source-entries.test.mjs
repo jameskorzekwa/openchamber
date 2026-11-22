@@ -20,6 +20,7 @@ const entries = [
   ['packages/web/scripts/dev-server-watch.mjs', 'packages/web/server/lib/injected-env.ts'],
 ];
 const preloadedEntries = [
+  'packages/web/server/lib/openchamber-update/restart-transaction.ts',
   'packages/web/server/lib/outbound-proxy.ts',
   'packages/web/server/lib/github/auth.ts',
   'packages/web/server/lib/source-control/auth-storage.ts',

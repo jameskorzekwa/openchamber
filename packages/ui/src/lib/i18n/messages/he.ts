@@ -81,6 +81,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
   'quota.family.zen': 'מודלי Zen',
@@ -4056,6 +4057,7 @@ export const dict = {
   ...tooltipsWorkspaceI18n['he'],
   ...tooltipsPanelI18n['he'],
   ...tooltipsChatI18n['he'],
+  ...updateStatusI18n.he,
   'settings.usage.page.state.claudeSignedOutTitle': 'לא מחובר ל-Claude Code',
   'settings.usage.page.state.claudeSignInCommand': 'יש להריץ את הפקודה הזו במסוף:',
   'settings.openchamber.visual.field.confirmFileTreeMove': 'אישור לפני העברת קבצים',
@@ -4124,4 +4126,23 @@ export const dict = {
   'chat.promptHistorySearch.hint': "↑ ↓ לעיון · Enter לטעינה · Esc לסגירה",
   'helpDialog.item.searchPromptHistory': "חיפוש בהיסטוריית ההנחיות (קלט צ׳אט)",
 
+  'chat.backgroundWork.label': 'פועל ברקע',
+
+  'chat.backgroundWork.agentWaiting': 'הסוכן ממתין',
+  'chat.backgroundWork.ariaLabel': 'פועל ברקע: {summary}',
+  'chat.backgroundWork.subtaskCountOne': 'משימת משנה אחת',
+  'chat.backgroundWork.subtaskCountMany': '{count} משימות משנה',
+  'chat.backgroundWork.subtaskUntitled': 'משימת משנה',
+  'chat.backgroundShells.openOutput': 'הצגת פלט',
+  'chat.backgroundShells.openOutputAria': 'הצגת הפלט של {command}',
+  'shellOutput.status.loading': 'בטעינה…',
+  'shellOutput.status.running': 'פועל',
+  'shellOutput.status.finished': 'הסתיים',
+  'shellOutput.status.finishedWithCode': 'הסתיים (קוד יציאה {code})',
+  'shellOutput.status.stopped': 'נעצר',
+  'shellOutput.status.notFound': 'הפקודה הזו כבר אינה זמינה',
+  'shellOutput.readOnly': 'לקריאה בלבד',
+  'shellOutput.earlierOmitted': '… פלט קודם הושמט',
+  'contextPanel.mode.pty': 'תהליך',
+  'contextRail.surface.pty.description': 'פלט של פקודה שהסוכן מריץ ברקע',
 };

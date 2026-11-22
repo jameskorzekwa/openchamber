@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { runtimeFetch } from './runtime-fetch';
+import { requestDeadline, waitForDelay } from './timing/cancellableWait';
 
 const installResponse = z.object({
   success: z.literal(true),
@@ -18,7 +19,13 @@ type UpdateTarget = { owner: 'electron'; version: string } | { owner: 'package-m
 type InstallResult =
   | { success: true; autoRestart: boolean; target: UpdateTarget }
   | { success: false; error?: string };
-type AppliedResult = { status: 'applied' } | { status: 'timeout' } | { status: 'failed'; error: string };
+type AppliedResult = { status: 'applied' } | { status: 'timeout' } | { status: 'cancelled' } | { status: 'failed'; error: string };
+interface VerificationOptions {
+  fetchUpdate?: typeof runtimeFetch;
+  maxWaitMs?: number;
+  intervalMs?: number;
+  signal?: AbortSignal;
+}
 
 export async function installWebUpdate(fetchUpdate = runtimeFetch): Promise<InstallResult> {
   try {
@@ -47,17 +54,20 @@ export async function installWebUpdate(fetchUpdate = runtimeFetch): Promise<Inst
 export async function waitForUpdateApplied(
   target: UpdateTarget,
   previousVersion?: string,
-  { fetchUpdate = runtimeFetch, maxWaitMs = 10 * 60 * 1000, intervalMs = 2000 } = {},
+  { fetchUpdate = runtimeFetch, maxWaitMs = 10 * 60 * 1000, intervalMs = 2000, signal }: VerificationOptions = {},
 ): Promise<AppliedResult> {
   const deadline = Date.now() + maxWaitMs;
   while (Date.now() < deadline) {
-    const signal = AbortSignal.timeout(Math.max(1, Math.min(10_000, deadline - Date.now())));
+    if (signal?.aborted) return { status: 'cancelled' };
+    const request = requestDeadline(Math.max(1, Math.min(10_000, deadline - Date.now())), signal);
     try {
       const response = await fetchUpdate('/api/openchamber/update-check?appType=web&reportUsage=false&updateStatus=true', {
-        method: 'GET', headers: { Accept: 'application/json' }, signal,
+        method: 'GET', headers: { Accept: 'application/json' }, signal: request.signal,
       });
+      if (signal?.aborted) return { status: 'cancelled' };
       if (response.ok) {
         const parsed = checkResponse.safeParse(await response.json());
+        if (signal?.aborted) return { status: 'cancelled' };
         if (parsed.success && !parsed.data.error) {
           const data = parsed.data;
           const applied = target.owner === 'electron'
@@ -67,19 +77,23 @@ export async function waitForUpdateApplied(
         }
       } else {
         const parsed = errorResponse.safeParse(await response.json().catch(() => null));
+        if (signal?.aborted) return { status: 'cancelled' };
         if (parsed.success && parsed.data.code === 'DESKTOP_UPDATE_RESTART_FAILED') {
           return { status: 'failed', error: parsed.data.error };
         }
         if (target.owner === 'package-manager' && (response.status === 401 || response.status === 403)) {
-          const health = await fetchUpdate('/health', { headers: { Accept: 'application/json' }, signal });
+          const health = await fetchUpdate('/health', { headers: { Accept: 'application/json' }, signal: request.signal });
+          if (signal?.aborted) return { status: 'cancelled' };
           if (health.ok) return { status: 'applied' };
         }
       }
     } catch {
-      // A restarting host can disconnect or time out; retry within the deadline.
+      if (signal?.aborted) return { status: 'cancelled' };
+    } finally {
+      request.dispose();
     }
     const remaining = deadline - Date.now();
-    if (remaining > 0) await new Promise(resolve => setTimeout(resolve, Math.min(intervalMs, remaining)));
+    if (remaining > 0 && !await waitForDelay(Math.min(intervalMs, remaining), signal)) return { status: 'cancelled' };
   }
-  return { status: 'timeout' };
+  return { status: signal?.aborted ? 'cancelled' : 'timeout' };
 }

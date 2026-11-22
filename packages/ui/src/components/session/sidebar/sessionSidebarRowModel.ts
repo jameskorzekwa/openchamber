@@ -20,6 +20,7 @@ import type { SidebarSessionLocation } from './recent/sessionLocation';
 import { SIDEBAR_SESSION_BATCH_DEFAULT } from '@/lib/sidebarSections';
 import { splitTimelineDays, type TimelineActivity, type TimelineDay } from './timelineDates';
 import { gatherRunMembers } from './sessionSidebarZoneRuns';
+import { collapseRunEntries, isRunEntry, type RunEntry, type SidebarEntry } from './sessionRunEntries';
 
 export type SessionSidebarActivityItem = {
   node: SessionNode;
@@ -169,45 +170,19 @@ export type SessionSidebarRowModelArgs = {
   blocks?: readonly SessionSidebarBlock[];
 };
 
-type RunEntry = { run: MultiRunSummary; lanes: SessionNode[] };
-type SidebarEntry = SessionNode | RunEntry;
-
-const isRunEntry = (entry: SidebarEntry): entry is RunEntry => 'run' in entry;
-
 export const sessionExpansionKey = (renderContext: SessionSidebarRenderContext, archived: boolean, sessionId: string): string => (
   `${renderContext}:${archived ? 'archived' : 'active'}:${sessionId}`
 );
 
+export const isSessionGroupCollapsed = (
+  collapsedGroups: ReadonlySet<string>,
+  groupKey: string,
+  group: Pick<SessionGroup, 'startsCollapsed'>,
+): boolean => (group.startsCollapsed === true) !== collapsedGroups.has(groupKey);
+
 export const runExpansionKey = (renderContext: SessionSidebarRenderContext, runKey: string): string => (
   `${renderContext}:active:run:${runKey}`
 );
-
-const collapseRunEntries = (nodes: readonly SessionNode[], runIndex: MultiRunIndex, archived: boolean): SidebarEntry[] => {
-  if (archived || runIndex.runKeyBySessionId.size === 0) return [...nodes];
-  const entries: SidebarEntry[] = [];
-  const byRun = new Map<string, RunEntry>();
-  for (const node of nodes) {
-    const runKey = runIndex.runKeyBySessionId.get(node.session.id);
-    const run = runKey ? runIndex.runs.get(runKey) : undefined;
-    if (!run) {
-      entries.push(node);
-      continue;
-    }
-    const existing = byRun.get(run.key);
-    if (existing) {
-      existing.lanes.push(node);
-      continue;
-    }
-    const entry: RunEntry = { run, lanes: [node] };
-    byRun.set(run.key, entry);
-    entries.push(entry);
-  }
-  for (const entry of byRun.values()) {
-    const order = new Map(entry.run.memberIds.map((id, index) => [id, index]));
-    entry.lanes.sort((left, right) => (order.get(left.session.id) ?? 0) - (order.get(right.session.id) ?? 0));
-  }
-  return entries;
-};
 
 const EMPTY_FOLDERS: readonly SessionFolder[] = [];
 const EMPTY_ZONE_SESSION_IDS: ReadonlySet<string> = new Set();
@@ -610,7 +585,7 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
     for (const [id, session] of indexed.sessionsById) sessionById.set(id, session);
     if (projectId && isGroupWork(group) && !selectionWorks.has(groupKey)) selectionWorks.set(groupKey, Object.freeze({ group, projectId }));
     const ownerKey = getGroupFolderOwnerKey(projectId, group);
-    const storedCollapsed = args.collapsedGroups.has(groupKey);
+    const storedCollapsed = !search && isSessionGroupCollapsed(args.collapsedGroups, groupKey, group);
     const contentDepth = hideHeader ? 0 : placement.depth + 1;
     const status = args.groupStatusByKey.get(groupKey);
     const groupLoaded = !status || status.state === 'ready';

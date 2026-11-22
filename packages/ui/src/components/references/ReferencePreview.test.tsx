@@ -47,7 +47,7 @@ Object.assign(useSourceControlProviderRegistry.getInitialState(), { ordered: [gi
 const linear = linearLikeTrackerDescriptor();
 Object.assign(useTrackerRegistry.getInitialState(), { ordered: [linear], byId: new Map([[linear.id, linear]]), status: 'ready', holdsList: true });
 
-function renderPreview(item: ReferencePickerItem, pinned: boolean, status: 'ready' | 'loading' | 'error' = 'ready', customFooter = true) {
+function renderPreview(item: ReferencePickerItem, pinned: boolean, status: 'ready' | 'loading' | 'error' = 'ready', customFooter = true, stateMenu?: React.ReactNode) {
     const pending = status === 'error' ? { status, error: 'Host unavailable' } as const : { status: 'loading' } as const;
     const github: CachedValue<RepositoryReferenceDetail> = status === 'ready' ? { status, value: repositoryDetail } : pending;
     const tracker: CachedValue<TrackerItem> = status === 'ready' ? { status, value: issue } : pending;
@@ -64,6 +64,7 @@ function renderPreview(item: ReferencePickerItem, pinned: boolean, status: 'read
                     labelsControl={<button>Edit labels</button>}
                     reviewersControl={<button>Edit reviewers</button>}
                     onOpenChecks={() => undefined} onRefresh={async () => undefined}
+                    stateMenu={stateMenu}
                 />
             </I18nProvider>
         </RuntimeAPIContext.Provider>,
@@ -72,6 +73,22 @@ function renderPreview(item: ReferencePickerItem, pinned: boolean, status: 'read
 }
 
 describe('ReferencePreview layout', () => {
+    test('a supplied state menu renders an actionable state pill', () => {
+        const container = renderPreview(items[0], true, 'ready', true, <button>Close pull request</button>);
+        const trigger = container.querySelector('header button[aria-haspopup="menu"]');
+        expect(trigger).not.toBeNull();
+        expect(trigger?.textContent).toContain('Open');
+        expect(trigger?.getAttribute('aria-label')).toContain('Open');
+        expect(container.querySelector('h3')?.textContent).toBe('Preview layout');
+    });
+
+    test('without a state menu the preview retains a non-interactive state pill', () => {
+        const container = renderPreview(items[0], true);
+        expect(container.querySelector('header button[aria-haspopup="menu"]')).toBeNull();
+        expect(container.querySelector('header')?.textContent).toContain('Open');
+        expect(container.querySelector('h3')?.textContent).toBe('Preview layout');
+    });
+
     for (const item of items) {
         for (const status of ['ready', 'loading', 'error'] as const) {
             test(`${item.source} pinned preview scrolls metadata before the body with ${status} detail`, () => {

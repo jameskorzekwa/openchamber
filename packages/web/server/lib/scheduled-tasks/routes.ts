@@ -14,6 +14,7 @@ export interface ScheduledTaskEventClient extends Response {
 }
 
 export interface ScheduledTaskRouteDependencies extends ScheduledTaskServiceDependencies {
+  openchamberBuildRevision?: string | undefined;
   projectConfigRuntime: ReturnType<typeof createProjectConfigRuntime>;
   scheduledTasksRuntime: ReturnType<typeof createScheduledTasksRuntime>;
   getOpenChamberEventClients: () => Set<ScheduledTaskEventClient>;
@@ -43,6 +44,7 @@ export const registerScheduledTaskRoutes = (app: Application, dependencies: Sche
     scheduledTasksRuntime,
     getOpenChamberEventClients,
     writeSseEvent,
+    openchamberBuildRevision,
     scheduledTaskService = createScheduledTaskService(dependencies),
   } = dependencies;
 
@@ -224,6 +226,7 @@ export const registerScheduledTaskRoutes = (app: Application, dependencies: Sche
         properties: {
           connectedAt: Date.now(),
           connectionId: client.openchamberConnectionId,
+          buildRevision: openchamberBuildRevision,
         },
       });
     } catch {

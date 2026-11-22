@@ -39,6 +39,10 @@ import {
 const startFakeRelay = ({ dropClientBinaryAt } = {}) => {
   const server = http.createServer();
   const wss = new WebSocketServer({ server });
+  let resolveControlReady;
+  const controlReady = new Promise((resolve) => {
+    resolveControlReady = resolve;
+  });
   const state = {
     control: null,
     hostData: new Map(), // connectionId -> ws
@@ -61,6 +65,7 @@ const startFakeRelay = ({ dropClientBinaryAt } = {}) => {
 
     if (role === 'host-control') {
       state.control = ws;
+      resolveControlReady();
       // Announce any already-waiting clients.
       ws.send(JSON.stringify({ type: 'sync', connectionIds: [...state.clients.keys()] }));
       for (const id of state.clients.keys()) {
@@ -111,6 +116,7 @@ const startFakeRelay = ({ dropClientBinaryAt } = {}) => {
       resolve({
         wsUrl: `ws://127.0.0.1:${port}`,
         state,
+        controlReady,
         stop: () => new Promise((r) => {
           // A socket a failed test left open would hold server.close() until
           // the hook timeout; drop them so a failure is reported once.
@@ -198,9 +204,15 @@ const runScriptedClient = async ({ relayUrl, serverId, hostEncPubJwk, helloExtra
   const responseChunks = [];
   let responseStatus = null;
   let resolveDone;
-  const done = new Promise((resolve) => {
+  let rejectDone;
+  const done = new Promise((resolve, reject) => {
     resolveDone = resolve;
+    rejectDone = reject;
   });
+  const fail = (error) => {
+    rejectDone(error);
+    ws.terminate();
+  };
 
   // Dialed only now, with the key material ready and the listeners attached
   // in the same tick. Dialing before the WebCrypto awaits above let a loopback
@@ -208,6 +220,7 @@ const runScriptedClient = async ({ relayUrl, serverId, hostEncPubJwk, helloExtra
   // and an `open` event with no listener means no hello, no ready, and a
   // client that waits forever. Loaded CI runners hit exactly that.
   const ws = new WebSocket(url.toString());
+  ws.on('error', fail);
   ws.on('open', async () => {
     ws.send(JSON.stringify({
       t: 'hello',
@@ -268,7 +281,7 @@ const runScriptedClient = async ({ relayUrl, serverId, hostEncPubJwk, helloExtra
     }
   };
   ws.on('message', (data, isBinary) => {
-    processing = processing.then(() => handleMessage(data, isBinary));
+    processing = processing.then(() => handleMessage(data, isBinary)).catch(fail);
   });
 
   return done;

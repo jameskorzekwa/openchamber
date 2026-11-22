@@ -29,6 +29,8 @@ import { SessionSuggestionChip } from '@/components/chat/SessionSuggestionChip';
 import { SessionDoneHintRow } from '@/components/chat/SessionDoneHintRow';
 import { SessionReviewHintRow } from '@/components/chat/SessionReviewHintRow';
 import { BackgroundShellsStrip } from '@/components/chat/BackgroundShellsStrip';
+import { backgroundShellsRowKey, backgroundSubtasksRowKey } from '@/components/chat/composerRowKeys';
+import { BackgroundWorkBanner } from '@/components/chat/BackgroundWorkBanner';
 import { ComposerStatusStrip } from '@/components/chat/ComposerStatusStrip';
 import { useWorktreeBootstrapPending } from '@/hooks/useWorktreeBootstrapPending';
 import { useShownAfter } from '@/hooks/useShownAfter';
@@ -126,7 +128,7 @@ export function useComposerRows({
 
     const backgroundShellsRow = !isBtwActive && !newSessionDraftOpen ? (
         <BackgroundShellsStrip
-            key={currentSessionId ?? ''}
+            key={backgroundShellsRowKey(currentSessionId)}
             sessionId={currentSessionId}
             directory={currentSessionDirectoryForSync ?? currentDirectory}
         />
@@ -187,7 +189,14 @@ export function useComposerRows({
         ? <SessionTrustPausedRow directory={trustPausedDirectory} />
         : null;
 
-    const composerTopRows = folderMissingRow || trustPausedRow || worktreeSetupRow || creatingSessionRow || spaceWaitRow || goalRow || autoReviewRow || prWatchRow || extensionWaitRow || backgroundShellsRow || revertRow || queueRow || doneHintRow || reviewHintRow || suggestionRow ? (
+    const backgroundSubtasksRow = !isBtwActive && !newSessionDraftOpen ? (
+        <BackgroundWorkBanner
+            key={backgroundSubtasksRowKey(currentSessionId)}
+            sessionId={currentSessionId}
+            directory={currentSessionDirectoryForSync ?? currentDirectory}
+        />
+    ) : null;
+    const composerTopRows = folderMissingRow || trustPausedRow || worktreeSetupRow || creatingSessionRow || spaceWaitRow || goalRow || autoReviewRow || prWatchRow || extensionWaitRow || backgroundShellsRow || backgroundSubtasksRow || revertRow || queueRow || doneHintRow || reviewHintRow || suggestionRow ? (
         <>
             {folderMissingRow}
             {trustPausedRow}
@@ -199,6 +208,7 @@ export function useComposerRows({
             {prWatchRow}
             {extensionWaitRow}
             {backgroundShellsRow}
+            {backgroundSubtasksRow}
             {revertRow}
             {queueRow}
             {doneHintRow}

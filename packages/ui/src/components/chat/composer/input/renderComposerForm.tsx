@@ -402,7 +402,10 @@ export function renderComposerForm({
                     )}
 
                     <div className={cn('relative flex flex-col', isComposerExpanded && 'flex-1 min-h-0')} data-dictation-chain="true">
-                    <div className={cn("overflow-hidden", isComposerExpanded && 'flex flex-1 min-h-0 flex-col')}>
+                    <div
+                        className={cn("overflow-hidden", isComposerExpanded && 'flex flex-1 min-h-0 flex-col')}
+                        style={{ borderStartStartRadius: chatInputRadius, borderStartEndRadius: chatInputRadius }}
+                    >
                         {parallel.isActive ? <ParallelComposerStrip parallel={parallel} project={parallelProjectRef} /> : null}
                         {composerTopRows}
                         {isVSCode && !isBtwActive ? (

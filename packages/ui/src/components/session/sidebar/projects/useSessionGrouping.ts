@@ -284,6 +284,7 @@ export const useSessionGrouping = (args: Args) => {
           description: t('sessions.sidebar.grouping.archivedDescription'),
           isMain: false,
           isArchivedBucket: true,
+          startsCollapsed: !args.isVSCode,
           worktree: null,
           directory: null,
           folderScopeKey: !args.isVSCode && normalizedProjectRoot ? getArchivedScopeKey(normalizedProjectRoot) : null,

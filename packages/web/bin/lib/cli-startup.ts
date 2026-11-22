@@ -1,3 +1,4 @@
+import { SYSTEMD_COMMAND_TIMEOUT_MS, getManagedLauncherPath, systemdEscapeArg, startupShellQuote, stablePnpmEntrypoint, resolveCliEntrypoint, buildManagedLauncher, writeManagedLauncher, migrateSystemdServiceToManagedLauncher } from './cli-managed-launcher.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -13,11 +14,11 @@ import { requestServerShutdown } from './cli-http.js';
 import { isProcessRunning, stopInstanceProcess, SERVER_SHUTDOWN_GRACE_MS } from './cli-process.js';
 import { injectedEnvKeys } from '../../server/lib/injected-env.js';
 import { createOpenCodeEnvRuntime } from '../../server/lib/opencode/env-runtime.js';
-import { fileURLToPath } from 'node:url';
 
 const STARTUP_SERVICE_ID = 'dev.openchamber.web';
-
-export type StartupOptions = Pick<Partial<CliOptions>, 'port' | 'host' | 'apiOnly' | 'uiPassword' | 'envSnapshot'>;
+export type StartupOptions = Pick<Partial<CliOptions>, 'port' | 'host' | 'apiOnly' | 'uiPassword' | 'envSnapshot'> & {
+  launcherPath?: string;
+};
 
 export interface StartupCommandOptions {
   stdio?: SpawnSyncOptionsWithStringEncoding['stdio'];
@@ -88,14 +89,6 @@ function escapeXml(value: string) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
-}
-
-function systemdEscapeArg(value: string) {
-  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
-
-function startupShellQuote(value: string) {
-  return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
 function systemdUnitPath(value: string) {
@@ -223,55 +216,6 @@ function removeStartupEnvFile() {
   try { fs.unlinkSync(getStartupEnvFilePath()); } catch { void 0; }
 }
 
-const PNPM_STORE_SEGMENT = `${path.sep}.pnpm${path.sep}`;
-const PACKAGE_SEGMENT = `${path.sep}node_modules${path.sep}@openchamber${path.sep}web${path.sep}`;
-
-function stablePnpmEntrypoint(resolved: string, exists = fs.existsSync) {
-  const storeIndex = resolved.indexOf(PNPM_STORE_SEGMENT);
-  if (storeIndex < 0) return null;
-  const packageIndex = resolved.indexOf(PACKAGE_SEGMENT, storeIndex);
-  if (packageIndex < 0) return null;
-  const stable = path.join(
-    resolved.slice(0, storeIndex),
-    '@openchamber',
-    'web',
-    resolved.slice(packageIndex + PACKAGE_SEGMENT.length),
-  );
-  return exists(stable) ? stable : null;
-}
-
-function isPnpmGlobalLinkEntrypoint(invoked: string) {
-  const packageIndex = invoked.indexOf(PACKAGE_SEGMENT);
-  if (packageIndex < 0) return false;
-  const linkPath = invoked.slice(0, packageIndex);
-  const layoutDir = path.dirname(linkPath);
-  if (!/^v\d+$/.test(path.basename(layoutDir)) || path.basename(path.dirname(layoutDir)) !== 'global') {
-    return false;
-  }
-  try {
-    return fs.lstatSync(linkPath).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
-function resolveCliEntrypoint() {
-  const entry = process.argv[1] !== undefined && process.argv[1].trim().length > 0
-    ? process.argv[1]
-    : fileURLToPath(new URL('../cli.js', import.meta.url));
-  const invoked = path.resolve(entry);
-  if (isPnpmGlobalLinkEntrypoint(invoked)) {
-    return invoked;
-  }
-  let resolved;
-  try {
-    resolved = fs.realpathSync(entry);
-  } catch {
-    return path.resolve(entry);
-  }
-  return stablePnpmEntrypoint(resolved) ?? resolved;
-}
-
 function buildStartupArgs(options: StartupOptions = {}) {
   const args = [resolveCliEntrypoint(), 'serve', '--foreground', '--port', String(options.port || DEFAULT_PORT)];
   if (options.host !== undefined && options.host.length > 0) {
@@ -283,11 +227,16 @@ function buildStartupArgs(options: StartupOptions = {}) {
   return args;
 }
 
+function buildServeArgs(options: StartupOptions = {}) {
+  return buildStartupArgs(options).slice(1);
+}
+
 function writeMacosStartupWrapper(options: StartupOptions = {}) {
   const wrapperPath = getMacosStartupWrapperPath();
-  const args = buildStartupArgs(options).map(startupShellQuote).join(' ');
+  const launcherPath = writeManagedLauncher(options);
+  const args = buildServeArgs(options).map(startupShellQuote).join(' ');
   const content = `#!/bin/sh
-exec ${startupShellQuote(process.execPath)} ${args}
+exec ${startupShellQuote(launcherPath)} ${args}
 `;
   fs.mkdirSync(path.dirname(wrapperPath), { recursive: true, mode: 0o700 });
   fs.writeFileSync(wrapperPath, content, { mode: 0o700 });
@@ -347,7 +296,8 @@ ${envXml}  <key>RunAtLoad</key>
 }
 
 function buildSystemdUserService(options: StartupOptions = {}) {
-  const args = buildStartupArgs(options).map((arg) => `"${systemdEscapeArg(arg)}"`).join(' ');
+  const launcherPath = options.launcherPath || getManagedLauncherPath();
+  const args = buildServeArgs(options).map((arg) => `"${systemdEscapeArg(arg)}"`).join(' ');
   const envFilePath = getStartupEnvFilePath();
   return `[Unit]
 Description=OpenChamber web server
@@ -356,7 +306,7 @@ After=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=-${systemdEscapeArg(envFilePath)}
-ExecStart="${systemdEscapeArg(process.execPath)}" ${args}
+ExecStart="${systemdEscapeArg(launcherPath)}" ${args}
 WorkingDirectory=${systemdUnitPath(os.homedir())}
 Restart=always
 RestartSec=5
@@ -372,7 +322,7 @@ function runStartupCommand(command: string, args: string[], options: StartupComm
   const result = spawnSync(command, args, {
     encoding: 'utf8',
     stdio: options.stdio || 'pipe',
-    timeout: options.timeout,
+    timeout: options.timeout ?? SYSTEMD_COMMAND_TIMEOUT_MS,
     windowsHide: true,
   });
   if (result.error) {
@@ -665,8 +615,9 @@ function enableStartupService(options: StartupOptions = {}) {
 
   if (paths.platform === 'linux') {
     writeStartupEnvFile(options, { quoteValue: systemdEnvFileQuote });
+    const launcherPath = writeManagedLauncher(options);
     fs.mkdirSync(path.dirname(paths.servicePath), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(paths.servicePath, buildSystemdUserService(options), { mode: 0o600 });
+    fs.writeFileSync(paths.servicePath, buildSystemdUserService({ ...options, launcherPath }), { mode: 0o600 });
     runStartupCommand('systemctl', ['--user', 'daemon-reload']);
     runStartupCommand('systemctl', ['--user', 'enable', 'openchamber.service']);
     restartSystemdService();
@@ -717,7 +668,9 @@ function disableStartupService() {
 
 export {
   stablePnpmEntrypoint,
+  buildManagedLauncher,
   buildSystemdUserService,
+  migrateSystemdServiceToManagedLauncher,
   getStartupStatus,
   parseSystemdMainPid,
   parseLaunchdJobPid,

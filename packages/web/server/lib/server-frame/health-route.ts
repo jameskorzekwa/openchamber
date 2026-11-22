@@ -6,9 +6,12 @@ export interface HealthRouteDependencies {
   getHealthSnapshot: () => object;
   resolveServerId: () => Promise<string | null>;
   openchamberVersion: string;
+  openchamberBuildRevision?: string | null;
   runtimeName: string;
   compatibility: object;
   isLocalPeer: (req: Request) => boolean;
+  /** Process identity the restart-transaction helper matches; loopback callers only. */
+  localIdentity?: () => object;
 }
 
 const UNCLASSIFIED_START_ERROR = 'OpenCode failed to start; details are available on the server machine';
@@ -59,7 +62,7 @@ const publicHealthSchema = z.object({
   }).nullable().catch(null),
 });
 
-export const registerHealthRoute = ({ app, getHealthSnapshot, resolveServerId, openchamberVersion, runtimeName, compatibility, isLocalPeer }: HealthRouteDependencies) => {
+export const registerHealthRoute = ({ app, getHealthSnapshot, resolveServerId, openchamberVersion, openchamberBuildRevision, runtimeName, compatibility, isLocalPeer, localIdentity }: HealthRouteDependencies) => {
   app.get('/health', async (req, res) => {
     const serverId = await resolveServerId();
     const identity: Record<string, string> = {};
@@ -68,13 +71,14 @@ export const registerHealthRoute = ({ app, getHealthSnapshot, resolveServerId, o
       status: 'ok',
       timestamp: new Date().toISOString(),
       openchamberVersion,
+      ...(openchamberBuildRevision ? { openchamberBuildRevision } : {}),
       runtime: runtimeName,
       compatibility,
       ...identity,
     };
     const snapshot = getHealthSnapshot();
     if (isLocalPeer(req)) {
-      return res.json({ ...liveness, ...snapshot });
+      return res.json({ ...liveness, ...localIdentity?.(), ...snapshot });
     }
     return res.json({ ...liveness, ...publicHealthSchema.parse(snapshot) });
   });

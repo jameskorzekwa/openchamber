@@ -17,6 +17,7 @@ import { trackerPresentation } from '@/lib/trackers/presentation';
 import { isBrowserClientRuntime, isDesktopShell } from '@/lib/desktop';
 import { getDisambiguatingFolders } from '@/lib/path-utils';
 import { getRelativePathLabel } from './contextPanelPaths';
+import { getModeLabel, getTabLabel } from './contextPanelTabLabels';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { toast } from '@/components/ui';
@@ -44,13 +45,12 @@ import { useChildStoreManager } from '@/sync/sync-context';
 import { useSessionTurnActivity } from '@/sync/global-session-status';
 import { SessionActivityIndicator } from '@/components/session/SessionActivityIndicator';
 import { ContextPanelContent } from './ContextSidebarTab';
-import { browserUrlLabel } from '@/lib/browser/url';
+const ShellOutputPane = React.lazy(() => import('@/components/shell-output/ShellOutputPane').then((module) => ({ default: module.ShellOutputPane })));
 import { Icon } from "@/components/icon/Icon";
 import type { IconName } from "@/components/icon/icons";
 import { GuestIcon } from './GuestRailIcon';
-import { useGuestsStore } from '@/lib/guests/store';
 import { FALLBACK_GUEST_ICON } from '@/lib/guests/icon';
-import { isPluginContextPanelMode, pluginIdFromMode } from '@/lib/surfaces/modes';
+import { isPluginContextPanelMode } from '@/lib/surfaces/modes';
 import { CONTEXT_SURFACES } from '@/lib/surfaces/registry';
 import { beginLayoutAnimation, cancelWhenLayoutSettled, holdLayoutAnimation, LAYOUT_ANIMATION_EASING, runWhenLayoutSettled } from '@/lib/layoutAnimation';
 import { useLayoutAnimationMs } from '@/hooks/useLayoutAnimationMs';
@@ -107,76 +107,6 @@ const clampWidth = (width: number, maxWidth: number): number => {
 const maxPanelWidth = (availableWidth: number | null): number => {
   if (availableWidth === null) return Number.POSITIVE_INFINITY;
   return Math.max(CONTEXT_PANEL_MIN_WIDTH, availableWidth - CONTEXT_CHAT_MIN_WIDTH);
-};
-
-const getModeLabel = (
-  mode: ContextPanelMode,
-  t: TranslateFn
-): string => {
-  if (isPluginContextPanelMode(mode)) {
-    const guest = useGuestsStore.getState().guests.find((entry) => entry.id === pluginIdFromMode(mode));
-    return guest?.name ?? t('contextRail.surface.plugin');
-  }
-  return t(CONTEXT_SURFACES.find((surface) => surface.mode === mode)?.labelKey ?? 'contextPanel.mode.context');
-};
-
-const getFileNameFromPath = (path: string | null): string | null => {
-  if (!path) {
-    return null;
-  }
-
-  const normalized = path.replace(/\\/g, '/').trim();
-  if (!normalized) {
-    return null;
-  }
-
-  const segments = normalized.split('/').filter(Boolean);
-  if (segments.length === 0) {
-    return normalized;
-  }
-
-  return segments[segments.length - 1] || null;
-};
-
-const getTabLabel = (
-  tab: { mode: ContextPanelMode; label: string | null; targetPath: string | null; dedupeKey?: string; sessionTitleFallback?: string | null; stagedDiff?: boolean },
-  sessionTitleById: ReadonlyMap<string, string>,
-  t: TranslateFn
-): string => {
-  if (tab.mode === 'chat') {
-    const sessionID = getSessionIDFromDedupeKey(tab.dedupeKey);
-    if (sessionID) {
-      const sessionTitle = sessionTitleById.get(sessionID)?.trim();
-      if (sessionTitle) {
-        return sessionTitle;
-      }
-    }
-
-    const sessionTitleFallback = tab.sessionTitleFallback?.trim();
-    if (sessionTitleFallback) {
-      return sessionTitleFallback;
-    }
-
-    return t('contextPanel.mode.chat');
-  }
-
-  if (tab.mode === 'browser') {
-    return browserUrlLabel(tab.targetPath ?? '') || tab.label || t('contextPanel.mode.browser');
-  }
-
-  if (tab.label) {
-    return tab.label;
-  }
-
-  if (tab.mode === 'file') {
-    return getFileNameFromPath(tab.targetPath) || t('contextPanel.mode.files');
-  }
-
-  if (tab.mode === 'diff') {
-    return t('contextPanel.mode.diff');
-  }
-
-  return getModeLabel(tab.mode, t);
 };
 
 const ContextGuestIcon: React.FC<{ mode: ContextPanelMode }> = ({ mode }) => {
@@ -328,7 +258,7 @@ const HEADER_DRAG_DISTANCE_PX = 8;
 const HEADER_DRAG_EXCLUDED = 'button, a, input, textarea, select, label, [role="button"], [role="tab"], [role="combobox"], [role="switch"], [role="slider"], [data-sortable-tab-id], [contenteditable="true"]';
 
 const isRemountedSurface = (mode: ContextPanelMode): boolean => (
-  mode === 'context' || mode === 'pr' || mode === 'notes' || mode === 'workflows'
+  mode === 'context' || mode === 'pr' || mode === 'notes' || mode === 'workflows' || mode === 'pty'
 );
 
 const CONTEXT_PANEL_DEFAULT_HEIGHT = 320;
@@ -703,7 +633,7 @@ export const ContextPanel: React.FC<{ zone?: ContextZone; variant?: 'center' | '
     toggleContextPanelExpanded(directoryKey, zone);
   }, [directoryKey, toggleContextPanelExpanded, zone]);
 
-  const isMultiInstanceMode = activeTab?.mode === 'file' || activeTab?.mode === 'chat' || activeTab?.mode === 'browser' || activeTab?.mode === 'pr' || activeTab?.mode === 'pages';
+  const isMultiInstanceMode = activeTab?.mode === 'file' || activeTab?.mode === 'chat' || activeTab?.mode === 'browser' || activeTab?.mode === 'pr' || activeTab?.mode === 'pages' || activeTab?.mode === 'pty';
   const activeModeTabs = React.useMemo(() => {
     if (!activeTab) return [];
     const modeTabs = tabs.filter((tab) => tab.mode === activeTab.mode);
@@ -759,6 +689,18 @@ export const ContextPanel: React.FC<{ zone?: ContextZone; variant?: 'center' | '
                 ? <ContextPanelHeaderSlotProvider value={headerSlotEl}><WorkflowsPanel directory={effectiveDirectory || null} /></ContextPanelHeaderSlotProvider>
             : activeTab?.mode === 'pages' && !activeTab.targetPath
                 ? <ReceivedPagesTab />
+            : activeTab?.mode === 'pty'
+                ? (
+                  <React.Suspense fallback={null}>
+                    <ShellOutputPane
+                      key={activeTab.id}
+                      shellID={activeTab.dedupeKey}
+                      directory={activeTab.targetDirectory ?? effectiveDirectory}
+                      label={activeTab.label ?? activeTab.dedupeKey}
+                      visible={isOpen}
+                    />
+                  </React.Suspense>
+                )
         : null;
 
   const isFileTabActive = activeTab?.mode === 'file';

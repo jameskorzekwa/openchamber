@@ -81,6 +81,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
   'quota.family.zen': 'Zen-Modelle',
@@ -285,6 +286,7 @@ export const dict = {
   ...tooltipsWorkspaceI18n['de'],
   ...tooltipsPanelI18n['de'],
   ...tooltipsChatI18n['de'],
+  ...updateStatusI18n.de,
   'common.language.german': 'Deutsch',
   'common.loading': 'Wird geladen...',
   'common.image.loading': 'Bild wird geladen',
@@ -795,6 +797,12 @@ export const dict = {
   'sessions.sidebar.session.status.questionPendingOpen': 'Ausstehende Frage. Öffnet die Sitzung, die fragt',
   'sessions.sidebar.session.status.activeFor': 'Seit {duration} aktiv',
   'sessions.sidebar.session.status.lastTurnDuration': 'Letzter Durchlauf dauerte {duration}',
+  'chat.backgroundWork.label': 'Läuft im Hintergrund',
+  'chat.backgroundWork.agentWaiting': 'Agent wartet',
+  'chat.backgroundWork.ariaLabel': 'Läuft im Hintergrund: {summary}',
+  'chat.backgroundWork.subtaskCountOne': '1 Teilaufgabe',
+  'chat.backgroundWork.subtaskCountMany': '{count} Teilaufgaben',
+  'chat.backgroundWork.subtaskUntitled': 'Teilaufgabe',
   'sessions.sidebar.session.subsessions.collapse': 'Untersitzungen einklappen',
   'sessions.sidebar.session.subsessions.expand': 'Untersitzungen ausklappen',
   'sessions.sidebar.dialogs.deleteSession.title': 'Sitzung löschen?',
@@ -4097,4 +4105,16 @@ export const dict = {
   'chat.promptHistorySearch.hint': "↑ ↓ zum Durchsuchen · Enter zum Laden · Esc zum Schließen",
   'helpDialog.item.searchPromptHistory': "Prompt-Verlauf durchsuchen (Chat-Eingabe)",
 
+  'chat.backgroundShells.openOutput': 'Ausgabe anzeigen',
+  'chat.backgroundShells.openOutputAria': 'Ausgabe von {command} anzeigen',
+  'shellOutput.status.loading': 'Wird geladen…',
+  'shellOutput.status.running': 'Läuft',
+  'shellOutput.status.finished': 'Beendet',
+  'shellOutput.status.finishedWithCode': 'Beendet (Exit {code})',
+  'shellOutput.status.stopped': 'Gestoppt',
+  'shellOutput.status.notFound': 'Dieser Befehl ist nicht mehr verfügbar',
+  'shellOutput.readOnly': 'Nur lesen',
+  'shellOutput.earlierOmitted': '… frühere Ausgabe ausgelassen',
+  'contextPanel.mode.pty': 'Prozess',
+  'contextRail.surface.pty.description': 'Ausgabe eines Befehls, den der Agent im Hintergrund ausführt',
 };

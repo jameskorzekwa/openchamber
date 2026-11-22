@@ -82,6 +82,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   'quota.family.zen': 'Zen 모델',
@@ -286,6 +287,7 @@ export const dict: Record<I18nKey, string> = {
   ...tooltipsWorkspaceI18n['ko'],
   ...tooltipsPanelI18n['ko'],
   ...tooltipsChatI18n['ko'],
+  ...updateStatusI18n.ko,
   'terminalView.actions.attachSelection': '선택한 출력 첨부',
   'terminalView.actions.copySelection': '선택한 출력 복사',
   'terminalView.toast.selectionCopied': '출력을 복사했습니다',
@@ -890,6 +892,12 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.status.questionPendingOpen': '대기 중인 질문. 요청한 세션을 엽니다',
   'sessions.sidebar.session.status.activeFor': '{duration} 동안 활성 상태',
   'sessions.sidebar.session.status.lastTurnDuration': '마지막 턴 소요 시간 {duration}',
+  'chat.backgroundWork.label': '백그라운드에서 실행 중',
+  'chat.backgroundWork.agentWaiting': '에이전트 대기 중',
+  'chat.backgroundWork.ariaLabel': '백그라운드에서 실행 중: {summary}',
+  'chat.backgroundWork.subtaskCountOne': '하위 작업 1개',
+  'chat.backgroundWork.subtaskCountMany': '하위 작업 {count}개',
+  'chat.backgroundWork.subtaskUntitled': '하위 작업',
   'sessions.sidebar.session.subsessions.collapse': '하위 세션 접기',
   'sessions.sidebar.session.subsessions.expand': '하위 세션 펼치기',
   'sessions.sidebar.dialogs.deleteSession.title': '세션 삭제?',
@@ -4099,4 +4107,16 @@ export const dict: Record<I18nKey, string> = {
   'chat.promptHistorySearch.hint': "↑ ↓ 탐색 · Enter 불러오기 · Esc 닫기",
   'helpDialog.item.searchPromptHistory': "프롬프트 기록 검색(채팅 입력)",
 
+  'chat.backgroundShells.openOutput': '출력 보기',
+  'chat.backgroundShells.openOutputAria': '{command}의 출력 보기',
+  'shellOutput.status.loading': '불러오는 중…',
+  'shellOutput.status.running': '실행 중',
+  'shellOutput.status.finished': '종료됨',
+  'shellOutput.status.finishedWithCode': '종료됨 (종료 코드 {code})',
+  'shellOutput.status.stopped': '중지됨',
+  'shellOutput.status.notFound': '이 명령은 더 이상 사용할 수 없습니다',
+  'shellOutput.readOnly': '읽기 전용',
+  'shellOutput.earlierOmitted': '… 이전 출력 생략됨',
+  'contextPanel.mode.pty': '프로세스',
+  'contextRail.surface.pty.description': '에이전트가 백그라운드에서 실행 중인 명령의 출력',
 };

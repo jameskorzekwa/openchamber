@@ -82,6 +82,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   'quota.family.zen': 'Zen モデル',
@@ -286,6 +287,7 @@ export const dict: Record<I18nKey, string> = {
   ...tooltipsWorkspaceI18n['ja'],
   ...tooltipsPanelI18n['ja'],
   ...tooltipsChatI18n['ja'],
+  ...updateStatusI18n.ja,
   'terminalView.actions.attachSelection': '選択した出力を添付',
   'terminalView.actions.copySelection': '選択した出力をコピー',
   'terminalView.toast.selectionCopied': '出力をコピーしました',
@@ -890,6 +892,12 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.status.questionPendingOpen': '保留中の質問。要求しているセッションを開きます',
   'sessions.sidebar.session.status.activeFor': 'アクティブ時間 {duration}',
   'sessions.sidebar.session.status.lastTurnDuration': '前回のターンの所要時間 {duration}',
+  'chat.backgroundWork.label': 'バックグラウンドで実行中',
+  'chat.backgroundWork.agentWaiting': 'エージェント待機中',
+  'chat.backgroundWork.ariaLabel': 'バックグラウンドで実行中：{summary}',
+  'chat.backgroundWork.subtaskCountOne': 'サブタスク1件',
+  'chat.backgroundWork.subtaskCountMany': 'サブタスク{count}件',
+  'chat.backgroundWork.subtaskUntitled': 'サブタスク',
   'sessions.sidebar.session.subsessions.collapse': 'サブセッションを折りたたむ',
   'sessions.sidebar.session.subsessions.expand': 'サブセッションを展開',
   'sessions.sidebar.dialogs.deleteSession.title': 'セッションを削除しますか？',
@@ -4099,4 +4107,16 @@ export const dict: Record<I18nKey, string> = {
   'chat.promptHistorySearch.hint': "↑ ↓ で閲覧 · Enter で読み込み · Esc で閉じる",
   'helpDialog.item.searchPromptHistory': "プロンプト履歴を検索（チャット入力）",
 
+  'chat.backgroundShells.openOutput': '出力を表示',
+  'chat.backgroundShells.openOutputAria': '{command} の出力を表示',
+  'shellOutput.status.loading': '読み込み中…',
+  'shellOutput.status.running': '実行中',
+  'shellOutput.status.finished': '終了',
+  'shellOutput.status.finishedWithCode': '終了（終了コード {code}）',
+  'shellOutput.status.stopped': '停止済み',
+  'shellOutput.status.notFound': 'このコマンドは利用できなくなりました',
+  'shellOutput.readOnly': '読み取り専用',
+  'shellOutput.earlierOmitted': '… それ以前の出力は省略',
+  'contextPanel.mode.pty': 'プロセス',
+  'contextRail.surface.pty.description': 'エージェントがバックグラウンドで実行中のコマンドの出力',
 };

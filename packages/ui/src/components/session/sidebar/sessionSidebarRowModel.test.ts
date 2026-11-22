@@ -104,6 +104,22 @@ describe('buildSessionSidebarRowModel', () => {
     expect(buildSessionSidebarRowModel(input).rows.filter((row) => row.kind === 'session').map((row) => row.node.session.id)).toEqual(['active-chat']);
   });
 
+  test("a project's archive starts folded and opens once the user toggles it", () => {
+    const archived = node('archived-session');
+    archived.session.time.archived = 3;
+    const archive = group([archived], { id: 'archived', label: 'Archived', isMain: false, isArchivedBucket: true, startsCollapsed: true, directory: null, folderScopeKey: null });
+    const input = args([project([group([node('active-session')]), archive])]);
+    const sessionIds = () => buildSessionSidebarRowModel(input).rows.flatMap((row) => row.kind === 'session' ? [row.node.session.id] : []);
+    const archiveHeader = () => buildSessionSidebarRowModel(input).rows.find((row) => row.kind === 'group-header' && row.group === archive);
+
+    expect(archiveHeader()).toMatchObject({ collapsed: true });
+    expect(sessionIds()).toEqual(['active-session']);
+
+    input.collapsedGroups = new Set(['project-a:archived']);
+    expect(archiveHeader()).toMatchObject({ collapsed: false });
+    expect(sessionIds()).toEqual(['active-session', 'archived-session']);
+  });
+
   test('keeps a cross-project child display-nested while folder actions use its own project', () => {
     const child = node('child');
     child.session.directory = '/project-b/worktree';

@@ -81,6 +81,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
   'quota.family.zen': 'Zen Models',
@@ -285,6 +286,7 @@ export const dict = {
   ...tooltipsWorkspaceI18n['en'],
   ...tooltipsPanelI18n['en'],
   ...tooltipsChatI18n['en'],
+  ...updateStatusI18n.en,
   'terminalView.actions.attachSelection': 'Attach selected output',
   'terminalView.actions.copySelection': 'Copy selected output',
   'terminalView.toast.selectionCopied': 'Output copied',
@@ -889,6 +891,12 @@ export const dict = {
   'sessions.sidebar.session.status.questionPendingOpen': 'Pending question. Opens the session that asks',
   'sessions.sidebar.session.status.activeFor': 'Active for {duration}',
   'sessions.sidebar.session.status.lastTurnDuration': 'Last turn took {duration}',
+  'chat.backgroundWork.label': 'Running in background',
+  'chat.backgroundWork.agentWaiting': 'Agent waiting',
+  'chat.backgroundWork.ariaLabel': 'Running in background: {summary}',
+  'chat.backgroundWork.subtaskCountOne': '1 subtask',
+  'chat.backgroundWork.subtaskCountMany': '{count} subtasks',
+  'chat.backgroundWork.subtaskUntitled': 'Subtask',
   'sessions.sidebar.session.subsessions.collapse': 'Collapse subsessions',
   'sessions.sidebar.session.subsessions.expand': 'Expand subsessions',
   'sessions.sidebar.dialogs.deleteSession.title': 'Delete session?',
@@ -4099,6 +4107,18 @@ export const dict = {
   'chat.promptHistorySearch.hint': "↑ ↓ to browse · Enter to load · Esc to close",
   'helpDialog.item.searchPromptHistory': "Search prompt history (chat input)",
 
+  'chat.backgroundShells.openOutput': 'Show output',
+  'chat.backgroundShells.openOutputAria': 'Show output of {command}',
+  'shellOutput.status.loading': 'Loading…',
+  'shellOutput.status.running': 'Running',
+  'shellOutput.status.finished': 'Finished',
+  'shellOutput.status.finishedWithCode': 'Finished (exit {code})',
+  'shellOutput.status.stopped': 'Stopped',
+  'shellOutput.status.notFound': 'This command is no longer available',
+  'shellOutput.readOnly': 'Read-only',
+  'shellOutput.earlierOmitted': '… earlier output omitted',
+  'contextPanel.mode.pty': 'Process',
+  'contextRail.surface.pty.description': 'Output of a command the agent is running in the background',
 } as const;
 
 export type I18nKey = keyof typeof dict;

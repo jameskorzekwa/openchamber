@@ -81,6 +81,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict = {
   'quota.family.zen': 'Zen Modelleri',
@@ -224,6 +225,7 @@ export const dict = {
   ...tooltipsWorkspaceI18n['tr'],
   ...tooltipsPanelI18n['tr'],
   ...tooltipsChatI18n['tr'],
+  ...updateStatusI18n.tr,
   'terminalView.actions.attachSelection': 'Seçili çıktıyı ekle',
   'terminalView.actions.copySelection': 'Seçili çıktıyı kopyala',
   'terminalView.toast.selectionCopied': 'Çıktı kopyalandı',
@@ -803,6 +805,12 @@ export const dict = {
   'sessions.sidebar.session.status.questionPendingOpen': 'Bekleyen soru. İsteyen oturumu açar',
   'sessions.sidebar.session.status.activeFor': '{duration} süredir aktif',
   'sessions.sidebar.session.status.lastTurnDuration': 'Son tur {duration} sürdü',
+  'chat.backgroundWork.label': 'Arka planda çalışıyor',
+  'chat.backgroundWork.agentWaiting': 'Ajan bekliyor',
+  'chat.backgroundWork.ariaLabel': 'Arka planda çalışıyor: {summary}',
+  'chat.backgroundWork.subtaskCountOne': '1 alt görev',
+  'chat.backgroundWork.subtaskCountMany': '{count} alt görev',
+  'chat.backgroundWork.subtaskUntitled': 'Alt görev',
   'sessions.sidebar.session.subsessions.collapse': 'Alt session\'ları daralt',
   'sessions.sidebar.session.subsessions.expand': 'Alt session\'ları genişlet',
   'sessions.sidebar.dialogs.deleteSession.title': 'Session silinsin mi?',
@@ -4097,4 +4105,16 @@ export const dict = {
   'chat.promptHistorySearch.hint': "↑ ↓ ile gezin · Enter ile yükle · Esc ile kapat",
   'helpDialog.item.searchPromptHistory': "İstem geçmişinde ara (sohbet girişi)",
 
+  'chat.backgroundShells.openOutput': 'Çıktıyı göster',
+  'chat.backgroundShells.openOutputAria': '{command} çıktısını göster',
+  'shellOutput.status.loading': 'Yükleniyor…',
+  'shellOutput.status.running': 'Çalışıyor',
+  'shellOutput.status.finished': 'Bitti',
+  'shellOutput.status.finishedWithCode': 'Bitti (çıkış {code})',
+  'shellOutput.status.stopped': 'Durduruldu',
+  'shellOutput.status.notFound': 'Bu komut artık kullanılamıyor',
+  'shellOutput.readOnly': 'Salt okunur',
+  'shellOutput.earlierOmitted': '… önceki çıktı atlandı',
+  'contextPanel.mode.pty': 'İşlem',
+  'contextRail.surface.pty.description': 'Ajanın arka planda çalıştırdığı bir komutun çıktısı',
 };

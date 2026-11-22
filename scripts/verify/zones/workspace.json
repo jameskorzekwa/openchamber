@@ -48,7 +48,7 @@
     {
       "id": "panel",
       "name": "The right panel and its tabs",
-      "sources": ["packages/ui/src/components/layout/ContextPanel.tsx", "packages/ui/src/components/layout/ContextPanelRail.tsx", "packages/ui/src/components/ui/sortable-tabs-strip.tsx"],
+      "sources": ["packages/ui/src/components/layout/ContextPanel.tsx", "packages/ui/src/components/layout/contextPanelTabLabels.ts", "packages/ui/src/components/layout/ContextPanelRail.tsx", "packages/ui/src/components/ui/sortable-tabs-strip.tsx"],
       "what": "The rail opens and closes the right panel; files open in tabs, one tab per file; closing a tab shows the tab used before it, and closing the last file goes back to the tree; the tree and the editor hide and show; the panel can take the whole window.",
       "reach": "The icons on the right rail of a session, the panel's header buttons and its tabs.",
       "proof": "The panel shows and hides with the rail button, the tab count and the shown file follow each close, the tree and the editor swap, Expand panel folds the sidebar away until Collapse.",
@@ -147,7 +147,7 @@
     {
       "id": "overlays",
       "name": "The command palette and the shortcuts list",
-      "sources": ["packages/ui/src/components/ui/CommandPalette.tsx", "packages/ui/src/components/ui/HelpDialog.tsx", "packages/ui/src/hooks/useKeyboardShortcuts.ts"],
+      "sources": ["packages/ui/src/components/ui/CommandPalette.tsx", "packages/ui/src/components/ui/commandPaletteBuiltinCommands.tsx", "packages/ui/src/components/ui/HelpDialog.tsx", "packages/ui/src/hooks/useKeyboardShortcuts.ts"],
       "what": "Cmd/Ctrl+P opens the command palette and closes it again; Cmd/Ctrl+K then H lists the keyboard shortcuts.",
       "reach": "The shortcuts, anywhere in the app.",
       "proof": "The palette shows its commands and goes away on the second press; the Keyboard shortcuts dialog opens and Escape closes it.",
@@ -175,7 +175,7 @@
     {
       "id": "reasoning-toggle",
       "name": "Showing or hiding reasoning traces from the palette",
-      "sources": ["packages/ui/src/components/ui/CommandPalette.tsx", "packages/ui/src/components/ui/commandPaletteAppearance.tsx"],
+      "sources": ["packages/ui/src/components/ui/CommandPalette.tsx", "packages/ui/src/components/ui/commandPaletteBuiltinCommands.tsx", "packages/ui/src/components/ui/commandPaletteAppearance.tsx"],
       "what": "The palette command Show or hide reasoning traces flips the same setting as Settings > Chat.",
       "reach": "Cmd/Ctrl+P, type reasoning, Enter.",
       "proof": "The command is hidden while the query is empty; the Thinking blocks disappear after it runs, come back after the second run; the saved setting follows each run, and both states survive a reload.",
@@ -224,7 +224,7 @@
     {
       "id": "pages",
       "name": "Pages that cover the chat",
-      "sources": ["packages/ui/src/components/session/sidebar/pages/useSidebarPages.ts", "packages/ui/src/components/layout/MainLayout.tsx", "packages/ui/src/components/layout/Header.tsx", "packages/ui/src/components/views/ArchiveView.tsx"],
+      "sources": ["packages/ui/src/components/session/sidebar/pages/useSidebarPages.ts", "packages/ui/src/components/layout/MainLayout.tsx", "packages/ui/src/components/layout/Header.tsx", "packages/ui/src/components/views/ArchiveView.tsx", "packages/ui/src/components/views/archive/ArchiveSearchResultRow.tsx", "packages/ui/src/components/views/archive/archiveGroups.ts"],
       "what": "Archive, Stats and the other sidebar pages take the chat's place one at a time, and Back to chat leaves them.",
       "reach": "Pages in the left sidebar; the arrow at the start of the header.",
       "proof": "Opening Stats while Archive shows replaces Archive; Back to chat shows the composer again.",

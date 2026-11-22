@@ -17,6 +17,20 @@ Do not put high-frequency local component state here just because it is convenie
 
 ## Architecture
 
+### Validated server update monitoring
+
+`installationMonitor` owns sequential status reads and their two-second pacing.
+Active installation states keep polling across network errors, HTTP failures
+and malformed responses without replacing the last authoritative state.
+Terminal states stop the loop. Concurrent refreshes share a request.
+
+Each observed lifecycle change advances a revision, so an older status response
+cannot overwrite a newer transition. Reset aborts pending reads and retires their
+results before another runtime can use the store. The store alone decides whether
+this page watched an active install finish; a persisted `installed` record is
+insufficient. Native clients can update their connected server through an explicit
+web target without changing their own application-update runtime.
+
 Session destination registration is owned by `sync/session-admission.ts`.
 `useProjectsStore.adoptSessionProject` appends only a server-confirmed project,
 or adds a VS Code workspace folder after fingerprint trust has succeeded. It
@@ -457,6 +471,8 @@ deleted on, so ids that can never render again do not pile up. Sets of other
 servers keep it: an imported session keeps its id, so the same id on another
 server is a different, live session.
 An archived session keeps its id, so restoring it brings its tab back.
+
+`useUpdateStore.ts` owns the web installer lifecycle returned by the server. Update checks parse and retain the authoritative `available`, `downloading`, `installing`, `restarting`, `installed`, `failed`, `rollback`, or `no-validated-release` record. Active states poll even when the dialog is closed, and opening the dialog refreshes the same store so reloads and separate tabs recover helper-written terminal state. The server retains `restarting` until the restart transaction verifies the exact target or previous release; components must not infer success from process startup, update availability, or generic reachability. The store refuses a second POST while an active state exists; the server's interprocess lock remains the final cross-process authority. A no-validated-release notice suppresses installation, not the user's manual check action. The server leaves `installed` on disk after every completed update, so the state alone does not mean "just finished": `installationCompleted` is set only when this page watched an active state (`downloading`, `installing`, `restarting`) turn into `installed`, and `UpdateDialog` reloads the page on that flag, never on a bare `installed` record. A stale `installed` renders as idle and still offers the update.
 
 ### Session / project coordination stores
 

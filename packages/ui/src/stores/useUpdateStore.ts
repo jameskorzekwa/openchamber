@@ -19,6 +19,8 @@ import { getUpdateInstallErrorMessage } from '@/lib/updateInstallError';
 import { getUpdateCheckErrorMessage } from '@/lib/updateCheckError';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getClientPlatform, isCapacitorApp } from '@/lib/platform';
+import { parseWebUpdateInstallationStatus, type WebUpdateInstallationStatus } from '@/components/update/web-update-status';
+import { createInstallationMonitor, isInstallationActive } from './installationMonitor';
 
 declare const __APP_VERSION__: string | undefined;
 
@@ -37,6 +39,8 @@ type UpdateState = {
   runtimeType: 'desktop' | 'web' | 'vscode' | 'mobile' | null;
   lastChecked: number | null;
   nextCheckInSec: number | null;
+  installation: WebUpdateInstallationStatus | null;
+  installationCompleted: boolean;
 };
 
 interface UpdateStore extends UpdateState {
@@ -47,6 +51,9 @@ interface UpdateStore extends UpdateState {
   cancelIdleInstall: () => Promise<void>;
   applyIdleUpdate: (status: IdleDesktopUpdate) => void;
   markDownloaded: (version: string) => void;
+  refreshInstallation: () => Promise<WebUpdateInstallationStatus | null>;
+  startWebUpdate: (targetRuntime: ClientRuntime) => Promise<boolean>;
+  reconcileInstallation: (status: WebUpdateInstallationStatus | null) => void;
   dismiss: () => void;
   reset: () => void;
 }
@@ -188,7 +195,23 @@ export function parseUpdateCheckResponse(data: {
   };
 }
 
-async function checkForWebUpdates(runtime: ClientRuntime, currentVersion?: string): Promise<UpdateInfo | null> {
+type WebUpdateCheck = { info: UpdateInfo; installation: WebUpdateInstallationStatus | null };
+
+let updateStoreRuntimeFetch = runtimeFetch;
+const installationMonitor = createInstallationMonitor({
+  read: async (signal) => {
+    const response = await updateStoreRuntimeFetch('/api/openchamber/update-status', { method: 'GET', headers: { Accept: 'application/json' }, signal });
+    return response.ok ? parseWebUpdateInstallationStatus(await response.json()) : null;
+  },
+  current: () => useUpdateStore.getState().installation,
+  publish: (status) => useUpdateStore.getState().reconcileInstallation(status),
+});
+
+export function setUpdateStoreRuntimeFetchForTests(fetcher: typeof runtimeFetch | null): void {
+  updateStoreRuntimeFetch = fetcher ?? runtimeFetch;
+}
+
+async function checkForWebUpdates(runtime: ClientRuntime, currentVersion?: string): Promise<WebUpdateCheck | null> {
   try {
     const params = mapRuntimeParams(runtime);
     const vscodeVersion = typeof window !== 'undefined'
@@ -196,7 +219,7 @@ async function checkForWebUpdates(runtime: ClientRuntime, currentVersion?: strin
       : undefined;
     if (currentVersion) params.set('currentVersion', currentVersion);
     else if (runtime === 'vscode' && vscodeVersion) params.set('currentVersion', vscodeVersion);
-    const response = await runtimeFetch(`/api/openchamber/update-check?${params.toString()}`, {
+    const response = await updateStoreRuntimeFetch(`/api/openchamber/update-check?${params.toString()}`, {
       method: 'GET',
       headers: { Accept: 'application/json' },
       priority: 'low',
@@ -206,7 +229,11 @@ async function checkForWebUpdates(runtime: ClientRuntime, currentVersion?: strin
       throw new Error(`Server responded with ${response.status}`);
     }
 
-    return parseUpdateCheckResponse(await response.json());
+    const data = await response.json();
+    return {
+      info: parseUpdateCheckResponse(data),
+      installation: parseWebUpdateInstallationStatus(data.installation),
+    };
   } catch (error) {
     console.warn('Failed to check for updates:', error);
     return null;
@@ -259,6 +286,8 @@ const initialState: UpdateState = {
   runtimeType: null,
   lastChecked: null,
   nextCheckInSec: null,
+  installation: null,
+  installationCompleted: false,
 };
 
 export const useUpdateStore = create<UpdateStore>()((set, get) => ({
@@ -286,7 +315,7 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
           throw new Error(formatMessage(useI18nStore.getState().dictionary, 'updateDialog.error.restartUnavailable'));
         }
         suggestedSec = apiResult.status === 'fulfilled'
-          ? (apiResult.value?.nextSuggestedCheckInSec ?? null)
+          ? (apiResult.value?.info.nextSuggestedCheckInSec ?? null)
           : null;
         const previousVersion = get().info?.version ?? null;
         const offeredVersion = desktopInfo.version ?? null;
@@ -316,14 +345,16 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
 
         return suggestedSec;
       } else if (runtime === 'web') {
-        info = await checkForWebUpdates('web');
+        const result = await checkForWebUpdates('web');
+        info = result?.info ?? null;
         suggestedSec = info?.nextSuggestedCheckInSec ?? null;
+        if (result) get().reconcileInstallation(result.installation);
       } else if (runtime === 'vscode') {
         const vscodeInfo = await checkForWebUpdates('vscode');
-        suggestedSec = vscodeInfo?.nextSuggestedCheckInSec ?? null;
+        suggestedSec = vscodeInfo?.info.nextSuggestedCheckInSec ?? null;
       } else if (runtime === 'mobile') {
         const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : undefined;
-        info = await checkForWebUpdates('mobile', appVersion);
+        info = (await checkForWebUpdates('mobile', appVersion))?.info ?? null;
         suggestedSec = info?.nextSuggestedCheckInSec ?? null;
       }
 
@@ -442,6 +473,42 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
     }
   },
 
+  reconcileInstallation: (installation) => {
+    const previous = get();
+    set({
+      installation,
+      installationCompleted: installation?.state === 'installed'
+        && (previous.installationCompleted || isInstallationActive(previous.installation)),
+      error: installation?.state === 'failed' || installation?.state === 'rollback' ? installation.error : null,
+    });
+    installationMonitor.observe(installation);
+  },
+
+  refreshInstallation: () => installationMonitor.refresh(),
+
+  startWebUpdate: async (targetRuntime) => {
+    const current = get();
+    if (targetRuntime !== 'web' || isInstallationActive(current.installation)) return false;
+    try {
+      const response = await updateStoreRuntimeFetch('/api/openchamber/update-install', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || data?.accepted !== true) {
+        set({ error: data?.error || `Server error: ${response.status}` });
+        return false;
+      }
+      const installation = parseWebUpdateInstallationStatus(data.installation);
+      if (!installation) {
+        set({ error: 'Server returned an invalid installation state' });
+        return false;
+      }
+      get().reconcileInstallation(installation);
+      return true;
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : 'Failed to start update' });
+      return false;
+    }
+  },
+
   cancelIdleInstall: async () => {
     if (get().runtimeType !== 'desktop' || get().idlePhase === 'installing') return;
     try {
@@ -468,6 +535,7 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
 
   reset: () => {
     lastDownloadedDesktopVersion = null;
+    installationMonitor.reset();
     set(initialState);
   },
 }));

@@ -1,10 +1,31 @@
 import fs from 'node:fs';
+import updaterContract from './updater-contract.cjs';
 
-export const PRODUCTION_UPDATER_FEED = Object.freeze({
-  provider: 'github',
-  owner: 'openchamber',
-  repo: 'openchamber',
+export const {
+  DEFAULT_APP_UPDATE_CONFIG,
+  J2K_MACOS_APP_UPDATE_CONFIG,
+} = updaterContract;
+
+export const MACOS_PRODUCTION_UPDATER_FEED = Object.freeze({
+  provider: J2K_MACOS_APP_UPDATE_CONFIG.provider,
+  url: J2K_MACOS_APP_UPDATE_CONFIG.url,
 });
+
+const DEFAULT_PRODUCTION_UPDATER_FEED = Object.freeze({
+  provider: DEFAULT_APP_UPDATE_CONFIG.provider,
+  owner: DEFAULT_APP_UPDATE_CONFIG.owner,
+  repo: DEFAULT_APP_UPDATE_CONFIG.repo,
+});
+
+export const resolveProductionUpdaterFeed = ({ platform = process.platform, j2kBuild = false } = {}) => (
+  platform === 'darwin' && j2kBuild ? MACOS_PRODUCTION_UPDATER_FEED : DEFAULT_PRODUCTION_UPDATER_FEED
+);
+
+export const resolveUpdaterPrereleasePolicy = ({ platform = process.platform, j2kBuild = false } = {}) => (
+  platform === 'darwin' && j2kBuild
+);
+
+export const PRODUCTION_UPDATER_FEED = DEFAULT_PRODUCTION_UPDATER_FEED;
 
 export const CANARY_UPDATER_FEED = Object.freeze({
   provider: 'generic',
@@ -64,13 +85,17 @@ export const parseLoopbackUpdaterUrl = (value) => {
 
 export const resolveUpdaterFeed = ({
   environment = process.env,
+  j2kBuild = false,
+  platform = process.platform,
   testBuild = false,
   channel = 'stable',
   source = 'github',
 } = {}) => {
-  const productionFeed = channel === 'canary'
-    ? (source === 'mirror' ? CANARY_MIRROR_UPDATER_FEED : CANARY_UPDATER_FEED)
-    : (source === 'mirror' ? STABLE_MIRROR_UPDATER_FEED : PRODUCTION_UPDATER_FEED);
+  const productionFeed = platform === 'darwin' && j2kBuild
+    ? MACOS_PRODUCTION_UPDATER_FEED
+    : channel === 'canary'
+      ? (source === 'mirror' ? CANARY_MIRROR_UPDATER_FEED : CANARY_UPDATER_FEED)
+      : (source === 'mirror' ? STABLE_MIRROR_UPDATER_FEED : PRODUCTION_UPDATER_FEED);
   if (environment.OPENCHAMBER_E2E !== '1'
     || testBuild !== true) {
     return productionFeed;

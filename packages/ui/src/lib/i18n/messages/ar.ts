@@ -82,6 +82,7 @@ import { tooltipsTerminalBrowserI18n } from './tooltips-terminal-browser.i18n';
 import { tooltipsWorkspaceI18n } from './tooltips-workspace.i18n';
 import { tooltipsPanelI18n } from './tooltips-panel.i18n';
 import { tooltipsChatI18n } from './tooltips-chat.i18n';
+import { updateStatusI18n } from './update-status.i18n';
 
 export const dict: Record<I18nKey, string> = {
   'quota.family.zen': 'نماذج Zen',
@@ -4057,6 +4058,7 @@ export const dict: Record<I18nKey, string> = {
   ...tooltipsWorkspaceI18n['ar'],
   ...tooltipsPanelI18n['ar'],
   ...tooltipsChatI18n['ar'],
+  ...updateStatusI18n.ar,
   'settings.usage.page.state.claudeSignedOutTitle': 'لم يتم تسجيل الدخول إلى Claude Code',
   'settings.usage.page.state.claudeSignInCommand': 'شغّل هذا الأمر في الطرفية:',
   'settings.openchamber.visual.field.confirmFileTreeMove': 'التأكيد قبل نقل الملفات',
@@ -4125,4 +4127,23 @@ export const dict: Record<I18nKey, string> = {
   'chat.promptHistorySearch.hint': "↑ ↓ للتصفح · Enter للتحميل · Esc للإغلاق",
   'helpDialog.item.searchPromptHistory': "البحث في سجل المطالبات (إدخال الدردشة)",
 
+  'chat.backgroundWork.label': 'قيد التشغيل في الخلفية',
+
+  'chat.backgroundWork.agentWaiting': 'الوكيل ينتظر',
+  'chat.backgroundWork.ariaLabel': 'قيد التشغيل في الخلفية: {summary}',
+  'chat.backgroundWork.subtaskCountOne': 'مهمة فرعية واحدة',
+  'chat.backgroundWork.subtaskCountMany': '{count} من المهام الفرعية',
+  'chat.backgroundWork.subtaskUntitled': 'مهمة فرعية',
+  'chat.backgroundShells.openOutput': 'عرض المخرجات',
+  'chat.backgroundShells.openOutputAria': 'عرض مخرجات {command}',
+  'shellOutput.status.loading': 'جارٍ التحميل…',
+  'shellOutput.status.running': 'قيد التشغيل',
+  'shellOutput.status.finished': 'انتهى',
+  'shellOutput.status.finishedWithCode': 'انتهى (رمز الخروج {code})',
+  'shellOutput.status.stopped': 'متوقف',
+  'shellOutput.status.notFound': 'لم يعد هذا الأمر متاحًا',
+  'shellOutput.readOnly': 'للقراءة فقط',
+  'shellOutput.earlierOmitted': '… تم حذف المخرجات السابقة',
+  'contextPanel.mode.pty': 'عملية',
+  'contextRail.surface.pty.description': 'مخرجات أمر يشغّله الوكيل في الخلفية',
 } as const;

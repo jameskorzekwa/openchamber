@@ -175,6 +175,14 @@ through the server they are connected to.
 
 ## Decisions
 
+### Why persistence mechanics are separate from wait transitions
+
+`wait-store.ts` owns the file format, corrupt-file recovery and atomic writes.
+The runtime retains the write queue, rollback, revision changes and broadcasts,
+so extracting disk access does not change when a transition becomes durable.
+`wait-model.ts` owns schema validation and the public projections; in-memory
+arguments still use the SDK schema output.
+
 ### Why in-memory arguments follow the schema output
 
 `WaitArgs` is the inferred output of the SDK's `waitArgsSchema`. An optional

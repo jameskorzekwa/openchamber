@@ -9,6 +9,8 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import http from 'http';
 import { webPackagePaths } from './lib/web-package-paths.js';
+import { readRuntimePackageVersion, resolveRuntimeBuildRevision } from './lib/opencode/build-revision.js';
+import { resolveManagedInstallRoot } from './lib/openchamber-update/validated-release-installer.js';
 import { fileURLToPath } from 'url';
 import os from 'os';
 import crypto from 'crypto';
@@ -289,6 +291,7 @@ interface WebUiServerOptions {
   getIsWindowFocused?: Parameters<ReturnType<typeof createNotificationTriggerRuntime>['setGetIsWindowFocused']>[0] | undefined;
   getDesktopRuntimeConfig?: Parameters<typeof attachRealtimeProxy>[0]['getDesktopRuntimeConfig'] | undefined;
   desktopUpdater?: BootstrapInput['desktopUpdater'] | undefined;
+  selfUpdate?: boolean;
   builtInExtensionsDir?: string | undefined;
 }
 
@@ -361,19 +364,9 @@ function shouldSkipCompression(req: Request, res: Response) {
   return headerIncludesEventStream(res.getHeader('Content-Type'));
 }
 
-const OPENCHAMBER_VERSION = (() => {
-  try {
-    const packagePath = webPackagePaths.packageJson;
-    const raw = fs.readFileSync(packagePath, 'utf8');
-    const pkg: unknown = JSON.parse(raw);
-    if (isRecord(pkg) && isString(pkg.version) && pkg.version.trim().length > 0) {
-      return pkg.version.trim();
-    }
-  } catch {
-    return 'unknown';
-  }
-  return 'unknown';
-})();
+const OPENCHAMBER_VERSION = readRuntimePackageVersion();
+
+const OPENCHAMBER_BUILD_REVISION = resolveRuntimeBuildRevision({ packageVersion: OPENCHAMBER_VERSION });
 
 const isEnvFlagEnabled = (value: string | boolean | number | undefined) => {
   if (value === true || value === 1) return true;
@@ -2570,6 +2563,7 @@ async function main(options: WebUiServerOptions = {}) {
     && isCallback(options.desktopUpdater.restart)
     ? options.desktopUpdater
     : null;
+  const selfUpdate = options.selfUpdate !== false;
 
   console.log(`Starting OpenChamber on port ${port === 0 ? 'auto' : port}`);
 
@@ -2672,6 +2666,7 @@ async function main(options: WebUiServerOptions = {}) {
   const bootstrapResult = bootstrapRuntime.setupBaseRoutes(app, {
     process,
     openchamberVersion: OPENCHAMBER_VERSION,
+    openchamberBuildRevision: OPENCHAMBER_BUILD_REVISION,
     runtimeName: process.env.OPENCHAMBER_RUNTIME || 'web',
     serverStartedAt,
     gracefulShutdown,
@@ -2714,6 +2709,8 @@ async function main(options: WebUiServerOptions = {}) {
       return Number.isFinite(port) && port > 0 ? port : null;
     },
     getTunnelUrl: () => tunnelRuntimeContextHolder?.tunnelService?.getPublicUrl?.() ?? null,
+    updateTransactionPath: path.join(resolveManagedInstallRoot(process.env.OPENCHAMBER_MANAGED_INSTALL_ROOT), 'restart-transaction.json'),
+    runtimePackageRoot: webPackagePaths.root,
     verboseRequestLogs: OPENCHAMBER_VERBOSE_REQUEST_LOGS,
     uiPassword,
     tunnelAuthController,
@@ -2775,6 +2772,7 @@ async function main(options: WebUiServerOptions = {}) {
     limitFailoverRuntime,
     registerExternalBridgeRoutes: (expressApp) => managedConfigRuntime?.registerExternalBridgeRoutes(expressApp, sessionKnowledgeRuntime.isToolHost),
     desktopUpdater,
+    selfUpdate,
     getOpenCodeCompatibility,
     skipBodyParsing: (req) => spacesHost?.skipsBodyParsing(req) === true,
   });
@@ -2985,6 +2983,7 @@ async function main(options: WebUiServerOptions = {}) {
     openChamberControlService,
     waitForOpenCodeReady,
     emitSessionCreatedEvent,
+    openchamberBuildRevision: OPENCHAMBER_BUILD_REVISION,
     getOpenChamberEventClients: () => uiOpenChamberEventClients,
     writeSseEvent,
     globalEventHub: globalMessageStreamHub,

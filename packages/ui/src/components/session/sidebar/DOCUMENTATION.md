@@ -250,7 +250,19 @@ windows show Chats. Folder windows retain their workspace-scoped grouped list
 and inline archived buckets. In empty windows the archived toggle shows a Chats
 archive bucket containing top-level sessions only. Restoring a root restores
 its archived descendants through the shared action. Web, Electron, hosted mobile
-and Capacitor keep their existing Chats and Archive views.
+and Capacitor keep their existing Chats and Archive views, and also list each
+project's archived sessions in an Archived group at the end of the project,
+folded until opened, with its session count on the header. The group lists
+every archived session (no Show more limit) and searches like the others.
+Archived Chats stay on the Archive page.
+
+`startsCollapsed` groups interpret membership in `collapsedGroups` as opened;
+other groups interpret membership as folded. Collapse all and Expand all clear
+that set, so either command folds a project's archive.
+
+Worktree, space and archive headers occupy a tree level, with folders and
+sessions one level below them. The project root group has no header, so its
+contents sit directly below the project.
 
 A project lists its worktree works among the works of its root, not in a
 block after them: the row model (`mergeWorktreeEntries` in
@@ -1732,6 +1744,18 @@ indicators. Indicators stay inside the existing row/header action-padding bounda
 hover, keyboard focus, and always-visible action buttons move them left without hiding them.
 
 ## Decisions
+
+### Why a project's archive starts folded
+
+Each project's Archived group is listed in the sidebar so its archived sessions
+are one click from the project, rather than only on the Archive page across
+every project. It starts folded so it never pushes the live work down: the
+group is marked `startsCollapsed` (VS Code's buckets are not), and
+`isSessionGroupCollapsed` reads its stored group-collapse entry inverted, so
+an entry means the user opened it, and Collapse all / Expand all, which clear
+the set, both leave every archive folded. Keeping it always open, or a
+separate show-archived switch as VS Code has, was weighed against this and
+rejected as the noisier or the more hidden of the two.
 
 ### Why merged cleanup asks the host whether a worktree is busy
 

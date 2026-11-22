@@ -118,6 +118,9 @@ describe('BackgroundShellsStrip', () => {
     expect(host.textContent).toContain('bun run dev --port 5391');
     expect(host.textContent).toContain('1m 5s');
     expect(button('Stop')).toBeDefined();
+    // J2K: the row stands out as live background work the agent waits on.
+    expect(host.textContent).toContain('Agent waiting');
+    expect(host.querySelector('[role="group"]')?.className).toContain('bg-primary/10');
   });
 
   test('several commands collapse into a count that expands in place', async () => {
@@ -125,7 +128,7 @@ describe('BackgroundShellsStrip', () => {
     expect(host.textContent).toContain('Background commands: 2');
     expect(host.textContent).not.toContain('bun run dev');
 
-    const header = buttons().find((item) => item.textContent === 'Background commands: 2');
+    const header = buttons().find((item) => item.textContent === 'Agent waitingBackground commands: 2');
     expect(header?.getAttribute('aria-expanded')).toBe('false');
     await act(async () => header?.click());
     expect(header?.getAttribute('aria-expanded')).toBe('true');

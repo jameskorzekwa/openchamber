@@ -23,6 +23,9 @@ export default defineConfig({
     include: [...configDefaults.include, '../ui/src/**/*.vitest.tsx'],
     exclude: [...configDefaults.exclude, 'opencode-server/**/*.test.mjs'],
     testTimeout: 30_000,
+    // Opt-in retries for CI gates on loaded runners (J2K macOS release gates
+    // set OPENCHAMBER_TEST_RETRY=2); a real regression fails every attempt.
+    retry: Number(process.env.OPENCHAMBER_TEST_RETRY) || 0,
     hookTimeout: 30_000,
     setupFiles: ['./test/isolated-data-dir.ts', './test/loopback-supertest.js'],
     env: {

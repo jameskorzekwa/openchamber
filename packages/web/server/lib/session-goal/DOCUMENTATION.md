@@ -426,6 +426,14 @@ Measured for this wording on 33 hand-written reports (17 continue or complete,
 Jev (`jev-latest`, one run through the goal loop): 33 of 33, `needs_user` at
 0.66 or higher on blocked reports and 0.26 or lower on the rest.
 
+### Why input interpretation is separate from the control loop
+
+`goal-state.ts` owns settings, metadata normalization and event projections.
+`messages.ts` owns the message projection, token snapshots and truncation
+chronology. The runtime retains all timers, live checks, accounting writes,
+interruptions and continuations. Those owners share the same interpreted
+records, preserving the existing wire coercions and stale-write checks.
+
 ### Why objective content includes JSON values
 
 The HTTP route passes JSON `content` through to objective storage. Storage keeps

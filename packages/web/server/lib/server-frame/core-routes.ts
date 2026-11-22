@@ -1,3 +1,6 @@
+import { parseLoopbackUrl, isRequestAuthorized } from './request-authorization.js';
+import { registerUpdateAttestationRoutes } from './update-attestation-routes.js';
+export { isRequestAuthorized } from './request-authorization.js';
 import { buildExternalManualRestartResponse } from '../opencode/config-mutation-response.js';
 import { ThemeImportStorageError } from '../appearance/theme-runtime.js';
 import { registerThemeCatalogRoutes } from '../appearance/theme-catalog.js';
@@ -20,6 +23,8 @@ import type { TunnelRoutesDependencies } from '../tunnels/routes.js';
 import type { createThemeRuntime } from '../appearance/theme-runtime.js';
 import type { createClientPushAccess } from '../notifications/client-push-access.js';
 import type { createOpenCodeLifecycleRuntime } from '../opencode/lifecycle.js';
+import type { OpenCodeLifecycleState } from '../opencode/lifecycle.js';
+import type { createRestartAttestation, consumeSupervisorTermination } from '../openchamber-update/restart-transaction.js';
 
 const FORWARDING_HEADERS = ['forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-real-ip'];
 
@@ -28,19 +33,23 @@ type TunnelAuthController = ReturnType<typeof createTunnelAuth>;
 type ManagementAuthContext = Pick<AuthContext, 'type' | 'client' | 'clientId'>;
 type ThemeRuntime = ReturnType<typeof createThemeRuntime>;
 
-export interface RequestAuthorizationDependencies {
-  tunnelAuthController: TunnelAuthController | null;
-  uiAuthController: UiAuthController | null;
-}
-
 export interface ServerStatusDependencies {
   express: ExpressFactory;
   process: NodeJS.Process;
   openchamberVersion: string;
+  openchamberBuildRevision?: string;
+  updateTransactionPath?: string | null;
+  runtimePackageRoot?: string | null;
+  createRestartAttestation?: typeof createRestartAttestation;
+  consumeSupervisorTermination?: typeof consumeSupervisorTermination;
   runtimeName: string;
   serverStartedAt: string;
   gracefulShutdown: (options: { exitProcess: boolean }) => Promise<void>;
-  getHealthSnapshot: () => object;
+  getHealthSnapshot: () => {
+    isOpenCodeReady?: boolean;
+    openCodeRunning?: boolean;
+    lastOpenCodeError?: OpenCodeLifecycleState['lastOpenCodeError'];
+  };
   getServerPort?: () => number | null;
   getTunnelUrl?: () => string | null;
   getServerId?: () => Promise<string | null>;
@@ -86,7 +95,7 @@ export interface CommonRequestDependencies {
   skipBodyParsing?: (req: Request) => boolean;
 }
 
-interface RouteInput extends ClientInput, PairingInput, RedemptionInput {
+export interface RouteInput extends ClientInput, PairingInput, RedemptionInput {
   previewUrls?: unknown;
   pairingId?: unknown;
   serverUrl?: unknown;
@@ -123,50 +132,22 @@ export const registerHttpResponseDiagnostics = (app: Application, journal: Diagn
   });
 };
 
-const parseLoopbackUrl = (rawUrl: RouteInput['url']) => {
-  if (!isString(rawUrl)) {
-    return null;
-  }
-
-  let url;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return null;
-  }
-
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    return null;
-  }
-
-  const host = url.hostname;
-  if (host !== 'localhost' && host !== '127.0.0.1' && host !== '::1' && host !== '0.0.0.0') {
-    return null;
-  }
-
-  return url;
-};
-
-export const isRequestAuthorized = async (req: Request, res: Response, { tunnelAuthController, uiAuthController }: RequestAuthorizationDependencies) => {
-  const scope = tunnelAuthController?.classifyRequestScope?.(req);
-  if (scope === 'tunnel' || scope === 'unknown-public') {
-    return Boolean(tunnelAuthController?.getTunnelSessionFromRequest(req));
-  }
-  if (!uiAuthController) return false;
-  return Boolean(await uiAuthController.resolveAuthContext(req, res, { allowUrlToken: false }));
-};
-
 export const registerServerStatusRoutes = (app: Application, dependencies: ServerStatusDependencies) => {
   const {
     express,
     process,
     openchamberVersion,
+    openchamberBuildRevision = openchamberVersion,
     runtimeName,
     serverStartedAt,
     gracefulShutdown,
     getHealthSnapshot,
     getServerPort = () => null,
     getTunnelUrl = () => null,
+    updateTransactionPath = null,
+    runtimePackageRoot = null,
+    createRestartAttestation: injectedCreateRestartAttestation,
+    consumeSupervisorTermination: injectedConsumeSupervisorTermination,
     getServerId = async () => null,
     tunnelAuthController = null,
     uiAuthController = null,
@@ -311,7 +292,10 @@ export const registerServerStatusRoutes = (app: Application, dependencies: Serve
     && !FORWARDING_HEADERS.some((header) => req.headers[header] !== undefined)
     && (!tunnelAuthController?.classifyRequestScope || tunnelAuthController.classifyRequestScope(req) === 'local');
 
-  registerHealthRoute({ app, getHealthSnapshot, resolveServerId, openchamberVersion, runtimeName, compatibility, isLocalPeer });
+  registerHealthRoute({
+    app, getHealthSnapshot, resolveServerId, openchamberVersion, openchamberBuildRevision, runtimeName, compatibility, isLocalPeer,
+    localIdentity: () => ({ pid: process.pid, startedAt: serverStartedAt }),
+  });
 
   const requireLocalDiagnostics: RequestHandler = (req, res, next) => {
     if (!isLocalPeer(req)) {
@@ -341,6 +325,19 @@ export const registerServerStatusRoutes = (app: Application, dependencies: Serve
     } catch {
       res.status(500).json({ error: 'Diagnostics unavailable' });
     }
+  });
+
+  registerUpdateAttestationRoutes(app, {
+    process,
+    openchamberVersion,
+    openchamberBuildRevision,
+    serverStartedAt,
+    getHealthSnapshot,
+    updateTransactionPath,
+    runtimePackageRoot,
+    injectedCreateRestartAttestation,
+    injectedConsumeSupervisorTermination,
+    tunnelAuthController,
   });
 
   app.get('/api/version', async (_req, res) => {

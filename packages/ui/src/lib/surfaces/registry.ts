@@ -17,7 +17,8 @@ type BuiltInContextSurfaceId =
   | 'workflows'
   | 'subagents'
   | 'chat'
-  | 'pages';
+  | 'pages'
+  | 'pty';
 
 export type ContextSurfaceId = BuiltInContextSurfaceId | `plugin:${string}`;
 
@@ -129,6 +130,17 @@ export const CONTEXT_SURFACES: readonly ContextSurfaceDescriptor[] = [
     labelKey: 'contextPanel.mode.pages',
     availability: 'has-content',
   },
+  {
+    // Output of a command the agent left running in the background (an
+    // OpenCode `shell` call with `background: true`); opened from the
+    // composer's background-commands row, never empty from the rail.
+    id: 'pty',
+    descriptionKey: 'contextRail.surface.pty.description',
+    mode: 'pty',
+    icon: 'terminal-window',
+    labelKey: 'contextPanel.mode.pty',
+    availability: 'has-content',
+  },
 ];
 
 export const WALKTHROUGH_MIN_WIDTH = 768;
@@ -148,6 +160,7 @@ const BUILT_IN_SURFACE_GROUPS = {
   subagents: 'workspace',
   chat: 'workspace',
   pages: 'workspace',
+  pty: 'workspace',
 } satisfies Record<BuiltInContextSurfaceId, ContextSurfaceGroup>;
 
 const isBuiltInSurfaceId = (id: ContextSurfaceId): id is BuiltInContextSurfaceId => Object.hasOwn(BUILT_IN_SURFACE_GROUPS, id);
