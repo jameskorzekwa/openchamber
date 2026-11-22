@@ -32,6 +32,7 @@ import {
   selectFolderRootNodes,
 } from '../sessions/sessionNodeItemUtils';
 import { useSessionFoldersStore } from '@/stores/useSessionFoldersStore';
+import { isSessionGroupCollapsed } from '../sessionSidebarRowModel';
 
 type FolderScope = { scopeKey: string; directory: string | null };
 import { useOpenTrackerItem } from '@/components/sourceBoard/openTrackerItem';
@@ -177,7 +178,7 @@ const areGroupPropsEqual = (prev: SessionGroupSectionProps, next: SessionGroupSe
   if (prev.sessionBatchSize !== next.sessionBatchSize) return false;
 
   if (prev.collapsedGroups !== next.collapsedGroups
-    && prev.collapsedGroups.has(prev.groupKey) !== next.collapsedGroups.has(next.groupKey)) {
+    && isSessionGroupCollapsed(prev.collapsedGroups, prev.groupKey, prev.group) !== isSessionGroupCollapsed(next.collapsedGroups, next.groupKey, next.group)) {
     return false;
   }
 
@@ -311,7 +312,7 @@ function SessionGroupSectionBase(props: SessionGroupSectionProps): React.ReactNo
   }, [pinnedSessionIds, sessionOrderIndex]);
 
   const searchData = hasSessionSearchQuery ? groupSearchDataByGroup.get(group) : null;
-  const isCollapsed = hasSessionSearchQuery ? false : collapsedGroups.has(groupKey);
+  const isCollapsed = hasSessionSearchQuery ? false : isSessionGroupCollapsed(collapsedGroups, groupKey, group);
   const childStores = useChildStoreManager();
   const bootstrapDirectories = React.useMemo(() => {
     const directories = group.folderScopes?.map((scope) => normalizePath(scope.directory))
@@ -1003,7 +1004,10 @@ function SessionGroupSectionBase(props: SessionGroupSectionProps): React.ReactNo
               {group.isArchivedBucket ? (
                 <span className="inline-flex min-w-0 max-w-full items-center gap-0.5">
                   {headerSlot(<Icon name="archive" className="h-3 w-3 shrink-0 text-muted-foreground" />)}
-                  <span className="min-w-0 flex-1 truncate">{renderHighlightedText(group.label, normalizedSessionSearchQuery)}</span>
+                  <span className="min-w-0 truncate">{renderHighlightedText(group.label, normalizedSessionSearchQuery)}</span>
+                  {/* How many are archived, so a folded archive still says what it holds. */}
+                  <span className="ms-1 shrink-0 tabular-nums text-muted-foreground">{sourceGroupNodes.length}</span>
+                  <span className="min-w-0 flex-1" />
                   {groupActivityIndicator}
                 </span>
               ) : !group.isMain ? (

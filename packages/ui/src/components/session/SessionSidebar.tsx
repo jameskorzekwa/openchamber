@@ -613,9 +613,10 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
     <SidebarSearchEmptyState query={searchQuery} showArchive={!isVSCode} resetSessionSearch={resetSessionSearch} />
   ), [isVSCode, resetSessionSearch, searchQuery]);
 
-  // Web/desktop route archived sessions to the Archive page; only the VS Code
-  // compact webview keeps inline archived buckets behind its toggle.
-  const showInlineArchived = isVSCode && showArchivedSessions;
+  // Web/desktop list each project's archived sessions in a folded Archived
+  // group under the project (the Archive page still lists them all); the VS
+  // Code compact webview keeps its inline archived buckets behind its toggle.
+  const showInlineArchived = !isVSCode || showArchivedSessions;
   // The projects view always groups by worktree (parallel-work overview).
   // VS Code has no worktree groups, so it renders the merged per-project list.
   const useGroupedSections = !isVSCode;
