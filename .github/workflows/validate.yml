@@ -5,6 +5,7 @@ on:
     branches:
       - 'j2k/current'
       - 'j2k/**'
+      - 'recovery/upstream-*'
   pull_request:
     branches:
       - 'j2k/current'

@@ -7,6 +7,23 @@ import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import YAML from 'yaml';
 
+test('neutral recovery pushes validate independently of PR mergeability without publication authority', () => {
+  const validation = YAML.parse(validateWorkflow);
+  const matches = (branch, patterns) => patterns.some((pattern) =>
+    new RegExp(`^${pattern.split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')}$`).test(branch));
+  assert.equal(matches('recovery/upstream-v2.8.0-20261122', validation.on.push.branches), true);
+  assert.equal(matches('recovery/unrelated', validation.on.push.branches), false);
+  assert.deepEqual(validation.permissions, { contents: 'read' });
+  for (const job of Object.values(validation.jobs)) {
+    assert.ok(!job.permissions || Object.values(job.permissions).every((permission) => permission === 'read'));
+  }
+  const release = YAML.parse(releaseWorkflow);
+  assert.equal(release.on.push, undefined);
+  assert.ok(release.jobs.metadata.if.includes("github.event.workflow_run.head_branch == 'j2k/current'"));
+  const identity = release.jobs.metadata.steps.find((step) => step.id === 'identity');
+  assert.ok(identity.run.includes('if [[ "$source_ref" != \'j2k/current\' ]]'));
+});
+
 test('desktop build commands resolve to installed package scripts', () => {
   const workflow = YAML.parse(desktopWorkflow);
   const pkg = JSON.parse(readFileSync(new URL('../../packages/electron/package.json', import.meta.url), 'utf8'));
