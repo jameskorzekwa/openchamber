@@ -20,6 +20,8 @@ export type SessionGroup = {
   description: string | null;
   isMain: boolean;
   isArchivedBucket?: boolean;
+  /** Folded until the user opens it: a project's archive on web and desktop. */
+  startsCollapsed?: boolean;
   worktree: WorktreeMetadata | null;
   /** The isolated space this group shows, with the state of its last answer. */
   space?: SpaceMark;

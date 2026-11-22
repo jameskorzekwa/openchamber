@@ -245,6 +245,18 @@ export const sessionExpansionKey = (renderContext: SessionSidebarRenderContext, 
   `${renderContext}:${archived ? 'archived' : 'active'}:${sessionId}`
 );
 
+/**
+ * Whether a group's header is folded. A group that starts folded (a project's
+ * archive on web and desktop) reads its stored `collapsedGroups` entry as
+ * opened; every other group starts open and its entry means folded. Collapse
+ * all and Expand all clear the set, which folds such a group either way.
+ */
+export const isSessionGroupCollapsed = (
+  collapsedGroups: ReadonlySet<string>,
+  groupKey: string,
+  group: Pick<SessionGroup, 'startsCollapsed'>,
+): boolean => (group.startsCollapsed === true) !== collapsedGroups.has(groupKey);
+
 export const runExpansionKey = (renderContext: SessionSidebarRenderContext, runKey: string): string => (
   `${renderContext}:active:run:${runKey}`
 );
@@ -721,7 +733,7 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
     selectionDescendantIds.push(...indexed.preorderIds);
     for (const [id, session] of indexed.sessionsById) sessionById.set(id, session);
     const ownerKey = getGroupFolderOwnerKey(projectId, group);
-    const storedCollapsed = !search && args.collapsedGroups.has(groupKey);
+    const storedCollapsed = !search && isSessionGroupCollapsed(args.collapsedGroups, groupKey, group);
     // A worktree, space or archive header is a tree node of its own: its
     // folders and sessions sit one level under it. The project root group has
     // no header, so its contents sit right under the project.
