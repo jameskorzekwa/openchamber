@@ -5229,7 +5229,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     {/* Positioning context for the dictation overlay: covers the
                         text area + footer exactly. */}
                     <div className={cn('relative flex flex-col', isComposerExpanded && 'flex-1 min-h-0')} data-dictation-chain="true">
-                    <div className={cn("overflow-hidden", isComposerExpanded && 'flex flex-1 min-h-0 flex-col')}>
+                    <div
+                        className={cn("overflow-hidden", isComposerExpanded && 'flex flex-1 min-h-0 flex-col')}
+                        style={{ borderStartStartRadius: chatInputRadius, borderStartEndRadius: chatInputRadius }}
+                    >
                         {parallel.isActive ? <ParallelComposerStrip parallel={parallel} project={parallelProjectRef} /> : null}
                         {composerTopRows}
                         <div className="flex items-center gap-1 px-3 pt-1 flex-wrap relative z-10">
