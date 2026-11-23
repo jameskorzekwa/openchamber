@@ -43,6 +43,9 @@ export function configuration(file) {
   if (!isAbsolute(config.stateDirectory || '') || !config.model.providerID || !config.model.id) {
     throw new Error('Config requires absolute stateDirectory and model {providerID,id}');
   }
+  if (config.referenceRepository !== undefined && !isAbsolute(config.referenceRepository)) {
+    throw new Error('Config referenceRepository must be an absolute path');
+  }
   return config;
 }
 

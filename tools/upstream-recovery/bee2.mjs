@@ -1,32 +1,83 @@
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const REPOSITORY = 'jameskorzekwa/openchamber';
 export const GH_REPOSITORY = `github.com/${REPOSITORY}`;
 const UPSTREAM = 'openchamber/openchamber';
 const SHA = /^[0-9a-f]{40}$/;
-export function command(binary, args, cwd) {
+export function command(binary, args, cwd, timeout = 120_000) {
   try {
     return execFileSync(binary, args, {
-      cwd, encoding: 'utf8', timeout: 120_000, maxBuffer: 8 * 1024 * 1024,
+      cwd, encoding: 'utf8', timeout, maxBuffer: 8 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
   } catch (error) {
-    throw new Error(`${binary} ${args[0]} failed (status ${error.status ?? 'timeout'}). Inspect local authentication/network health.`);
+    // Distinguish a killed child from a failed one; child output can include
+    // credential helper text, so neither message repeats it.
+    if (error.code === 'ETIMEDOUT' || (error.status === null && error.signal)) {
+      throw new Error(`${binary} ${args[0]} timed out after ${Math.round(timeout / 1000)}s. Inspect network throughput and remote availability.`);
+    }
+    throw new Error(`${binary} ${args[0]} failed (status ${error.status ?? 'unknown'}). Inspect local authentication/network health.`);
   }
 }
 const git = (directory, ...args) => command('git', args, directory);
 export const gh = (...args) => JSON.parse(command('gh', args));
 
-export function discover(root, run = command) {
+// A cold clone of the fork measured 552s on bee2, far past the 120s command
+// limit; a blobless clone took 16s and a dissociated reference clone 22s.
+// Bootstrap stays inside the 10-minute locked tick and leaves room for both
+// 2-minute fetches, discovery and the heartbeat.
+export const BOOTSTRAP_TIMEOUTS = { reference: 90_000, total: 300_000 };
+
+function bootstrapRepository(root, directory, run, reference, timeouts) {
+  const url = `https://github.com/${REPOSITORY}.git`;
+  if (existsSync(directory)) {
+    // Never clear a directory this code did not finish creating.
+    throw new Error(`Recovery cache ${directory} exists but is not a Git checkout. Inspect and move it aside, then rerun the tick.`);
+  }
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  // Clones land in a private staging path and are renamed only when complete,
+  // so a killed bootstrap never leaves a half-made cache in place.
+  const staging = join(root, 'repository.bootstrap');
+  rmSync(staging, { recursive: true, force: true });
+  const attempts = [];
+  // A local reference supplies objects quickly; --dissociate copies them so
+  // the cache never depends on the reference after the clone.
+  if (reference && existsSync(reference)) {
+    attempts.push({ name: 'reference', args: ['--reference', reference, '--dissociate'], timeout: timeouts.reference });
+  }
+  // The fallback downloads every commit and tree, so tag ancestry, describe and
+  // rev-list stay exact. Blobs arrive on demand from origin, as a worker
+  // worktree checks files out.
+  attempts.push({ name: 'blobless', args: ['--filter=blob:none'] });
+  const started = Date.now();
+  const failures = [];
+  for (const attempt of attempts) {
+    const remaining = timeouts.total - (Date.now() - started);
+    if (remaining <= 0) break;
+    try {
+      run('git', ['clone', '--no-checkout', ...attempt.args, url, staging], root, Math.min(attempt.timeout ?? remaining, remaining));
+      if (existsSync(join(staging, '.git', 'objects', 'info', 'alternates'))) {
+        throw new Error('git clone left an alternates file after --dissociate');
+      }
+      renameSync(staging, directory);
+      return attempt.name;
+    } catch (error) {
+      failures.push(`${attempt.name}: ${error.message}`);
+      rmSync(staging, { recursive: true, force: true });
+    }
+  }
+  throw new Error(`Cold bootstrap of ${directory} failed (${failures.join(' | ') || 'no time left'}). `
+    + `Next action: seed it with "git clone --no-checkout --filter=blob:none ${url} ${directory}" `
+    + '(or add --reference <local clone> --dissociate), then rerun the tick.');
+}
+
+export function discover(root, run = command, { reference, timeouts = BOOTSTRAP_TIMEOUTS } = {}) {
   const directory = join(root, 'repository');
   const discoveryGit = (...args) => run('git', args, directory);
-  if (!existsSync(join(directory, '.git'))) {
-    mkdirSync(root, { recursive: true, mode: 0o700 });
-    run('git', ['clone', '--no-checkout', `https://github.com/${REPOSITORY}.git`, directory]);
-  }
+  if (!existsSync(join(directory, '.git'))) bootstrapRepository(root, directory, run, reference, timeouts);
   discoveryGit('fetch', 'origin', '+refs/heads/j2k/current:refs/remotes/origin/j2k/current');
   // Fork tags must not nominate an upstream release. Keep fetched upstream
   // tags in their own namespace and prune tags removed upstream.
