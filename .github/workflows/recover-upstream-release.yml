@@ -53,24 +53,50 @@ jobs:
             SERIES_COMMIT="$(node -p 'require(process.argv[1]).patchSeriesSourceCommit || ``' "$RUNNER_TEMP/release-identity/release-trigger.json")"
             PREVIOUS_BASE="$(node -p 'require(process.argv[1]).previousBaseTag || ``' "$RUNNER_TEMP/release-identity/release-trigger.json")"
           fi
-          [[ "$BRANCH" =~ ^j2k/v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           git remote add upstream https://github.com/openchamber/openchamber.git
-          git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/candidate" '+refs/heads/j2k/current:refs/remotes/origin/current'
-          git fetch --tags upstream main
-          if [[ -z "$SOURCE_COMMIT" ]]; then
-            SOURCE_COMMIT="$(git rev-parse refs/remotes/origin/candidate)"
+          maintained_head=''
+          if [[ "$BRANCH" == 'j2k/current' ]]; then
+            # Publication only follows j2k/current, so the branch names no
+            # upstream version. Pin the report to the exact commit the failed
+            # release checked; it must still be in maintained history, which
+            # may since have advanced.
+            [[ "$FAILED_WORKFLOW" == 'J2K Release' && "$EVENT_BRANCH" == 'j2k/current' ]]
+            if [[ ! "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Release identity of run $FAILED_RUN_ID has no exact source commit: '$SOURCE_COMMIT'." >&2
+              exit 1
+            fi
+            git fetch origin '+refs/heads/j2k/current:refs/remotes/origin/current'
+            git fetch --tags upstream main
+            maintained_head="$(git rev-parse refs/remotes/origin/current)"
+            if ! git merge-base --is-ancestor "$SOURCE_COMMIT" "$maintained_head" 2>/dev/null; then
+              echo "::error::Failed release source $SOURCE_COMMIT is not in j2k/current history at $maintained_head." >&2
+              exit 1
+            fi
+            upstream_tag="$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-j2k.*' --abbrev=0 "$SOURCE_COMMIT")"
+            default_series="$SOURCE_COMMIT"
+          elif [[ "$BRANCH" =~ ^j2k/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/candidate" '+refs/heads/j2k/current:refs/remotes/origin/current'
+            git fetch --tags upstream main
+            if [[ -z "$SOURCE_COMMIT" ]]; then
+              SOURCE_COMMIT="$(git rev-parse refs/remotes/origin/candidate)"
+            fi
+            test "$(git rev-parse refs/remotes/origin/candidate)" = "$SOURCE_COMMIT"
+            upstream_tag="v${BRANCH#j2k/v}"
+            default_series="$(git rev-parse refs/remotes/origin/current)"
+          else
+            echo "::error::Run $FAILED_RUN_ID names no recoverable branch: '$BRANCH'." >&2
+            exit 1
           fi
-          test "$(git rev-parse refs/remotes/origin/candidate)" = "$SOURCE_COMMIT"
-          upstream_tag="v${BRANCH#j2k/v}"
+          [[ "$upstream_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           upstream_commit="$(git rev-parse "$upstream_tag^{commit}")"
-          series_commit="${SERIES_COMMIT:-$(git rev-parse refs/remotes/origin/current)}"
+          series_commit="${SERIES_COMMIT:-$default_series}"
           previous_base="${PREVIOUS_BASE:-$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-j2k.*' --abbrev=0 "$series_commit")}"
           [[ "$series_commit" =~ ^[0-9a-f]{40}$ ]]
           [[ "$previous_base" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           jobs="$(gh api "repos/${{ github.repository }}/actions/runs/$FAILED_RUN_ID/jobs?per_page=100")"
           failed_steps="$(JOBS="$jobs" node -e '
             const jobs = JSON.parse(process.env.JOBS).jobs;
-            process.stdout.write(jobs.flatMap((job) => job.steps || []).filter((step) => step.conclusion === "failure").map((step) => `${step.name} [job ${job.name}]`).join(", "));
+            process.stdout.write(jobs.flatMap((job) => (job.steps || []).filter((step) => step.conclusion === "failure").map((step) => `${step.name} [job ${job.name}]`)).join(", "));
           ')"
           logs="$(gh run view "$FAILED_RUN_ID" --repo "${{ github.repository }}" --log-failed 2>&1)"
           logs="${logs:0:60000}"
@@ -80,8 +106,23 @@ jobs:
           title_file="$RUNNER_TEMP/release-failure-title"
           UPSTREAM_TAG="$upstream_tag" UPSTREAM_COMMIT="$upstream_commit" PREVIOUS_BASE="$previous_base" \
             SERIES_COMMIT="$series_commit" BRANCH="$BRANCH" SOURCE_COMMIT="$SOURCE_COMMIT" \
-            FAILED_COMMAND="$failed_command" FAILED_STEPS="$failed_steps" LOGS="$logs" RUN_URL="$RUN_URL" RECOVERY="$recovery" node <<'NODE'
+            FAILED_COMMAND="$failed_command" FAILED_STEPS="$failed_steps" LOGS="$logs" RUN_URL="$RUN_URL" RECOVERY="$recovery" \
+            MAINTAINED_HEAD="$maintained_head" node <<'NODE'
           const { writeFileSync } = require('node:fs');
+          const env = process.env;
+          // A maintained failure is repaired on a neutral branch, which J2K
+          // Validate checks without publication; nothing here writes j2k/current.
+          const neutral = `recovery/upstream-${env.UPSTREAM_TAG}-release-${env.FAILED_RUN_ID}`;
+          const recreateCommands = env.MAINTAINED_HEAD ? [
+            'git fetch origin j2k/current',
+            `git switch --create ${neutral} ${env.SOURCE_COMMIT}`,
+            `# Repair on ${neutral}; integrating it into j2k/current needs owner approval.`,
+            `# Only after owner approval, re-run publication manually: ${env.FAILED_COMMAND}`,
+          ] : [
+            'git fetch origin j2k/current ' + env.BRANCH,
+            'git switch --force-create ' + env.BRANCH + ' ' + env.SOURCE_COMMIT,
+            env.FAILED_COMMAND,
+          ];
           writeFileSync(process.env.RECOVERY, JSON.stringify({
             failureKind: 'semantic-failure',
             upstreamRepository: 'openchamber/openchamber',
@@ -94,11 +135,8 @@ jobs:
             failedCommand: `${process.env.FAILED_COMMAND} # failed steps: ${process.env.FAILED_STEPS || 'unknown'}`,
             logs: process.env.LOGS,
             workflowUrl: process.env.RUN_URL,
-            recreateCommands: [
-              'git fetch origin j2k/current ' + process.env.BRANCH,
-              'git switch --force-create ' + process.env.BRANCH + ' ' + process.env.SOURCE_COMMIT,
-              process.env.FAILED_COMMAND,
-            ],
+            ...(env.MAINTAINED_HEAD ? { failedRunId: env.FAILED_RUN_ID, maintainedHeadCommit: env.MAINTAINED_HEAD } : {}),
+            recreateCommands,
           }, null, 2));
           NODE
           node tools/desktop-release/upstream-recovery.mjs --input "$recovery" --body "$body" --title "$title_file"
@@ -108,6 +146,10 @@ jobs:
             --json number,title --jq "map(select(.title == \"$title\")) | first | .number // empty")"
           if [[ -z "$issue_number" ]]; then
             gh issue create --repo "${{ github.repository }}" --title "$title" --body-file "$body"
+          elif [[ "$BRANCH" == 'j2k/current' ]]; then
+            # Publication closes this title; earlier failures stay as evidence.
+            gh issue comment "$issue_number" --repo "${{ github.repository }}" --body-file "$body"
+            gh issue reopen "$issue_number" --repo "${{ github.repository }}" 2>/dev/null || true
           else
             gh issue edit "$issue_number" --repo "${{ github.repository }}" --body-file "$body"
             gh issue reopen "$issue_number" --repo "${{ github.repository }}" 2>/dev/null || true
