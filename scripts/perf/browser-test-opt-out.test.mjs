@@ -5,53 +5,16 @@
 // flag the file must skip without launching it; without the flag the launch
 // must still happen.
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { describe } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { liveMembers, runInGroup } from './process-group.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const browserTests = readdirSync(directory).filter((name) => name.endsWith('.browser.test.mjs')).sort();
-
-// Each run gets its own process group. The isolated test file, Vite and
-// esbuild can outlive the `node --test` runner and keep the output pipes open,
-// so `close` would never come. Every exit of the runner (normal, the spawn
-// timeout, or an aborted test) ends the whole group, and the result settles on
-// `close`, after the last member holding a pipe is gone.
-const run = (args, env, { timeout = 150_000, signal, cwd, onOutput } = {}) => new Promise((resolve) => {
-  const child = spawn(process.execPath, args, {
-    env, cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'], timeout, killSignal: 'SIGKILL', signal,
-  });
-  let output = '';
-  let error;
-  const append = (chunk) => {
-    output += chunk;
-    onOutput?.(String(chunk));
-  };
-  child.stdout.on('data', append);
-  child.stderr.on('data', append);
-  child.once('exit', () => {
-    try {
-      process.kill(-child.pid, 'SIGKILL');
-    } catch (cause) {
-      if (cause.code !== 'ESRCH') error ??= cause;
-    }
-  });
-  child.on('error', (cause) => {
-    error ??= cause;
-    // A child that never started has no group and may never close.
-    if (child.pid === undefined) resolve({ code: null, output, error });
-  });
-  child.once('close', (code, exitSignal) => resolve({ code, signal: exitSignal, output, error, group: child.pid }));
-});
-
-// Members of a process group that are still running; exited (zombie) ones
-// hold no pipe and are left to their reaper.
-const liveMembers = (group) => spawnSync('ps', ['-A', '-o', 'pid=,pgid=,stat='], { encoding: 'utf8' }).stdout
-  .split('\n').map((line) => line.trim().split(/\s+/))
-  .filter(([pid, pgid, stat]) => pid && Number(pgid) === group && !stat.startsWith('Z'));
 
 const withFakeChrome = async (argsFor, skipFlag, options = {}) => {
   const root = mkdtempSync(path.join(tmpdir(), 'fake-chrome-'));
@@ -66,8 +29,11 @@ const withFakeChrome = async (argsFor, skipFlag, options = {}) => {
     delete env.NODE_TEST_CONTEXT;
     delete env.OPENCHAMBER_SKIP_BROWSER_TESTS;
     if (skipFlag) env.OPENCHAMBER_SKIP_BROWSER_TESTS = '1';
-    const result = await run(argsFor(root), env, options);
-    return { ...result, root, launches: existsSync(launches) ? readFileSync(launches, 'utf8') : '' };
+    const result = await runInGroup(argsFor(root), env, options);
+    return {
+      ...result, root, collected: options.collect?.(root),
+      launches: existsSync(launches) ? readFileSync(launches, 'utf8') : '',
+    };
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -78,7 +44,7 @@ const browserRun = (file) => () => ['--test', '--test-reporter=tap', path.join(d
 // Starts a descendant that holds the run's stderr pipe and never exits, then
 // reports its PID. With FIXTURE_MODE=exit the script itself exits right away;
 // otherwise it stays alive with the descendant.
-const HUNG_DESCENDANT = `import { spawn, spawnSync } from 'node:child_process';
+const HUNG_DESCENDANT = `import { spawn } from 'node:child_process';
 const descendant = spawn('/bin/sh', ['-c', 'echo $$; exec tail -f /dev/null'], { stdio: ['ignore', 'pipe', 'inherit'] });
 descendant.stdout.once('data', (chunk) => {
   process.stdout.write('descendant ' + chunk);
@@ -93,6 +59,34 @@ const hungRun = (root) => {
   writeFileSync(fixture, HUNG_DESCENDANT);
   return [fixture];
 };
+// A test file whose test node:test cancels (through its `signal` option) once
+// the hung descendant reports in. Only the cancelled test's own `t.signal`
+// reaches the helper; the outcome is recorded next to the file.
+const CANCELLED_TEST = `import { writeFileSync } from 'node:fs';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { liveMembers, runInGroup } from ${JSON.stringify(pathToFileURL(path.join(directory, 'process-group.mjs')).href)};
+const here = (name) => fileURLToPath(new URL(name, import.meta.url));
+const cancel = new AbortController();
+test('cancelled while its subprocess hangs', { signal: cancel.signal }, async (t) => {
+  const result = await runInGroup([here('hung-descendant.mjs')], process.env, {
+    signal: t.signal,
+    onOutput: (chunk) => { if (chunk.includes('descendant ')) cancel.abort(); },
+  });
+  writeFileSync(here('outcome.json'), JSON.stringify({ error: result.error?.name, output: result.output, live: liveMembers(result.group).length }));
+});
+`;
+const cancelledRun = (root) => {
+  hungRun(root);
+  const file = path.join(root, 'cancelled.test.mjs');
+  writeFileSync(file, CANCELLED_TEST);
+  return ['--test', '--test-reporter=tap', file];
+};
+const outcomeOf = (root) => {
+  const file = path.join(root, 'outcome.json');
+  return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
+};
+
 const descendantOf = (output) => Number(output.match(/^descendant (\d+)$/m)?.[1]);
 
 const skip = process.platform === 'win32' && 'The fake Chrome is a POSIX shell script';
@@ -103,8 +97,8 @@ test('the browser regressions are found', () => {
 
 // Each unflagged file waits out the 15-second endpoint timeout; run them together.
 describe('OPENCHAMBER_SKIP_BROWSER_TESTS', { concurrency: true }, () => {
-  test('a descendant left behind by a runner that exits is ended with its group', { skip, timeout: 30_000 }, async () => {
-    const result = await withFakeChrome(hungRun, false, { env: { FIXTURE_MODE: 'exit' } });
+  test('a descendant left behind by a runner that exits is ended with its group', { skip, timeout: 30_000 }, async (t) => {
+    const result = await withFakeChrome(hungRun, false, { env: { FIXTURE_MODE: 'exit' }, signal: t.signal });
     assert.equal(result.error, undefined);
     assert.equal(result.code, 0, result.output);
     assert.ok(descendantOf(result.output) > 0, result.output);
@@ -112,18 +106,18 @@ describe('OPENCHAMBER_SKIP_BROWSER_TESTS', { concurrency: true }, () => {
     assert.equal(existsSync(result.root), false);
   });
 
-  test('a run that reaches its timeout ends the whole group', { skip, timeout: 30_000 }, async () => {
-    const result = await withFakeChrome(hungRun, false, { timeout: 5_000 });
+  test('a run that reaches its timeout ends the whole group', { skip, timeout: 30_000 }, async (t) => {
+    const result = await withFakeChrome(hungRun, false, { timeout: 5_000, signal: t.signal });
     assert.equal(result.signal, 'SIGKILL');
     assert.ok(descendantOf(result.output) > 0, result.output);
     assert.deepEqual(liveMembers(result.group), []);
     assert.equal(existsSync(result.root), false);
   });
 
-  test('an aborted run ends the whole group', { skip, timeout: 30_000 }, async () => {
+  test('an aborted run ends the whole group', { skip, timeout: 30_000 }, async (t) => {
     const controller = new AbortController();
     const result = await withFakeChrome(hungRun, false, {
-      signal: controller.signal,
+      signal: AbortSignal.any([t.signal, controller.signal]),
       onOutput: (chunk) => { if (chunk.includes('descendant ')) controller.abort(); },
     });
     assert.equal(result.error?.name, 'AbortError');
@@ -132,16 +126,29 @@ describe('OPENCHAMBER_SKIP_BROWSER_TESTS', { concurrency: true }, () => {
     assert.equal(existsSync(result.root), false);
   });
 
-  test('a run that cannot start reports the spawn error and cleans up', { skip, timeout: 30_000 }, async () => {
-    const result = await withFakeChrome(hungRun, false, { cwd: path.join(tmpdir(), 'missing-browser-opt-out-cwd') });
+  test('cancelling a test aborts its t.signal and ends the group it handed to the helper', { skip, timeout: 30_000 }, async (t) => {
+    const result = await withFakeChrome(cancelledRun, false, { signal: t.signal, collect: outcomeOf });
+    assert.equal(result.error, undefined);
+    assert.match(result.output, /^not ok 1 - cancelled while its subprocess hangs$/m, result.output);
+    assert.notEqual(result.code, 0);
+    assert.ok(result.collected, result.output);
+    assert.equal(result.collected.error, 'AbortError');
+    assert.ok(descendantOf(result.collected.output) > 0, result.collected.output);
+    assert.equal(result.collected.live, 0);
+    assert.deepEqual(liveMembers(result.group), []);
+    assert.equal(existsSync(result.root), false);
+  });
+
+  test('a run that cannot start reports the spawn error and cleans up', { skip, timeout: 30_000 }, async (t) => {
+    const result = await withFakeChrome(hungRun, false, { cwd: path.join(tmpdir(), 'missing-browser-opt-out-cwd'), signal: t.signal });
     assert.equal(result.error?.code, 'ENOENT');
     assert.equal(result.group, undefined);
     assert.equal(existsSync(result.root), false);
   });
 
 for (const file of browserTests) {
-  test(`${file} skips without launching Chrome when OPENCHAMBER_SKIP_BROWSER_TESTS=1`, { skip, timeout: 160_000 }, async () => {
-    const { code, output, launches, error, group } = await withFakeChrome(browserRun(file), true);
+  test(`${file} skips without launching Chrome when OPENCHAMBER_SKIP_BROWSER_TESTS=1`, { skip, timeout: 160_000 }, async (t) => {
+    const { code, output, launches, error, group } = await withFakeChrome(browserRun(file), true, { signal: t.signal });
     assert.equal(error, undefined);
     assert.deepEqual(liveMembers(group), []);
     assert.equal(launches, '', 'Chrome was not launched');
@@ -151,8 +158,8 @@ for (const file of browserTests) {
     assert.match(output, /^# fail 0$/m);
   });
 
-  test(`${file} still launches Chrome when the flag is unset`, { skip, timeout: 160_000 }, async () => {
-    const { code, output, launches, error, group } = await withFakeChrome(browserRun(file), false);
+  test(`${file} still launches Chrome when the flag is unset`, { skip, timeout: 160_000 }, async (t) => {
+    const { code, output, launches, error, group } = await withFakeChrome(browserRun(file), false, { signal: t.signal });
     assert.equal(error, undefined);
     assert.deepEqual(liveMembers(group), []);
     assert.match(launches, /--remote-debugging-port=\d+/, output);
