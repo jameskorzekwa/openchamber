@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -178,6 +178,156 @@ test('recovery reports can describe the previous base beyond the checkout tip', 
   const result = describe(full);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'v2.0.0\n');
+});
+
+// Runs the reporter's whole step against local fixtures. Upstream resolves to
+// the fixture origin, and a gh stub serves run data and records issue writes;
+// nothing reaches GitHub, and any other gh use fails the run.
+const GH_STUB = `gh() {
+  printf '%s\\n' "$*" >> "$GH_CALLS"
+  local dir='' file=''
+  case "$1 $2" in
+    'run download')
+      while [[ $# -gt 0 ]]; do [[ "$1" == --dir ]] && dir="$2"; shift; done
+      mkdir -p "$dir" && printf '%s' "$FIXTURE_IDENTITY" > "$dir/release-trigger.json" ;;
+    'api repos/fixture/repo/actions/runs/'*) printf '{"jobs":[{"name":"validate-release","steps":[{"name":"Run tests","conclusion":"failure"}]}]}' ;;
+    'run view') printf 'fixture failure log\\n' ;;
+    'issue list') printf '%s' "$FIXTURE_ISSUE" ;;
+    'issue create'|'issue edit'|'issue comment')
+      while [[ $# -gt 0 ]]; do [[ "$1" == --body-file ]] && file="$2"; shift; done
+      cp "$file" "$GH_BODY" ;;
+    'issue reopen') ;;
+    *) echo "unexpected gh $*" >&2; return 1 ;;
+  esac
+}
+`;
+
+function runReporter(workflow, { root, repo }, env) {
+  const script = YAML.parse(workflow).jobs.report.steps.find((step) => step.run).run
+    .replaceAll('${{ github.repository }}', 'fixture/repo')
+    .replace('node tools/desktop-release/upstream-recovery.mjs', `node ${JSON.stringify(new URL('./upstream-recovery.mjs', import.meta.url).pathname)}`);
+  // Each run starts from its own full checkout, as on a fresh runner.
+  const runner = mkdtempSync(join(root, 'runner-'));
+  const checkout = join(runner, 'checkout');
+  git(root, 'clone', '--quiet', repo, checkout);
+  const calls = join(runner, 'gh-calls');
+  const body = join(runner, 'issue-body.md');
+  writeFileSync(calls, '');
+  const result = spawnSync('bash', ['-e'], {
+    cwd: checkout, encoding: 'utf8', input: `${GH_STUB}${script}`,
+    env: {
+      PATH: process.env.PATH, HOME: process.env.HOME, RUNNER_TEMP: runner, GH_CALLS: calls, GH_BODY: body,
+      GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.${repo}.insteadOf`, GIT_CONFIG_VALUE_0: 'https://github.com/openchamber/openchamber.git',
+      FIXTURE_ISSUE: '', RUN_URL: `https://github.com/fixture/repo/actions/runs/${env.FAILED_RUN_ID}`, ...env,
+    },
+  });
+  const contract = existsSync(body) ? JSON.parse(/```json\n([\s\S]*?)\n```/.exec(readFileSync(body, 'utf8'))[1]) : null;
+  return { ...result, calls: readFileSync(calls, 'utf8').trim().split('\n').filter(Boolean), body: existsSync(body) ? readFileSync(body, 'utf8') : '', contract };
+}
+
+function maintainedFixture(t) {
+  const fixture = recoveryFixture(t);
+  const { root, repo, upstream } = fixture;
+  // j2k/current is integrated onto v2.1.0; the release of its tip fails.
+  git(repo, 'switch', '--detach', upstream);
+  git(repo, 'commit', '--allow-empty', '-m', 'Fork patch on v2.1.0');
+  const failed = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'branch', '-f', 'j2k/current', failed);
+  git(repo, 'switch', 'main');
+  return { ...fixture, failed };
+}
+
+const releaseFailure = (failed, identity) => ({
+  FAILED_WORKFLOW: 'J2K Release', EVENT_BRANCH: 'j2k/current', EVENT_COMMIT: failed, FAILED_RUN_ID: '45107464343',
+  FIXTURE_IDENTITY: JSON.stringify({ branch: 'j2k/current', commit: failed, ...identity }),
+});
+
+test('a failed j2k/current release reports its exact commit even after the branch advances', (t) => {
+  const fixture = maintainedFixture(t);
+  const { repo, series, upstream, failed } = fixture;
+  const env = releaseFailure(failed, { patchSeriesSourceCommit: series, previousBaseTag: 'v2.0.0' });
+
+  const report = runReporter(recoveryWorkflow, fixture, env);
+  assert.equal(report.status, 0, report.stderr);
+  assert.equal(report.contract.candidateBranch, 'j2k/current');
+  assert.equal(report.contract.candidateCommit, failed);
+  assert.equal(report.contract.maintainedHeadCommit, failed);
+  assert.equal(report.contract.failedRunId, '45107464343');
+  assert.equal(report.contract.upstreamTag, 'v2.1.0');
+  assert.equal(report.contract.upstreamCommit, upstream);
+  assert.equal(report.contract.previousBaseTag, 'v2.0.0');
+  assert.equal(report.contract.patchSeriesSourceCommit, series);
+  assert.match(report.contract.failedCommand, /# failed steps: Run tests \[job validate-release\]$/);
+  assert.deepEqual(report.contract.recreateCommands, [
+    'git fetch origin j2k/current',
+    `git switch --create recovery/upstream-v2.1.0-release-45107464343 ${failed}`,
+    '# Repair on recovery/upstream-v2.1.0-release-45107464343; integrating it into j2k/current needs owner approval.',
+    '# Only after owner approval, re-run publication manually: gh workflow run release.yml --ref j2k/current -f source_ref=j2k/current',
+  ]);
+  assert.match(report.calls.at(-1), /^issue create --repo fixture\/repo --title Upstream recovery: j2k\/current --body-file /);
+  assert.ok(report.calls.every((call) => !/^(workflow|release)\b/.test(call)), report.calls.join('\n'));
+
+  // j2k/current moves on, and a release of the old commit is reported later
+  // while an issue already exists: the report stays pinned to the failed
+  // commit and is added as a comment, keeping the earlier body.
+  git(repo, 'switch', 'j2k/current');
+  git(repo, 'commit', '--allow-empty', '-m', 'Later maintained change');
+  const head = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'switch', 'main');
+  const later = runReporter(recoveryWorkflow, fixture, { ...env, FIXTURE_ISSUE: '7' });
+  assert.equal(later.status, 0, later.stderr);
+  assert.equal(later.contract.candidateCommit, failed);
+  assert.equal(later.contract.maintainedHeadCommit, head);
+  assert.match(later.body, new RegExp(`has since advanced to \`${head}\``));
+  assert.deepEqual(later.calls.filter((call) => call.startsWith('issue ') && !call.startsWith('issue list')).map((call) => call.split(' --')[0]),
+    ['issue comment 7', 'issue reopen 7']);
+
+  // A run that failed before metadata recorded the series still reports.
+  const early = runReporter(recoveryWorkflow, fixture, releaseFailure(failed, {}));
+  assert.equal(early.status, 0, early.stderr);
+  assert.equal(early.contract.patchSeriesSourceCommit, failed);
+  assert.equal(early.contract.previousBaseTag, 'v2.1.0');
+});
+
+test('a release identity outside maintained history is refused without issue writes', (t) => {
+  const fixture = maintainedFixture(t);
+  for (const [commit, message] of [
+    [fixture.upstream.replace(/^./, (c) => (c === '0' ? '1' : '0')), /is not in j2k\/current history/],
+    ['', /has no exact source commit/],
+  ]) {
+    const report = runReporter(recoveryWorkflow, fixture, releaseFailure(fixture.failed, { commit }));
+    assert.notEqual(report.status, 0);
+    assert.match(report.stderr, message);
+    assert.deepEqual(report.calls.filter((call) => !call.startsWith('run download')), []);
+  }
+  const other = runReporter(recoveryWorkflow, fixture, {
+    ...releaseFailure(fixture.failed, {}), FIXTURE_IDENTITY: JSON.stringify({ branch: 'j2k/main', commit: fixture.failed }),
+  });
+  assert.notEqual(other.status, 0);
+  assert.match(other.stderr, /names no recoverable branch: 'j2k\/main'/);
+});
+
+test('failed candidate validation keeps its existing recovery report', (t) => {
+  // Before integration: j2k/current is still the series on v2.0.0.
+  const fixture = recoveryFixture(t);
+  const { series, upstream } = fixture;
+  const report = runReporter(recoveryWorkflow, fixture, {
+    FAILED_WORKFLOW: 'J2K Validate', EVENT_BRANCH: 'j2k/v2.1.0', EVENT_COMMIT: series, FAILED_RUN_ID: '99',
+  });
+  assert.equal(report.status, 0, report.stderr);
+  assert.equal(report.contract.candidateBranch, 'j2k/v2.1.0');
+  assert.equal(report.contract.candidateCommit, series);
+  assert.equal(report.contract.upstreamTag, 'v2.1.0');
+  assert.equal(report.contract.upstreamCommit, upstream);
+  assert.equal(report.contract.previousBaseTag, 'v2.0.0');
+  assert.equal(report.contract.failedRunId, undefined);
+  assert.deepEqual(report.contract.recreateCommands, [
+    'git fetch origin j2k/current j2k/v2.1.0',
+    `git switch --force-create j2k/v2.1.0 ${series}`,
+    'gh workflow run release.yml --ref j2k/current -f source_ref=j2k/v2.1.0',
+  ]);
+  assert.ok(report.calls.some((call) => call.startsWith('issue create --repo fixture/repo --title Upstream recovery: j2k/v2.1.0 ')));
+  assert.ok(!report.calls.some((call) => call.startsWith('run download')));
 });
 
 test('fork PR checks use available hosted runners and retain all four validation jobs', () => {

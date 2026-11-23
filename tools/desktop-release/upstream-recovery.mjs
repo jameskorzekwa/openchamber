@@ -8,6 +8,13 @@ const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 const TAG_PATTERN = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 const BRANCH_PATTERN = /^j2k\/v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 const FAILURE_KINDS = new Set(['rebase-conflict', 'semantic-failure', 'owner-blocker']);
+// Publication only follows the maintained branch, so a release failure names
+// it rather than a candidate. Such a report is pinned to one failed run.
+const MAINTAINED_BRANCH = 'j2k/current';
+const RUN_ID_PATTERN = /^[1-9]\d*$/;
+// A maintained-branch recreate command may not rewrite or push anything;
+// commented lines are owner instructions, not commands.
+const REWRITING_COMMAND = /\bpush\b|\breset\b|--force|\s-[CBf]\b|\bupdate-ref\b|\bbranch\s+-[dDfM]\b/;
 
 const fail = (message) => { throw new Error(message); };
 const requireText = (value, name) => {
@@ -27,7 +34,8 @@ export function validateRecovery(input) {
   const previousBaseTag = requireText(input.previousBaseTag, 'previousBaseTag');
   if (!TAG_PATTERN.test(previousBaseTag)) fail(`Invalid previousBaseTag: ${previousBaseTag}`);
   const candidateBranch = requireText(input.candidateBranch, 'candidateBranch');
-  if (!BRANCH_PATTERN.test(candidateBranch)) fail(`Invalid candidateBranch: ${candidateBranch}`);
+  const maintained = candidateBranch === MAINTAINED_BRANCH;
+  if (!maintained && !BRANCH_PATTERN.test(candidateBranch)) fail(`Invalid candidateBranch: ${candidateBranch}`);
 
   const recovery = {
     schema: 1,
@@ -50,6 +58,13 @@ export function validateRecovery(input) {
       : fail('Missing recreateCommands'),
     blockerQuestion: input.blockerQuestion ? requireText(input.blockerQuestion, 'blockerQuestion') : null,
   };
+  if (maintained) {
+    if (failureKind !== 'semantic-failure') fail(`${MAINTAINED_BRANCH} recovery must be a semantic failure`);
+    const failedRunId = requireText(input.failedRunId, 'failedRunId');
+    if (!RUN_ID_PATTERN.test(failedRunId)) fail(`Invalid failedRunId: ${failedRunId}`);
+    recovery.failedRunId = failedRunId;
+    recovery.maintainedHeadCommit = requireCommit(input.maintainedHeadCommit, 'maintainedHeadCommit');
+  }
 
   if (recovery.recreateCommands.length === 0) fail('recreateCommands must not be empty');
   if (failureKind === 'rebase-conflict' && (!recovery.failedPatchCommit || recovery.conflictingFiles.length === 0)) {
@@ -59,6 +74,11 @@ export function validateRecovery(input) {
     fail('Semantic recovery requires candidateCommit, failedCommand, logs, and workflowUrl');
   }
   if (failureKind === 'owner-blocker' && !recovery.blockerQuestion) fail('Owner blocker requires blockerQuestion');
+  if (maintained) {
+    if (!recovery.workflowUrl.endsWith(`/actions/runs/${recovery.failedRunId}`)) fail('workflowUrl must be the failed run');
+    const rewriting = recovery.recreateCommands.find((command) => !command.startsWith('#') && REWRITING_COMMAND.test(command));
+    if (rewriting) fail(`${MAINTAINED_BRANCH} recreate commands must not rewrite or push: ${rewriting}`);
+  }
   return recovery;
 }
 
@@ -84,6 +104,13 @@ export function renderRecoveryIssue(input) {
     `- Candidate branch: \`${recovery.candidateBranch}\``,
   ];
   if (recovery.candidateCommit) lines.push(`- Candidate commit: \`${recovery.candidateCommit}\``);
+  if (recovery.failedRunId) {
+    lines.push(`- Failed run: \`${recovery.failedRunId}\``);
+    if (recovery.maintainedHeadCommit !== recovery.candidateCommit) {
+      lines.push(`- \`${MAINTAINED_BRANCH}\` has since advanced to \`${recovery.maintainedHeadCommit}\`; this report stays pinned to the failed commit.`);
+    }
+    lines.push('', `Each later \`${MAINTAINED_BRANCH}\` failure is added as a comment with its own contract; earlier reports are kept.`);
+  }
   if (recovery.failedPatchCommit) lines.push(`- Failed patch: \`${recovery.failedPatchCommit}\``);
   if (recovery.conflictingFiles.length) lines.push('', '## Conflicting files', '', '```text', ...recovery.conflictingFiles, '```');
   if (recovery.failedCommand) lines.push('', '## Failed command', '', '```bash', recovery.failedCommand, '```');
