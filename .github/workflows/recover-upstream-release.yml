@@ -54,6 +54,11 @@ jobs:
             PREVIOUS_BASE="$(node -p 'require(process.argv[1]).previousBaseTag || ``' "$RUNNER_TEMP/release-identity/release-trigger.json")"
           fi
           git remote add upstream https://github.com/openchamber/openchamber.git
+          # Upstream tags get their own namespace outside refs/tags, which the
+          # fork checkout cannot populate, so no fork tag can stand in for an
+          # upstream release. Upstream identity resolves only from it.
+          git for-each-ref --format='delete %(refname)' refs/upstream-tags/ | git update-ref --stdin
+          git fetch --no-tags upstream '+refs/heads/main:refs/remotes/upstream/main' '+refs/tags/v*:refs/upstream-tags/v*'
           maintained_head=''
           if [[ "$BRANCH" == 'j2k/current' ]]; then
             # Publication only follows j2k/current, so the branch names no
@@ -66,14 +71,27 @@ jobs:
               exit 1
             fi
             git fetch origin '+refs/heads/j2k/current:refs/remotes/origin/current'
-            git fetch --tags upstream main
             maintained_head="$(git rev-parse refs/remotes/origin/current)"
             if ! git merge-base --is-ancestor "$SOURCE_COMMIT" "$maintained_head" 2>/dev/null; then
               echo "::error::Failed release source $SOURCE_COMMIT is not in j2k/current history at $maintained_head." >&2
               exit 1
             fi
-            upstream_tag="$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-j2k.*' --abbrev=0 "$SOURCE_COMMIT")"
+            # The base is the newest stable upstream release on upstream main
+            # in the failed commit's history.
+            upstream_tag=''
+            while IFS= read -r tag; do
+              if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+                && git merge-base --is-ancestor "refs/upstream-tags/$tag" refs/remotes/upstream/main; then
+                upstream_tag="$tag"
+                break
+              fi
+            done < <(git for-each-ref --merged="$SOURCE_COMMIT" --sort=-version:refname --format='%(refname:strip=2)' refs/upstream-tags/)
+            if [[ -z "$upstream_tag" ]]; then
+              echo "::error::Failed release source $SOURCE_COMMIT contains no stable upstream release." >&2
+              exit 1
+            fi
             default_series="$SOURCE_COMMIT"
+            PREVIOUS_BASE="${PREVIOUS_BASE:-$upstream_tag}"
           elif [[ "$BRANCH" =~ ^j2k/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/candidate" '+refs/heads/j2k/current:refs/remotes/origin/current'
             git fetch --tags upstream main
@@ -88,11 +106,18 @@ jobs:
             exit 1
           fi
           [[ "$upstream_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          upstream_commit="$(git rev-parse "$upstream_tag^{commit}")"
+          if ! upstream_commit="$(git rev-parse --verify --quiet "refs/upstream-tags/$upstream_tag^{commit}")"; then
+            echo "::error::$upstream_tag is not an upstream release tag." >&2
+            exit 1
+          fi
           series_commit="${SERIES_COMMIT:-$default_series}"
           previous_base="${PREVIOUS_BASE:-$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-j2k.*' --abbrev=0 "$series_commit")}"
           [[ "$series_commit" =~ ^[0-9a-f]{40}$ ]]
           [[ "$previous_base" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if [[ -n "${maintained_head:-}" ]] && ! git rev-parse --verify --quiet "refs/upstream-tags/$previous_base^{commit}" >/dev/null; then
+            echo "::error::Previous base $previous_base is not an upstream release tag." >&2
+            exit 1
+          fi
           jobs="$(gh api "repos/${{ github.repository }}/actions/runs/$FAILED_RUN_ID/jobs?per_page=100")"
           failed_steps="$(JOBS="$jobs" node -e '
             const jobs = JSON.parse(process.env.JOBS).jobs;

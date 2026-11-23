@@ -202,14 +202,14 @@ const GH_STUB = `gh() {
 }
 `;
 
-function runReporter(workflow, { root, repo }, env) {
+function runReporter(workflow, { root, upstreamRepo }, env) {
   const script = YAML.parse(workflow).jobs.report.steps.find((step) => step.run).run
     .replaceAll('${{ github.repository }}', 'fixture/repo')
     .replace('node tools/desktop-release/upstream-recovery.mjs', `node ${JSON.stringify(new URL('./upstream-recovery.mjs', import.meta.url).pathname)}`);
   // Each run starts from its own full checkout, as on a fresh runner.
   const runner = mkdtempSync(join(root, 'runner-'));
   const checkout = join(runner, 'checkout');
-  git(root, 'clone', '--quiet', repo, checkout);
+  git(root, 'clone', '--quiet', join(root, 'origin'), checkout);
   const calls = join(runner, 'gh-calls');
   const body = join(runner, 'issue-body.md');
   writeFileSync(calls, '');
@@ -217,7 +217,7 @@ function runReporter(workflow, { root, repo }, env) {
     cwd: checkout, encoding: 'utf8', input: `${GH_STUB}${script}`,
     env: {
       PATH: process.env.PATH, HOME: process.env.HOME, RUNNER_TEMP: runner, GH_CALLS: calls, GH_BODY: body,
-      GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.${repo}.insteadOf`, GIT_CONFIG_VALUE_0: 'https://github.com/openchamber/openchamber.git',
+      GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.${upstreamRepo}.insteadOf`, GIT_CONFIG_VALUE_0: 'https://github.com/openchamber/openchamber.git',
       FIXTURE_ISSUE: '', RUN_URL: `https://github.com/fixture/repo/actions/runs/${env.FAILED_RUN_ID}`, ...env,
     },
   });
@@ -225,15 +225,29 @@ function runReporter(workflow, { root, repo }, env) {
   return { ...result, calls: readFileSync(calls, 'utf8').trim().split('\n').filter(Boolean), body: existsSync(body) ? readFileSync(body, 'utf8') : '', contract };
 }
 
+// Upstream is its own repository holding only main and its release tags;
+// tags made later in the fork never reach it.
+function withUpstream(fixture) {
+  const upstreamRepo = join(fixture.root, 'upstream.git');
+  git(fixture.root, 'clone', '--quiet', '--bare', fixture.repo, upstreamRepo);
+  for (const branch of ['j2k/current', 'j2k/v2.1.0']) git(upstreamRepo, 'update-ref', '-d', `refs/heads/${branch}`);
+  assert.equal(git(upstreamRepo, 'tag', '--list'), 'v2.0.0\nv2.1.0');
+  return { ...fixture, upstreamRepo };
+}
+
 function maintainedFixture(t) {
-  const fixture = recoveryFixture(t);
-  const { root, repo, upstream } = fixture;
+  const fixture = withUpstream(recoveryFixture(t));
+  const { repo, upstream, upstreamRepo } = fixture;
   // j2k/current is integrated onto v2.1.0; the release of its tip fails.
+  // The fork also carries a stable-looking tag of its own on that commit.
   git(repo, 'switch', '--detach', upstream);
   git(repo, 'commit', '--allow-empty', '-m', 'Fork patch on v2.1.0');
   const failed = git(repo, 'rev-parse', 'HEAD');
   git(repo, 'branch', '-f', 'j2k/current', failed);
+  git(repo, 'tag', 'v9.9.9', failed);
+  git(repo, 'tag', 'upstream/v9.9.9', failed);
   git(repo, 'switch', 'main');
+  assert.equal(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/tags/v9.9.9'], { cwd: upstreamRepo }).status, 1);
   return { ...fixture, failed };
 }
 
@@ -253,6 +267,7 @@ test('a failed j2k/current release reports its exact commit even after the branc
   assert.equal(report.contract.candidateCommit, failed);
   assert.equal(report.contract.maintainedHeadCommit, failed);
   assert.equal(report.contract.failedRunId, '45107464343');
+  // The fork-only v9.9.9 on the failed commit is not an upstream release.
   assert.equal(report.contract.upstreamTag, 'v2.1.0');
   assert.equal(report.contract.upstreamCommit, upstream);
   assert.equal(report.contract.previousBaseTag, 'v2.0.0');
@@ -291,11 +306,13 @@ test('a failed j2k/current release reports its exact commit even after the branc
 
 test('a release identity outside maintained history is refused without issue writes', (t) => {
   const fixture = maintainedFixture(t);
-  for (const [commit, message] of [
-    [fixture.upstream.replace(/^./, (c) => (c === '0' ? '1' : '0')), /is not in j2k\/current history/],
-    ['', /has no exact source commit/],
+  for (const [identity, message] of [
+    [{ commit: fixture.upstream.replace(/^./, (c) => (c === '0' ? '1' : '0')) }, /is not in j2k\/current history/],
+    [{ commit: '' }, /has no exact source commit/],
+    // A previous base named by the release identity must be upstream's too.
+    [{ previousBaseTag: 'v9.9.9' }, /Previous base v9\.9\.9 is not an upstream release tag/],
   ]) {
-    const report = runReporter(recoveryWorkflow, fixture, releaseFailure(fixture.failed, { commit }));
+    const report = runReporter(recoveryWorkflow, fixture, releaseFailure(fixture.failed, identity));
     assert.notEqual(report.status, 0);
     assert.match(report.stderr, message);
     assert.deepEqual(report.calls.filter((call) => !call.startsWith('run download')), []);
@@ -309,7 +326,7 @@ test('a release identity outside maintained history is refused without issue wri
 
 test('failed candidate validation keeps its existing recovery report', (t) => {
   // Before integration: j2k/current is still the series on v2.0.0.
-  const fixture = recoveryFixture(t);
+  const fixture = withUpstream(recoveryFixture(t));
   const { series, upstream } = fixture;
   const report = runReporter(recoveryWorkflow, fixture, {
     FAILED_WORKFLOW: 'J2K Validate', EVENT_BRANCH: 'j2k/v2.1.0', EVENT_COMMIT: series, FAILED_RUN_ID: '99',
@@ -328,6 +345,16 @@ test('failed candidate validation keeps its existing recovery report', (t) => {
   ]);
   assert.ok(report.calls.some((call) => call.startsWith('issue create --repo fixture/repo --title Upstream recovery: j2k/v2.1.0 ')));
   assert.ok(!report.calls.some((call) => call.startsWith('run download')));
+
+  // A candidate named after a fork-only tag has no upstream release.
+  git(fixture.repo, 'tag', 'v2.2.0', series);
+  git(fixture.repo, 'branch', 'j2k/v2.2.0', series);
+  const forkOnly = runReporter(recoveryWorkflow, fixture, {
+    FAILED_WORKFLOW: 'J2K Validate', EVENT_BRANCH: 'j2k/v2.2.0', EVENT_COMMIT: series, FAILED_RUN_ID: '100',
+  });
+  assert.notEqual(forkOnly.status, 0);
+  assert.match(forkOnly.stderr, /v2\.2\.0 is not an upstream release tag/);
+  assert.deepEqual(forkOnly.calls, []);
 });
 
 test('fork PR checks use available hosted runners and retain all four validation jobs', () => {
