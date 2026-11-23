@@ -32,18 +32,22 @@ export function discover(root, run = command) {
   // tags in their own namespace and prune tags removed upstream.
   discoveryGit('fetch', '--prune', '--no-tags', `https://github.com/${UPSTREAM}.git`,
     '+refs/heads/main:refs/remotes/upstream/main', '+refs/tags/v*:refs/tags/upstream/v*');
-  const tag = discoveryGit('for-each-ref', '--merged=refs/remotes/upstream/main', '--sort=-version:refname',
+  const newestStable = (merged) => discoveryGit('for-each-ref', `--merged=${merged}`, '--sort=-version:refname',
     '--format=%(refname:strip=3)', 'refs/tags/upstream/')
     .split('\n').find((name) => /^v\d+\.\d+\.\d+$/.test(name));
+  const tag = newestStable('refs/remotes/upstream/main');
   if (!tag) throw new Error('No stable upstream tag');
   const sourceCommit = discoveryGit('rev-parse', 'refs/remotes/origin/j2k/current');
   const upstreamCommit = discoveryGit('rev-parse', `refs/tags/upstream/${tag}^{commit}`);
   if (!SHA.test(sourceCommit) || !SHA.test(upstreamCommit)) throw new Error('Invalid Git identity');
-  const previousBaseRef = discoveryGit('describe', '--tags', '--match', 'upstream/v[0-9]*.[0-9]*.[0-9]*',
-    '--exclude', '*-*', '--abbrev=0', sourceCommit);
-  const previousBaseCommit = discoveryGit('rev-parse', `${previousBaseRef}^{commit}`);
+  // Not `git describe`: it prints an annotated tag's embedded name (v2.7.0,
+  // with a -N-g<sha> suffix) instead of the upstream/ ref it matched.
+  const previousBase = newestStable(sourceCommit);
+  if (!previousBase) throw new Error('Maintained source contains no stable upstream tag');
+  const previousBaseCommit = discoveryGit('rev-parse', `refs/tags/upstream/${previousBase}^{commit}`);
+  if (!SHA.test(previousBaseCommit)) throw new Error('Invalid Git identity');
   const integrated = discoveryGit('rev-list', upstreamCommit, '--not', sourceCommit) === '';
-  return { directory, tag, sourceCommit, upstreamCommit, previousBase: previousBaseRef.slice('upstream/'.length), previousBaseCommit, integrated };
+  return { directory, tag, sourceCommit, upstreamCommit, previousBase, previousBaseCommit, integrated };
 }
 
 export function workerPrompt(job) {
