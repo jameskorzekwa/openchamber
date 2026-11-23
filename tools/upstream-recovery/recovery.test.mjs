@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { advanceJob, checkPhase, loadState, newJob, saveState } from './state.mjs';
-import { command, createOpenCode, discover, verifyCandidate, workerPrompt } from './bee2.mjs';
-import { enforceDeadline, lockedTickResult, reconcile } from './reconcile.mjs';
+import { BOOTSTRAP_TIMEOUTS, command, createOpenCode, discover, prepareWorktree, verifyCandidate, workerPrompt } from './bee2.mjs';
+import { discoveryPort, enforceDeadline, lockedTickResult, reconcile } from './reconcile.mjs';
 import { attentionReason, STALE_AFTER_MS, watchdog } from './watchdog.mjs';
 import {
   configuration, deadlineCalendar, deadlineUnit, ON_CALENDAR, registerDeadline, releaseDeadline,
@@ -546,6 +546,172 @@ test('real Git discovery and green-PR readiness verify upstream ancestry, head a
     git(upstream, 'tag', '-d', 'v2.10.0');
     assert.equal(discover(state, transport).tag, 'v2.9.0');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// Cold-start fixture: bare fork and upstream served over file:// with
+// uploadpack.allowFilter, so --filter and --dissociate run in real Git.
+function coldStartFixture() {
+  const root = mkdtempSync(join(tmpdir(), 'recovery-coldstart-'));
+  const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=Recovery Test', '-c', 'user.email=recovery@example.test', ...args], {
+    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+  const work = join(root, 'work');
+  const upstream = join(root, 'upstream.git');
+  const fork = join(root, 'fork.git');
+  git(root, 'init', '-q', '-b', 'main', work);
+  const commit = (name, file = 'file.txt') => {
+    writeFileSync(join(work, file), name);
+    git(work, 'add', file);
+    git(work, 'commit', '-q', '-m', name);
+    return git(work, 'rev-parse', 'HEAD');
+  };
+  commit('base');
+  commit('keep', 'kept.txt');
+  git(work, 'tag', '-a', 'v2.7.0', '-m', 'stable');
+  const latest = commit('2.8');
+  git(work, 'tag', 'v2.8.0');
+  git(work, 'switch', '-q', '-c', 'j2k', 'v2.7.0');
+  const forkSource = commit('custom patch', 'patch.txt');
+  // A fork-only stable-looking tag must not nominate an upstream release.
+  git(work, 'tag', 'v9.9.9');
+  git(root, 'init', '-q', '--bare', '-b', 'main', upstream);
+  git(root, 'init', '-q', '--bare', '-b', 'main', fork);
+  git(work, 'push', '-q', upstream, 'main:refs/heads/main', 'refs/tags/v2.7.0', 'refs/tags/v2.8.0');
+  git(work, 'push', '-q', fork, 'j2k:refs/heads/j2k/current', 'refs/tags/v2.7.0', 'refs/tags/v9.9.9');
+  for (const repository of [upstream, fork]) git(repository, 'config', 'uploadpack.allowFilter', 'true');
+  const urls = {
+    'https://github.com/jameskorzekwa/openchamber.git': `file://${fork}`,
+    'https://github.com/openchamber/openchamber.git': `file://${upstream}`,
+  };
+  const calls = [];
+  // Only transport URLs are substituted; the timeout reaches the real child.
+  const transport = (binary, args, cwd, timeout) => {
+    calls.push(args);
+    return command(binary, args.map((arg) => urls[arg] ?? arg), cwd, timeout);
+  };
+  return { root, git, fork, source: forkSource, latest, transport, calls, state: join(root, 'state') };
+}
+
+test('cold start without a local reference bootstraps a blobless clone that keeps exact ancestry', () => {
+  const fixture = coldStartFixture();
+  const { git, state } = fixture;
+  try {
+    const found = discover(state, fixture.transport);
+    assert.equal(found.tag, 'v2.8.0');
+    assert.equal(found.upstreamCommit, fixture.latest);
+    assert.equal(found.sourceCommit, fixture.source);
+    // The annotated upstream v2.7.0 base resolves to its own commit.
+    assert.equal(found.previousBase, 'v2.7.0');
+    assert.equal(found.previousBaseCommit, git(fixture.fork, 'rev-parse', 'v2.7.0^{commit}'));
+    assert.notEqual(found.previousBaseCommit, fixture.source);
+    assert.equal(found.integrated, false);
+    const clone = fixture.calls.find((args) => args[0] === 'clone');
+    assert.ok(clone.includes('--filter=blob:none') && !clone.includes('--depth'), 'full history, blobs on demand');
+    const repository = join(state, 'repository');
+    assert.equal(git(repository, 'config', 'remote.origin.partialclonefilter'), 'blob:none');
+    assert.equal(git(repository, 'rev-parse', '--is-shallow-repository'), 'false');
+    assert.equal(existsSync(join(state, 'repository.bootstrap')), false);
+    // A worker worktree still checks out real file contents from origin.
+    const job = { ...newJob(found, 0), key: 'cold' };
+    const worktree = prepareWorktree(state, job);
+    assert.equal(readFileSync(join(worktree, 'patch.txt'), 'utf8'), 'custom patch');
+    assert.equal(readFileSync(join(worktree, 'kept.txt'), 'utf8'), 'keep');
+    // The bootstrapped cache is reused; a second tick does not clone again.
+    fixture.calls.length = 0;
+    assert.equal(discover(state, fixture.transport).sourceCommit, fixture.source);
+    assert.equal(fixture.calls.some((args) => args[0] === 'clone'), false);
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test('local reference bootstraps a dissociated cache that survives losing the reference', () => {
+  const fixture = coldStartFixture();
+  const { git, state } = fixture;
+  const reference = join(fixture.root, 'primary');
+  try {
+    git(fixture.root, 'clone', '-q', fixture.fork, reference);
+    // The tick's port passes the configured reference through.
+    const found = discoveryPort({ stateDirectory: state, referenceRepository: reference }, fixture.transport)();
+    assert.equal(found.sourceCommit, fixture.source);
+    const clone = fixture.calls.find((args) => args[0] === 'clone');
+    assert.deepEqual(clone.slice(2, 5), ['--reference', reference, '--dissociate']);
+    const repository = join(state, 'repository');
+    assert.equal(existsSync(join(repository, '.git', 'objects', 'info', 'alternates')), false);
+    rmSync(reference, { recursive: true, force: true });
+    git(repository, 'fsck', '--connectivity-only', '--no-dangling');
+    const worktree = prepareWorktree(state, { ...newJob(found, 0), key: 'reference' });
+    assert.equal(readFileSync(join(worktree, 'kept.txt'), 'utf8'), 'keep');
+    assert.equal(discover(state, fixture.transport).upstreamCommit, fixture.latest);
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test('missing or broken reference falls back to the blobless bootstrap', () => {
+  const fixture = coldStartFixture();
+  const notARepository = join(fixture.root, 'not-a-repository');
+  try {
+    mkdirSync(notARepository);
+    const found = discover(fixture.state, fixture.transport, { reference: notARepository });
+    assert.equal(found.sourceCommit, fixture.source);
+    assert.deepEqual(fixture.calls.filter((args) => args[0] === 'clone').map((args) => args[2]), ['--reference', '--filter=blob:none']);
+    rmSync(join(fixture.state, 'repository'), { recursive: true, force: true });
+    fixture.calls.length = 0;
+    assert.equal(discover(fixture.state, fixture.transport, { reference: join(fixture.root, 'absent') }).tag, 'v2.8.0');
+    assert.deepEqual(fixture.calls.filter((args) => args[0] === 'clone').map((args) => args[2]), ['--filter=blob:none']);
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test('slow cold bootstrap times out with a next action, leaves no partial cache and recovers next tick', () => {
+  const fixture = coldStartFixture();
+  const { state } = fixture;
+  try {
+    mkdirSync(state);
+    writeFileSync(join(state, 'state.json'), 'unrelated');
+    // A stale staging clone from a killed tick is replaced, not trusted.
+    mkdirSync(join(state, 'repository.bootstrap'));
+    writeFileSync(join(state, 'repository.bootstrap', 'stale'), 'stale');
+    // A real `git clone` child is killed by its timeout.
+    const slow = (binary, args, cwd, timeout) => {
+      if (args[0] === 'clone') return fixture.transport('sh', ['-c', 'exec sleep 5'], cwd, timeout);
+      return fixture.transport(binary, args, cwd, timeout);
+    };
+    assert.throws(() => discover(state, slow, { reference: fixture.fork, timeouts: { reference: 100, total: 300 } }), (error) => {
+      assert.match(error.message, /^Cold bootstrap of .*repository failed \(reference: sh -c timed out after 0s\./);
+      assert.match(error.message, /blobless: sh -c timed out after 0s/);
+      assert.match(error.message, /Next action: seed it with "git clone --no-checkout --filter=blob:none https:\/\/github.com\/jameskorzekwa\/openchamber.git /);
+      assert.doesNotMatch(error.message, /authentication/);
+      return true;
+    });
+    assert.equal(existsSync(join(state, 'repository')), false);
+    assert.equal(existsSync(join(state, 'repository.bootstrap')), false);
+    assert.equal(readFileSync(join(state, 'state.json'), 'utf8'), 'unrelated');
+    // The cache is still missing; the next tick bootstraps it normally.
+    assert.equal(discover(state, fixture.transport).sourceCommit, fixture.source);
+    assert.equal(readFileSync(join(state, 'state.json'), 'utf8'), 'unrelated');
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test('bootstrap budget fits the locked tick and never clears an unrecognized cache directory', () => {
+  assert.ok(BOOTSTRAP_TIMEOUTS.reference < BOOTSTRAP_TIMEOUTS.total);
+  assert.ok(BOOTSTRAP_TIMEOUTS.total + 2 * 120_000 < 10 * 60_000, 'bootstrap plus both fetches fit the 10-minute tick');
+  const root = mkdtempSync(join(tmpdir(), 'recovery-foreign-'));
+  try {
+    mkdirSync(join(root, 'repository'));
+    writeFileSync(join(root, 'repository', 'keep'), 'owner data');
+    assert.throws(() => discover(root, () => assert.fail('no Git command may run')), /exists but is not a Git checkout/);
+    assert.equal(readFileSync(join(root, 'repository', 'keep'), 'utf8'), 'owner data');
+    const config = join(root, 'config.json');
+    writeFileSync(config, JSON.stringify({ stateDirectory: root, referenceRepository: 'relative/primary' }));
+    assert.throws(() => configuration(config), /referenceRepository must be an absolute path/);
+    writeFileSync(config, JSON.stringify({ stateDirectory: root, referenceRepository: '/srv/primary' }));
+    assert.equal(configuration(config).referenceRepository, '/srv/primary');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('command reports a real timeout distinctly from a failed exit status', () => {
+  assert.throws(() => command('sh', ['-c', 'exec sleep 5'], undefined, 100), /^Error: sh -c timed out after 0s\. Inspect network throughput/);
+  assert.throws(() => command('sh', ['-c', 'echo secret >&2; exit 7']), (error) => {
+    assert.equal(error.message, 'sh -c failed (status 7). Inspect local authentication/network health.');
+    return true;
+  });
 });
 
 test('real child timeout reports sanitized failure and leaves shared state untouched', () => {

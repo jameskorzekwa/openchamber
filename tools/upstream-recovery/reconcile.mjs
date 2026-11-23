@@ -4,7 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { advanceJob, identityKey, loadState, newJob, saveState } from './state.mjs';
-import { createOpenCode, discover, gh, GH_REPOSITORY, prepareWorktree, publishHeartbeat, pullRequest, secretPassword, verifyCandidate } from './bee2.mjs';
+import { command, createOpenCode, discover, gh, GH_REPOSITORY, prepareWorktree, publishHeartbeat, pullRequest, secretPassword, verifyCandidate } from './bee2.mjs';
 import { configuration, registerDeadline, releaseDeadline } from './schedule.mjs';
 
 export async function reconcile(config, ports) {
@@ -93,6 +93,12 @@ export async function enforceDeadline(config, sessionID, deadlineAt, ports) {
   return 'enforced';
 }
 
+// The tick's discovery port: the configured local reference speeds up a cold
+// bootstrap of the cache.
+export function discoveryPort(config, run = command) {
+  return () => discover(config.stateDirectory, run, { reference: config.referenceRepository });
+}
+
 export function lockedTickResult(child, report = console.error) {
   if (child.error || child.status === null) {
     const code = ['ETIMEDOUT', 'ENOENT', 'EACCES'].includes(child.error?.code) ? child.error.code : 'SPAWN_FAILED';
@@ -141,7 +147,7 @@ async function main() {
   const api = createOpenCode({ password: secretPassword() });
   const state = await reconcile(config, {
     now: Date.now,
-    discover: () => discover(config.stateDirectory),
+    discover: discoveryPort(config),
     active: api.active,
     stop: api.stop,
     pullRequest,

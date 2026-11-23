@@ -134,7 +134,9 @@ carry out a sequence.
    ```
 
    `model` defaults to that value. Confirm the installed OpenCode server lists
-   it before enabling.
+   it before enabling. Optionally add `"referenceRepository"`, the absolute
+   path of a local clone (on bee2, the primary checkout under
+   `managed/opm-home/openchamber`), to speed up a cold bootstrap.
 3. Run the isolated regressions:
 
    ```sh
@@ -271,6 +273,32 @@ again only for unrelated or other-author changes. Report the integrated head,
 release run and any unperformed deployment checks. Once the release completes,
 the integration session closes the corresponding recovery issues and PR as
 appropriate and cleans its completed worktree.
+
+## Cold bootstrap of the discovery cache
+
+Discovery keeps a Git cache at `<stateDirectory>/repository`. When it is
+missing, the tick creates it within a 300-second budget, which leaves room
+for both fetches and the heartbeat inside the 10-minute locked tick. A full
+cold clone of the fork took 552 seconds on bee2 and could not finish within
+the 120-second command limit.
+
+1. With `referenceRepository` set and present, it clones with
+   `--reference <path> --dissociate` (at most 90 seconds). Objects are copied,
+   so the cache never depends on the reference afterwards.
+2. Otherwise, or if that fails, it clones with `--filter=blob:none` (16
+   seconds on bee2). All commits and trees are downloaded, so tag selection,
+   ancestry and integration checks are exact. Blobs are fetched from `origin`
+   on demand when a worker worktree checks out files. A shallow clone is not
+   used because ancestry checks would be wrong.
+
+Each clone lands in `repository.bootstrap` and is renamed into place only
+when complete; a stale staging directory from a killed tick is replaced. A
+non-Git `repository` directory is never cleared: the tick fails and names
+it. When every attempt fails, the heartbeat error names each attempt's
+failure (`timed out after Ns` or `failed (status N)`) and the next action:
+seed the cache with
+`git clone --no-checkout --filter=blob:none https://github.com/jameskorzekwa/openchamber.git <stateDirectory>/repository`,
+then rerun the tick.
 
 ## Limitations
 
