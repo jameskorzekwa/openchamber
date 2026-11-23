@@ -25,34 +25,51 @@ describe('detached restart helper entry', () => {
   });
 
   it('starts the emitted helper without a checkout or source resolver', async () => {
-    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'openchamber-emitted-restart-'));
-    temporaryDirectories.push(root);
-    const directory = path.join(root, 'build', 'server', 'lib', 'openchamber-update');
-    await fsp.mkdir(directory, { recursive: true });
-    await fsp.writeFile(path.join(root, 'package.json'), '{"type":"module"}');
-    await fsp.symlink(fileURLToPath(new URL('../../../node_modules', import.meta.url)), path.join(root, 'node_modules'), 'dir');
-    for (const name of ['restart-transaction', 'restart-helper-launch']) {
-      const source = await fsp.readFile(new URL(`./${name}.ts`, import.meta.url), 'utf8');
-      await fsp.writeFile(path.join(directory, `${name}.js`), stripTypeScriptTypes(source));
-    }
-    const env = { ...process.env };
-    delete env.NODE_OPTIONS;
-    const launchUrl = pathToFileURL(path.join(directory, 'restart-helper-launch.js')).href;
-    const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
-      import { spawnSync } from 'node:child_process';
-      import { restartHelperArguments } from ${JSON.stringify(launchUrl)};
-      const args = restartHelperArguments();
-      const child = spawnSync(process.execPath, args, { encoding: 'utf8' });
-      console.log(JSON.stringify({ args, status: child.status, stderr: child.stderr }));
-    `], { env, encoding: 'utf8' });
-    expect(result.status).toBe(0);
-    const child = JSON.parse(result.stdout);
-    expect(child.args).toEqual([path.join(directory, 'restart-transaction.js')]);
-    expect(child.status).toBe(1);
-    expect(child.stderr).toContain('Restart helper requires an expected transaction ID');
-    expect(child.stderr).not.toContain('ERR_MODULE_NOT_FOUND');
+    await expectEmittedHelperStarts(await fsp.mkdtemp(path.join(os.tmpdir(), 'openchamber-emitted-restart-')));
+  });
+
+  it('launches the canonical emitted helper when its install path is reached through a symlink', async () => {
+    // macOS reaches os.tmpdir() through the /var -> /private/var alias; an
+    // explicit directory symlink reproduces that on every platform.
+    const base = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), 'openchamber-emitted-alias-')));
+    temporaryDirectories.push(base);
+    await fsp.mkdir(path.join(base, 'real'));
+    await fsp.symlink(path.join(base, 'real'), path.join(base, 'alias'), 'dir');
+    const root = await fsp.mkdtemp(path.join(base, 'alias', 'emitted-'));
+    expect(await fsp.realpath(root)).not.toBe(root);
+    await expectEmittedHelperStarts(root);
   });
 });
+
+// Node resolves an ES module's import.meta.url to its real path, so the
+// launcher names the canonical emitted helper file, never a symlink alias.
+async function expectEmittedHelperStarts(root) {
+  temporaryDirectories.push(root);
+  const directory = path.join(root, 'build', 'server', 'lib', 'openchamber-update');
+  await fsp.mkdir(directory, { recursive: true });
+  await fsp.writeFile(path.join(root, 'package.json'), '{"type":"module"}');
+  await fsp.symlink(fileURLToPath(new URL('../../../node_modules', import.meta.url)), path.join(root, 'node_modules'), 'dir');
+  for (const name of ['restart-transaction', 'restart-helper-launch']) {
+    const source = await fsp.readFile(new URL(`./${name}.ts`, import.meta.url), 'utf8');
+    await fsp.writeFile(path.join(directory, `${name}.js`), stripTypeScriptTypes(source));
+  }
+  const env = { ...process.env };
+  delete env.NODE_OPTIONS;
+  const launchUrl = pathToFileURL(path.join(directory, 'restart-helper-launch.js')).href;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import { spawnSync } from 'node:child_process';
+    import { restartHelperArguments } from ${JSON.stringify(launchUrl)};
+    const args = restartHelperArguments();
+    const child = spawnSync(process.execPath, args, { encoding: 'utf8' });
+    console.log(JSON.stringify({ args, status: child.status, stderr: child.stderr }));
+  `], { env, encoding: 'utf8' });
+  expect(result.status).toBe(0);
+  const child = JSON.parse(result.stdout);
+  expect(child.args).toEqual([path.join(await fsp.realpath(directory), 'restart-transaction.js')]);
+  expect(child.status).toBe(1);
+  expect(child.stderr).toContain('Restart helper requires an expected transaction ID');
+  expect(child.stderr).not.toContain('ERR_MODULE_NOT_FOUND');
+}
 
 async function fixture(symlinkInstallRoot = false) {
   const root = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), 'openchamber-restart-')));

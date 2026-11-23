@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { advanceJob, checkPhase, loadState, newJob, saveState } from './state.mjs';
-import { command, createOpenCode, discover, verifyCandidate, workerPrompt } from './bee2.mjs';
-import { enforceDeadline, lockedTickResult, reconcile } from './reconcile.mjs';
+import {
+  advanceJob, checkPhase, loadState, newJob, RELEASE_DISPATCH_GRACE_MS, releasePhase, saveState, VALIDATION_PENDING_LIMIT_MS,
+} from './state.mjs';
+import {
+  BOOTSTRAP_TIMEOUTS, command, createOpenCode, discover, heartbeatBody, prepareWorktree, releaseRuns, verifyCandidate, workerPrompt,
+} from './bee2.mjs';
+import { discoveryPort, enforceDeadline, lockedTickResult, reconcile } from './reconcile.mjs';
 import { attentionReason, STALE_AFTER_MS, watchdog } from './watchdog.mjs';
 import {
   configuration, deadlineCalendar, deadlineUnit, ON_CALENDAR, registerDeadline, releaseDeadline,
@@ -294,7 +298,7 @@ test('daily ticks call a model only for actionable recovery', async () => {
   const adapter = {
     ...ports(), now: () => now, discover: async () => current, active: async () => live,
     launch: async () => { modelCalls++; live = true; }, pullRequest: async () => pr,
-    release: async () => ({ status: 'completed', conclusion: 'success', url: 'https://example.test/run' }),
+    release: async (sha) => ({ releases: [{ headSha: sha, status: 'completed', conclusion: 'success', url: 'https://example.test/run', createdAt: '2026-11-23T05:33:36Z' }], validations: [] }),
     publish: async (state) => { published = structuredClone(state); },
   };
   const tick = async (day) => { now = day * DAY; await reconcile({ stateDirectory: root }, adapter); };
@@ -302,6 +306,7 @@ test('daily ticks call a model only for actionable recovery', async () => {
     for (let day = 0; day < 3; day++) await tick(day);
     assert.equal(modelCalls, 0);
     assert.equal(published.error, undefined);
+    assert.equal(published.release.phase, 'released');
     current = identity;
     await tick(3);
     assert.equal(modelCalls, 1);
@@ -494,7 +499,8 @@ test('real Git discovery and green-PR readiness verify upstream ancestry, head a
   try {
     git(root, 'init', '-b', 'main', upstream);
     const base = commit(upstream, 'base');
-    git(upstream, 'tag', 'v2.7.0');
+    // Annotated, like older upstream releases: describe would print v2.7.0-N-g….
+    git(upstream, 'tag', '-a', 'v2.7.0', '-m', 'stable');
     git(root, 'clone', upstream, fork);
     git(fork, 'switch', '-c', 'j2k/current');
     const source = commit(fork, 'custom patch');
@@ -544,6 +550,307 @@ test('real Git discovery and green-PR readiness verify upstream ancestry, head a
     // A deleted upstream tag must not remain a candidate in the cache.
     git(upstream, 'tag', '-d', 'v2.10.0');
     assert.equal(discover(state, transport).tag, 'v2.9.0');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// Cold-start fixture: bare fork and upstream served over file:// with
+// uploadpack.allowFilter, so --filter and --dissociate run in real Git.
+function coldStartFixture() {
+  const root = mkdtempSync(join(tmpdir(), 'recovery-coldstart-'));
+  const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=Recovery Test', '-c', 'user.email=recovery@example.test', ...args], {
+    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+  const work = join(root, 'work');
+  const upstream = join(root, 'upstream.git');
+  const fork = join(root, 'fork.git');
+  git(root, 'init', '-q', '-b', 'main', work);
+  const commit = (name, file = 'file.txt') => {
+    writeFileSync(join(work, file), name);
+    git(work, 'add', file);
+    git(work, 'commit', '-q', '-m', name);
+    return git(work, 'rev-parse', 'HEAD');
+  };
+  commit('base');
+  commit('keep', 'kept.txt');
+  git(work, 'tag', '-a', 'v2.7.0', '-m', 'stable');
+  const latest = commit('2.8');
+  git(work, 'tag', 'v2.8.0');
+  git(work, 'switch', '-q', '-c', 'j2k', 'v2.7.0');
+  const forkSource = commit('custom patch', 'patch.txt');
+  // A fork-only stable-looking tag must not nominate an upstream release.
+  git(work, 'tag', 'v9.9.9');
+  git(root, 'init', '-q', '--bare', '-b', 'main', upstream);
+  git(root, 'init', '-q', '--bare', '-b', 'main', fork);
+  git(work, 'push', '-q', upstream, 'main:refs/heads/main', 'refs/tags/v2.7.0', 'refs/tags/v2.8.0');
+  git(work, 'push', '-q', fork, 'j2k:refs/heads/j2k/current', 'refs/tags/v2.7.0', 'refs/tags/v9.9.9');
+  for (const repository of [upstream, fork]) git(repository, 'config', 'uploadpack.allowFilter', 'true');
+  const urls = {
+    'https://github.com/jameskorzekwa/openchamber.git': `file://${fork}`,
+    'https://github.com/openchamber/openchamber.git': `file://${upstream}`,
+  };
+  const calls = [];
+  // Only transport URLs are substituted; the timeout reaches the real child.
+  const transport = (binary, args, cwd, timeout) => {
+    calls.push(args);
+    return command(binary, args.map((arg) => urls[arg] ?? arg), cwd, timeout);
+  };
+  return { root, git, fork, source: forkSource, latest, transport, calls, state: join(root, 'state') };
+}
+
+test('cold start without a local reference bootstraps a blobless clone that keeps exact ancestry', () => {
+  const fixture = coldStartFixture();
+  const { git, state } = fixture;
+  try {
+    const found = discover(state, fixture.transport);
+    assert.equal(found.tag, 'v2.8.0');
+    assert.equal(found.upstreamCommit, fixture.latest);
+    assert.equal(found.sourceCommit, fixture.source);
+    // The annotated upstream v2.7.0 base resolves to its own commit.
+    assert.equal(found.previousBase, 'v2.7.0');
+    assert.equal(found.previousBaseCommit, git(fixture.fork, 'rev-parse', 'v2.7.0^{commit}'));
+    assert.notEqual(found.previousBaseCommit, fixture.source);
+    assert.equal(found.integrated, false);
+    const clone = fixture.calls.find((args) => args[0] === 'clone');
+    assert.ok(clone.includes('--filter=blob:none') && !clone.includes('--depth'), 'full history, blobs on demand');
+    const repository = join(state, 'repository');
+    assert.equal(git(repository, 'config', 'remote.origin.partialclonefilter'), 'blob:none');
+    assert.equal(git(repository, 'rev-parse', '--is-shallow-repository'), 'false');
+    assert.deepEqual(readdirSync(state), ['repository'], 'no staging directory remains');
+    // A worker worktree still checks out real file contents from origin.
+    const job = { ...newJob(found, 0), key: 'cold' };
+    const worktree = prepareWorktree(state, job);
+    assert.equal(readFileSync(join(worktree, 'patch.txt'), 'utf8'), 'custom patch');
+    assert.equal(readFileSync(join(worktree, 'kept.txt'), 'utf8'), 'keep');
+    // The bootstrapped cache is reused; a second tick does not clone again.
+    fixture.calls.length = 0;
+    assert.equal(discover(state, fixture.transport).sourceCommit, fixture.source);
+    assert.equal(fixture.calls.some((args) => args[0] === 'clone'), false);
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test('local reference bootstraps a dissociated cache that survives losing the reference', () => {
+  const fixture = coldStartFixture();
+  const { git, state } = fixture;
+  const reference = join(fixture.root, 'primary');
+  try {
+    git(fixture.root, 'clone', '-q', fixture.fork, reference);
+    // The tick's port passes the configured reference through.
+    const found = discoveryPort({ stateDirectory: state, referenceRepository: reference }, fixture.transport)();
+    assert.equal(found.sourceCommit, fixture.source);
+    const clone = fixture.calls.find((args) => args[0] === 'clone');
+    assert.deepEqual(clone.slice(2, 5), ['--reference', reference, '--dissociate']);
+    const repository = join(state, 'repository');
+    assert.equal(existsSync(join(repository, '.git', 'objects', 'info', 'alternates')), false);
+    rmSync(reference, { recursive: true, force: true });
+    git(repository, 'fsck', '--connectivity-only', '--no-dangling');
+    const worktree = prepareWorktree(state, { ...newJob(found, 0), key: 'reference' });
+    assert.equal(readFileSync(join(worktree, 'kept.txt'), 'utf8'), 'keep');
+    assert.equal(discover(state, fixture.transport).upstreamCommit, fixture.latest);
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test('a reference stored at the legacy staging path survives and yields a dissociated cache', () => {
+  const fixture = coldStartFixture();
+  const { git, state } = fixture;
+  const reference = join(state, 'repository.bootstrap');
+  try {
+    mkdirSync(state);
+    git(fixture.root, 'clone', '-q', fixture.fork, reference);
+    const refs = () => git(reference, 'for-each-ref', '--format=%(refname) %(objectname)');
+    const before = refs();
+    assert.match(before, /refs\/remotes\/origin\/j2k\/current/);
+    const found = discover(state, fixture.transport, { reference });
+    assert.equal(found.sourceCommit, fixture.source);
+    assert.deepEqual(fixture.calls.find((args) => args[0] === 'clone').slice(2, 5), ['--reference', reference, '--dissociate']);
+    assert.equal(refs(), before, 'reference is untouched');
+    git(reference, 'fsck', '--connectivity-only', '--no-dangling');
+    const repository = join(state, 'repository');
+    assert.equal(existsSync(join(repository, '.git', 'objects', 'info', 'alternates')), false);
+    assert.deepEqual(readdirSync(state).sort(), ['repository', 'repository.bootstrap']);
+    rmSync(reference, { recursive: true, force: true });
+    const worktree = prepareWorktree(state, { ...newJob(found, 0), key: 'legacy' });
+    assert.equal(readFileSync(join(worktree, 'kept.txt'), 'utf8'), 'keep');
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test('missing or broken reference falls back to the blobless bootstrap', () => {
+  const fixture = coldStartFixture();
+  const notARepository = join(fixture.root, 'not-a-repository');
+  try {
+    mkdirSync(notARepository);
+    const found = discover(fixture.state, fixture.transport, { reference: notARepository });
+    assert.equal(found.sourceCommit, fixture.source);
+    assert.deepEqual(fixture.calls.filter((args) => args[0] === 'clone').map((args) => args[2]), ['--reference', '--filter=blob:none']);
+    rmSync(join(fixture.state, 'repository'), { recursive: true, force: true });
+    fixture.calls.length = 0;
+    assert.equal(discover(fixture.state, fixture.transport, { reference: join(fixture.root, 'absent') }).tag, 'v2.8.0');
+    assert.deepEqual(fixture.calls.filter((args) => args[0] === 'clone').map((args) => args[2]), ['--filter=blob:none']);
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test('slow cold bootstrap times out with a next action, leaves no partial cache and recovers next tick', () => {
+  const fixture = coldStartFixture();
+  const { state } = fixture;
+  try {
+    mkdirSync(state);
+    writeFileSync(join(state, 'state.json'), 'unrelated');
+    // Arbitrary pre-existing data at the old fixed staging path, which a
+    // failed bootstrap must not remove.
+    mkdirSync(join(state, 'repository.bootstrap'));
+    writeFileSync(join(state, 'repository.bootstrap', 'owner'), 'owner data');
+    // A real `git clone` child is killed by its timeout.
+    const slow = (binary, args, cwd, timeout) => {
+      if (args[0] === 'clone') return fixture.transport('sh', ['-c', 'exec sleep 5'], cwd, timeout);
+      return fixture.transport(binary, args, cwd, timeout);
+    };
+    assert.throws(() => discover(state, slow, { reference: fixture.fork, timeouts: { reference: 100, total: 300 } }), (error) => {
+      assert.match(error.message, /^Cold bootstrap of .*repository failed \(reference: sh -c timed out after 0s\./);
+      assert.match(error.message, /blobless: sh -c timed out after 0s/);
+      assert.match(error.message, /Next action: seed it with "git clone --no-checkout --filter=blob:none https:\/\/github.com\/jameskorzekwa\/openchamber.git /);
+      assert.doesNotMatch(error.message, /authentication/);
+      return true;
+    });
+    assert.equal(existsSync(join(state, 'repository')), false);
+    assert.equal(readFileSync(join(state, 'repository.bootstrap', 'owner'), 'utf8'), 'owner data');
+    assert.equal(readFileSync(join(state, 'state.json'), 'utf8'), 'unrelated');
+    const remaining = () => readdirSync(state).sort();
+    assert.deepEqual(remaining(), ['repository.bootstrap', 'state.json'], 'only the owned staging directory is removed');
+    // The cache is still missing; the next tick bootstraps it normally.
+    assert.equal(discover(state, fixture.transport).sourceCommit, fixture.source);
+    assert.equal(readFileSync(join(state, 'state.json'), 'utf8'), 'unrelated');
+    assert.equal(readFileSync(join(state, 'repository.bootstrap', 'owner'), 'utf8'), 'owner data');
+    assert.deepEqual(remaining(), ['repository', 'repository.bootstrap', 'state.json']);
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test('bootstrap budget fits the locked tick and never clears an unrecognized cache directory', () => {
+  assert.ok(BOOTSTRAP_TIMEOUTS.reference < BOOTSTRAP_TIMEOUTS.total);
+  assert.ok(BOOTSTRAP_TIMEOUTS.total + 2 * 120_000 <= 10 * 60_000 - 60_000, 'clone budget plus both fetches leaves 60s of the 10-minute tick');
+  const root = mkdtempSync(join(tmpdir(), 'recovery-foreign-'));
+  try {
+    mkdirSync(join(root, 'repository'));
+    writeFileSync(join(root, 'repository', 'keep'), 'owner data');
+    assert.throws(() => discover(root, () => assert.fail('no Git command may run')), /exists but is not a Git checkout/);
+    assert.equal(readFileSync(join(root, 'repository', 'keep'), 'utf8'), 'owner data');
+    const config = join(root, 'config.json');
+    writeFileSync(config, JSON.stringify({ stateDirectory: root, referenceRepository: 'relative/primary' }));
+    assert.throws(() => configuration(config), /referenceRepository must be an absolute path/);
+    writeFileSync(config, JSON.stringify({ stateDirectory: root, referenceRepository: '/srv/primary' }));
+    assert.equal(configuration(config).referenceRepository, '/srv/primary');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('command reports a real timeout distinctly from a failed exit status', () => {
+  assert.throws(() => command('sh', ['-c', 'exec sleep 5'], undefined, 100), /^Error: sh -c timed out after 0s\. Inspect network throughput/);
+  assert.throws(() => command('sh', ['-c', 'echo secret >&2; exit 7']), (error) => {
+    assert.equal(error.message, 'sh -c failed (status 7). Inspect local authentication/network health.');
+    return true;
+  });
+});
+
+const SHA_A = 'a'.repeat(40);
+const SHA_OLD = 'b'.repeat(40);
+const T0 = Date.parse('2026-11-23T05:14:46Z');
+const validateRun = (overrides = {}) => ({
+  headSha: SHA_A, headBranch: 'j2k/current', event: 'push', status: 'in_progress', conclusion: '',
+  url: 'https://example.test/validate', createdAt: '2026-11-23T05:14:46Z', updatedAt: '2026-11-23T05:20:00Z', ...overrides,
+});
+const releaseRun = (overrides = {}) => ({
+  headSha: SHA_A, headBranch: 'j2k/current', event: 'workflow_run', status: 'completed', conclusion: 'success',
+  url: 'https://example.test/release', createdAt: '2026-11-23T05:33:36Z', updatedAt: '2026-11-23T05:50:00Z', ...overrides,
+});
+
+test('release phase: exact-SHA validation in progress is pending, everything else unreleased is an error', () => {
+  const at = (minutes) => T0 + minutes * 60_000;
+  const phase = (runs, now = at(10)) => releasePhase(SHA_A, runs, now);
+  assert.deepEqual(phase({ releases: [releaseRun()] }), { phase: 'released', url: 'https://example.test/release' });
+  // Existing semantics: an unfinished or failed release run is an error.
+  for (const run of [releaseRun({ status: 'in_progress', conclusion: '' }), releaseRun({ conclusion: 'failure' }), releaseRun({ conclusion: 'cancelled' })]) {
+    assert.match(phase({ releases: [run], validations: [validateRun()] }).error, /release requires attention: https:\/\/example.test\/release$/);
+  }
+  for (const status of ['queued', 'in_progress', 'waiting']) {
+    const pending = phase({ releases: [releaseRun({ conclusion: 'skipped' })], validations: [validateRun({ status })] });
+    assert.equal(pending.phase, 'validating');
+    assert.equal(pending.error, undefined);
+    assert.match(pending.reason, new RegExp(`^Not released: J2K Validate is ${status} for ${SHA_A}`));
+  }
+  // Runs for another SHA, a PR validation or another branch never explain a missing release.
+  const mismatched = phase({
+    releases: [releaseRun({ headSha: SHA_OLD })],
+    validations: [validateRun({ headSha: SHA_OLD }), validateRun({ event: 'pull_request' }), validateRun({ headBranch: 'j2k/v2.8.0' })],
+  });
+  assert.equal(mismatched.phase, 'attention');
+  assert.match(mismatched.error, /no release run for current SHA; no J2K Validate push run for a{40}$/);
+  assert.match(phase({}).error, /no J2K Validate push run/);
+  // Pending is bounded by run age.
+  assert.equal(phase({ validations: [validateRun()] }, T0 + VALIDATION_PENDING_LIMIT_MS).phase, 'validating');
+  assert.match(phase({ validations: [validateRun()] }, T0 + VALIDATION_PENDING_LIMIT_MS + 1).error, /still in_progress after 6 hours/);
+  assert.equal(phase({ validations: [validateRun({ createdAt: 'not a date' })] }).phase, 'attention');
+  assert.equal(phase({ validations: [validateRun()] }, T0 - 1).phase, 'attention', 'a run from the future is not trusted');
+  // Successful validation without a release: short dispatch grace, then an error.
+  const done = validateRun({ status: 'completed', conclusion: 'success', updatedAt: '2026-11-23T05:33:34Z' });
+  const finished = Date.parse(done.updatedAt);
+  assert.equal(phase({ validations: [done] }, finished + RELEASE_DISPATCH_GRACE_MS).phase, 'release-dispatch-pending');
+  assert.match(phase({ validations: [done] }, finished + RELEASE_DISPATCH_GRACE_MS + 1).error, /succeeded but no release run started within 30 minutes/);
+  for (const conclusion of ['failure', 'cancelled', 'timed_out']) {
+    assert.match(phase({ validations: [validateRun({ status: 'completed', conclusion })] }).error, new RegExp(`ended ${conclusion}$`));
+  }
+  // The newest exact-SHA run decides.
+  const rerun = [validateRun({ status: 'completed', conclusion: 'failure' }), validateRun({ createdAt: '2026-11-23T05:20:00Z', url: 'https://example.test/rerun' })];
+  assert.equal(phase({ validations: rerun }).url, 'https://example.test/rerun');
+});
+
+test('pending validation publishes a not-released heartbeat that the watchdog does not alarm on; failure still alarms', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'recovery-release-'));
+  let runs = { releases: [], validations: [validateRun()] };
+  let published;
+  let current = { ...identity, sourceCommit: SHA_A, integrated: true };
+  const adapter = {
+    ...ports(), now: () => T0 + 10 * 60_000, discover: async () => current,
+    release: async (sha) => { assert.equal(sha, SHA_A); return runs; },
+    publish: async (state) => { published = heartbeatBody(state); },
+  };
+  try {
+    const state = await reconcile({ stateDirectory: root }, adapter);
+    assert.equal(state.error, undefined, 'a pending release is not an error, so the tick exits 0');
+    assert.deepEqual(state.release, { sourceCommit: SHA_A, phase: 'validating', url: 'https://example.test/validate', reason: state.release.reason });
+    assert.match(published, /"phase": "validating"/);
+    assert.match(published, /\n\nNot released: J2K Validate is in_progress for a{40}/);
+    assert.equal(attentionReason(published, T0 + 11 * 60_000), '');
+
+    runs = { releases: [], validations: [validateRun({ status: 'completed', conclusion: 'failure' })] };
+    const failed = await reconcile({ stateDirectory: root }, adapter);
+    assert.match(failed.error, /ended failure$/);
+    assert.doesNotMatch(published, /Not released:/);
+    assert.match(attentionReason(published, T0 + 11 * 60_000), /release requires attention: no release run for current SHA; J2K Validate https:\/\/example.test\/validate ended failure/);
+
+    runs = { releases: [], validations: [] };
+    assert.match(attentionReason((await reconcile({ stateDirectory: root }, adapter), published), T0 + 11 * 60_000), /no J2K Validate push run/);
+
+    // A tick that is not integrated carries no stale release phase.
+    current = { ...identity, sourceCommit: SHA_A };
+    assert.equal((await reconcile({ stateDirectory: root }, adapter)).release, undefined);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('release adapter queries both workflows for the exact SHA through a real gh child', () => {
+  const root = mkdtempSync(join(tmpdir(), 'recovery-gh-'));
+  const stub = join(root, 'gh');
+  try {
+    writeFileSync(join(root, 'release.yml.json'), JSON.stringify([releaseRun({ headSha: SHA_OLD }), releaseRun({ conclusion: 'skipped' })]));
+    writeFileSync(join(root, 'validate.yml.json'), JSON.stringify([validateRun({ status: 'queued' })]));
+    writeFileSync(stub, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${root}/calls'\nwhile [ $# -gt 0 ]; do [ "$1" = --workflow ] && workflow=$2; shift; done\ncat '${root}/'"$workflow.json"\n`, { mode: 0o700 });
+    const run = (binary, args, cwd, timeout) => { assert.equal(binary, 'gh'); return command(stub, args, cwd, timeout); };
+    const runs = releaseRuns(SHA_A, run);
+    const calls = readFileSync(join(root, 'calls'), 'utf8').trim().split('\n');
+    assert.deepEqual(calls.map((line) => line.split(' ').slice(0, 10).join(' ')), [
+      `run list --repo github.com/jameskorzekwa/openchamber --workflow release.yml --commit ${SHA_A} --limit 20`,
+      `run list --repo github.com/jameskorzekwa/openchamber --workflow validate.yml --commit ${SHA_A} --limit 20`,
+    ]);
+    const result = releasePhase(SHA_A, runs, T0 + 60_000);
+    assert.equal(result.phase, 'validating', 'old-SHA and skipped release runs are ignored');
+    assert.match(result.reason, /J2K Validate is queued/);
+    assert.throws(() => releaseRuns('abc', () => assert.fail('no lookup for an invalid SHA')), /full commit SHA/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

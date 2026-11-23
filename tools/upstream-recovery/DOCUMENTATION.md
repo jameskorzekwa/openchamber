@@ -79,7 +79,16 @@ HEAD, after integration.
   A missing or malformed heartbeat, or one older than 25 hours, fails the
   GitHub watchdog and opens or updates one attention issue.
 - The watchdog also surfaces owner blockers, approval requests, and missing
-  or failed release runs. A failed heartbeat write fails the tick; GitHub
+  or failed release runs. Once upstream is integrated, the tick checks
+  `release.yml` and `validate.yml` runs for the exact maintained SHA. While
+  that SHA's `j2k/current` push validation is queued or running (up to 6
+  hours; its jobs time out after 60 minutes), the heartbeat records
+  `release.phase: "validating"` and "Not released", with no error, and the
+  tick exits 0. After that validation succeeds, J2K Release normally starts
+  within seconds, so `release-dispatch-pending` lasts at most 30 minutes.
+  An unfinished, failed or cancelled release run, a failed or cancelled
+  validation, no matching run, or an expired window remains an error. Runs
+  for other SHAs, pull-request validations and other branches are ignored. A failed heartbeat write fails the tick; GitHub
   subsequently observes the stale heartbeat.
 - Credentials come from bee2 Secret Service inside the HTTP consumer.
   Git operations use the existing GitHub CLI authentication. No secret is
@@ -134,7 +143,9 @@ carry out a sequence.
    ```
 
    `model` defaults to that value. Confirm the installed OpenCode server lists
-   it before enabling.
+   it before enabling. Optionally add `"referenceRepository"`, the absolute
+   path of a local clone (on bee2, the primary checkout under
+   `managed/opm-home/openchamber`), to speed up a cold bootstrap.
 3. Run the isolated regressions:
 
    ```sh
@@ -271,6 +282,39 @@ again only for unrelated or other-author changes. Report the integrated head,
 release run and any unperformed deployment checks. Once the release completes,
 the integration session closes the corresponding recovery issues and PR as
 appropriate and cleans its completed worktree.
+
+## Cold bootstrap of the discovery cache
+
+Discovery keeps a Git cache at `<stateDirectory>/repository`. When it is
+missing, the tick clones it within a 300-second budget. With both
+120-second fetches that leaves 60 seconds for discovery and the heartbeat;
+the 10-minute locked-tick timeout is the actual overall bound, and the budget
+does not guarantee every step fits within it. A full
+cold clone of the fork took 552 seconds on bee2 and could not finish within
+the 120-second command limit.
+
+1. With `referenceRepository` set and present, it clones with
+   `--reference <path> --dissociate` (at most 90 seconds). Objects are copied,
+   so the cache never depends on the reference afterwards.
+2. Otherwise, or if that fails, it clones with `--filter=blob:none` (16
+   seconds on bee2). All commits and trees are downloaded, so tag selection,
+   ancestry and integration checks are exact. Blobs are fetched from `origin`
+   on demand when a worker worktree checks out files. A shallow clone is not
+   used because ancestry checks would be wrong.
+
+Each tick clones into a new `repository.bootstrap-XXXXXX` directory that it
+creates, renames the clone into place only when complete, and removes only
+that directory. It never removes other paths: a pre-existing
+`repository.bootstrap*` directory, or a reference stored there, is left
+alone. A tick killed by SIGKILL (for example at the 10-minute timeout) can
+leave its `repository.bootstrap-XXXXXX` directory behind; inspect it, and
+delete it only after confirming no tick is running and it holds no owner
+data. A non-Git `repository` directory is never cleared: the tick fails and
+names it. When every attempt fails, the heartbeat error names each attempt's
+failure (`timed out after Ns` or `failed (status N)`) and the next action:
+seed the cache with
+`git clone --no-checkout --filter=blob:none https://github.com/jameskorzekwa/openchamber.git <stateDirectory>/repository`,
+then rerun the tick.
 
 ## Limitations
 
