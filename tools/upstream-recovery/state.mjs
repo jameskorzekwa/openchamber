@@ -33,22 +33,26 @@ export function newJob(identity, now) {
   const key = identityKey(identity);
   return {
     ...identity, key, branch: `recovery/upstream-${identity.tag}-${key}`,
-    phase: 'retry', attempts: 0, nextAttemptAt: now, createdAt: now,
+    phase: 'retry', attempts: 0, createdAt: now,
   };
 }
 
-export function prepareAttempt(job, now) {
+// The deadline belongs to the attempt's caller-assigned IDs: it is fixed here
+// and persisted with them, so a retried admission keeps the same deadline.
+export function prepareAttempt(job, now, maxRunMs) {
   job.attempts += 1;
   job.sessionID = `ses_${randomBytes(16).toString('hex')}`;
   job.messageID = `msg_${randomBytes(16).toString('hex')}`;
   job.startedAt = now;
+  job.deadlineAt = now + maxRunMs;
   job.phase = 'dispatching';
 }
 
-export function retry(job, now, reason, maxAttempts) {
+// The daily tick is the backoff: a tick admits at most one attempt, so a
+// failure detected today is repaired today and the attempt cap spans days.
+export function retry(job, reason, maxAttempts) {
   job.reason = reason;
   job.phase = job.attempts >= maxAttempts ? 'owner-blocked' : 'retry';
-  job.nextAttemptAt = now + Math.min(6 * 60 * 60_000, 15 * 60_000 * 2 ** Math.max(0, job.attempts - 1));
 }
 
 // A successful session is not evidence of a successful recovery. Only GitHub
@@ -63,6 +67,9 @@ export function checkPhase(checks) {
 
 async function dispatchAttempt(job, ports, maxAttempts) {
   try {
+    // Fail closed: no prompt is admitted unless the attempt's deadline timer
+    // is registered, independently of the next tick.
+    await ports.registerDeadline(job);
     await ports.launch(job);
     job.phase = 'running';
     delete job.dispatchFailures;
@@ -105,8 +112,13 @@ export async function advanceJob(job, ports, options) {
   if (job.phase === 'dispatching') {
     // Recover ambiguous admission before the existing failed PR can schedule
     // another attempt and replace the persisted session/message identity.
-    await dispatchAttempt(job, ports, maxAttempts);
-    return;
+    // Past its deadline the attempt is over, admitted or not: it must not be
+    // admitted late, and the inactive session is treated as a stopped worker.
+    if (now < job.deadlineAt) {
+      await dispatchAttempt(job, ports, maxAttempts);
+      return;
+    }
+    job.phase = 'running';
   }
   if (pr) {
     job.pr = pr.url;
@@ -132,12 +144,12 @@ export async function advanceJob(job, ports, options) {
       }
       return;
     }
-    if (job.phase !== 'retry') retry(job, now, 'Recovery PR checks failed', maxAttempts);
+    if (job.phase !== 'retry') retry(job, 'Recovery PR checks failed', maxAttempts);
   } else if (job.phase === 'running' && now - job.startedAt > 60_000) {
-    retry(job, now, 'Worker stopped without a recovery PR', maxAttempts);
+    retry(job, 'Worker stopped without a recovery PR', maxAttempts);
   }
-  if (job.phase === 'retry' && now >= job.nextAttemptAt) {
-    prepareAttempt(job, now);
+  if (job.phase === 'retry') {
+    prepareAttempt(job, now, maxRunMs);
     await ports.persist();
   }
   if (job.phase === 'dispatching') {

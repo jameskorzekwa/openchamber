@@ -1,25 +1,30 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { advanceJob, checkPhase, loadState, newJob, saveState } from './state.mjs';
 import { command, createOpenCode, discover, verifyCandidate, workerPrompt } from './bee2.mjs';
-import { lockedTickResult, reconcile } from './reconcile.mjs';
-import { attentionReason, watchdog } from './watchdog.mjs';
-import { taskDefinition } from './schedule.mjs';
+import { enforceDeadline, lockedTickResult, reconcile } from './reconcile.mjs';
+import { attentionReason, STALE_AFTER_MS, watchdog } from './watchdog.mjs';
+import {
+  configuration, deadlineCalendar, deadlineUnit, ON_CALENDAR, registerDeadline, releaseDeadline,
+  renderDeadlineUnits, renderUnits, verifyUnits, writeUnits,
+} from './schedule.mjs';
 
 const identity = {
   upstreamCommit: '1'.repeat(40), sourceCommit: '2'.repeat(40),
   tag: 'v2.8.0', previousBase: 'v2.7.0', previousBaseCommit: '0'.repeat(40), integrated: false,
 };
 const options = { now: 1000, maxAttempts: 3, maxRunMs: 7_200_000 };
+const DAY = 24 * 60 * 60_000;
 const success = [{ name: 'Typecheck, lint, test, build, and smoke', status: 'COMPLETED', conclusion: 'SUCCESS' }];
 const ports = (overrides = {}) => ({
   pullRequest: async () => null, active: async () => false,
-  persist: async () => {}, launch: async () => {}, stop: async () => {}, verifyHead: async () => true, ...overrides,
+  persist: async () => {}, registerDeadline: async () => {}, launch: async () => {}, stop: async () => {},
+  verifyHead: async () => true, ...overrides,
 });
 
 test('persists dispatch identity before worker admission and does not launch twice', async () => {
@@ -45,16 +50,19 @@ test('ambiguous launch failure retains caller IDs for restart', async () => {
   assert.equal(job.attempts, 1);
 });
 
-test('stopped worker retries with backoff and stops at a visible owner decision', async () => {
+test('stopped worker retries once per daily tick and stops at a visible owner decision', async () => {
   const job = newJob(identity, 0);
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    const now = job.nextAttemptAt;
-    await advanceJob(job, ports(), { ...options, now });
-    assert.equal(job.attempts, attempt);
-    await advanceJob(job, ports(), { ...options, now: now + 61_000 });
+  let launches = 0;
+  const adapter = ports({ launch: async () => { launches++; } });
+  for (let day = 0; day < 3; day++) {
+    await advanceJob(job, adapter, { ...options, now: day * DAY });
+    assert.equal(job.attempts, day + 1);
+    assert.equal(launches, day + 1);
   }
+  await advanceJob(job, adapter, { ...options, now: 3 * DAY });
   assert.equal(job.phase, 'owner-blocked');
   assert.match(job.reason, /without a recovery PR/);
+  assert.equal(launches, 3);
 });
 
 test('live overdue worker becomes visible without spawning a competing worker', async () => {
@@ -89,7 +97,7 @@ test('missing CI expires visibly', async () => {
   assert.equal(job.phase, 'owner-blocked');
 });
 
-test('failed final-head checks retry only after backoff', async () => {
+test('failed final-head checks start one repair attempt in the tick that sees them', async () => {
   const job = { ...newJob(identity, 0), phase: 'running', attempts: 1, startedAt: 0 };
   let launches = 0;
   const adapter = ports({
@@ -99,10 +107,7 @@ test('failed final-head checks retry only after backoff', async () => {
     }),
     launch: async () => { launches++; },
   });
-  await advanceJob(job, adapter, options);
-  assert.equal(job.phase, 'retry');
-  assert.equal(launches, 0);
-  await advanceJob(job, adapter, { ...options, now: job.nextAttemptAt });
+  await advanceJob(job, adapter, { ...options, now: DAY });
   assert.equal(job.phase, 'running');
   assert.equal(job.attempts, 2);
   assert.equal(launches, 1);
@@ -203,7 +208,9 @@ test('watchdog reports missing, corrupt, stale, and owner-blocked heartbeat', ()
   const body = (summary) => `\`\`\`json\n${JSON.stringify(summary)}\n\`\`\``;
   assert.match(attentionReason(null, 1000), /missing/);
   assert.match(attentionReason('not json', 1000), /malformed/);
-  assert.match(attentionReason(body({ schema: 1, checkedAt: 0, jobs: [] }), 6_000_000), /stale/);
+  // Daily ticks: yesterday's heartbeat is fresh, a missed tick is stale.
+  assert.equal(attentionReason(body({ schema: 1, checkedAt: 0, jobs: [] }), 24 * 60 * 60_000), '');
+  assert.match(attentionReason(body({ schema: 1, checkedAt: 0, jobs: [] }), STALE_AFTER_MS + 1), /stale/);
   assert.equal(attentionReason(body({ schema: 1, checkedAt: 1000, jobs: [] }), 1000), '');
   assert.match(attentionReason(body({ schema: 1, checkedAt: 1000, jobs: [{ tag: 'v2.8.0', phase: 'awaiting-owner-approval' }] }), 1000), /awaiting-owner-approval/);
 });
@@ -228,12 +235,231 @@ test('watchdog ignores forged heartbeat, deduplicates attention and propagates G
   await assert.rejects(watchdog({ ...github, paginate: async () => { throw new Error('offline'); } }, {}, 1000), /offline/);
 });
 
-test('scheduler definition invokes one concrete command with shell-safe paths', () => {
-  const task = taskDefinition("/safe/it's/config.json", { providerID: 'test', id: 'model' }, true);
-  assert.equal(task.enabled, true);
-  assert.equal(task.schedule.cron, '*/15 * * * *');
-  assert.match(task.execution.prompt, /reconcile\.mjs' tick '\/safe\/it'\\''s\/config\.json'/);
-  assert.equal(task.runInWorktree, false);
+test('daily timer runs the reconciler directly, with no model or agent in the schedule', () => {
+  const config = '/srv/recovery/config.json';
+  const units = renderUnits(config);
+  const service = units['j2k-upstream-recovery.service'];
+  const script = new URL('./reconcile.mjs', import.meta.url).pathname;
+  assert.deepEqual(service.split('\n').filter((line) => line.startsWith('ExecStart')), [`ExecStart=${process.execPath} ${script} tick ${config}`]);
+  assert.doesNotMatch(Object.values(units).join('\n'), /model|provider|prompt|opencode run|password|token|secret/i);
+  assert.match(units['j2k-upstream-recovery.timer'], /^OnCalendar=\*-\*-\* 08:00:00 UTC$/m);
+  assert.match(units['j2k-upstream-recovery.timer'], /^Persistent=true$/m);
+  for (const unsafe of ["/safe/it's/config.json", 'relative/config.json', '/a b/config.json', '/50%/config.json']) {
+    assert.throws(() => renderUnits(unsafe), /Unit path/);
+  }
+});
+
+const systemdAnalyze = spawnSync('systemd-analyze', ['--version']).status === 0;
+test('real systemd accepts the units and fires once a day at 08:00 UTC', { skip: !systemdAnalyze && 'systemd-analyze unavailable' }, () => {
+  const units = renderUnits('/srv/recovery/config.json');
+  const result = verifyUnits(units);
+  assert.match(result.calendar, new RegExp(`Normalized form: ${ON_CALENDAR.replaceAll('*', '\\*')}`));
+  const elapses = [...result.calendar.matchAll(/(?:Next elapse|Iteration #2): \w+ (\S+ \S+) UTC/g)].map((match) => Date.parse(`${match[1]}Z`));
+  assert.equal(elapses.length, 2);
+  assert.equal(elapses[1] - elapses[0], DAY);
+  assert.equal(new Date(elapses[0]).getUTCHours(), 8);
+  const broken = { ...units, 'j2k-upstream-recovery.service': units['j2k-upstream-recovery.service'].replace('UMask=', 'Umask=') };
+  assert.throws(() => verifyUnits(broken), /Unknown key 'Umask'/);
+});
+
+test('installer never overwrites unrelated units and leaves identical units untouched', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'recovery-unit-dir-'));
+  const units = renderUnits('/srv/recovery/config.json');
+  try {
+    const foreign = join(directory, 'j2k-upstream-recovery.timer');
+    writeFileSync(foreign, '[Timer]\nOnCalendar=hourly\n');
+    assert.throws(() => writeUnits(units, directory), /not generated by schedule\.mjs/);
+    assert.equal(readFileSync(foreign, 'utf8'), '[Timer]\nOnCalendar=hourly\n');
+    assert.equal(existsSync(join(directory, 'j2k-upstream-recovery.service')), false);
+    rmSync(foreign);
+    assert.deepEqual(writeUnits(units, directory).sort(), ['j2k-upstream-recovery.service', 'j2k-upstream-recovery.timer']);
+    const written = statSync(join(directory, 'j2k-upstream-recovery.service'));
+    assert.equal(written.mode & 0o777, 0o600);
+    assert.deepEqual(writeUnits(units, directory), []);
+    assert.equal(statSync(join(directory, 'j2k-upstream-recovery.service')).mtimeMs, written.mtimeMs);
+    const moved = renderUnits('/srv/recovery/other.json');
+    assert.deepEqual(writeUnits(moved, directory), ['j2k-upstream-recovery.service']);
+    assert.equal(readFileSync(join(directory, 'j2k-upstream-recovery.service'), 'utf8'), moved['j2k-upstream-recovery.service']);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('daily ticks call a model only for actionable recovery', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'recovery-daily-'));
+  let now = 0;
+  let modelCalls = 0;
+  let live = false;
+  let current = { ...identity, integrated: true };
+  let pr = null;
+  let published;
+  const adapter = {
+    ...ports(), now: () => now, discover: async () => current, active: async () => live,
+    launch: async () => { modelCalls++; live = true; }, pullRequest: async () => pr,
+    release: async () => ({ status: 'completed', conclusion: 'success', url: 'https://example.test/run' }),
+    publish: async (state) => { published = structuredClone(state); },
+  };
+  const tick = async (day) => { now = day * DAY; await reconcile({ stateDirectory: root }, adapter); };
+  try {
+    for (let day = 0; day < 3; day++) await tick(day);
+    assert.equal(modelCalls, 0);
+    assert.equal(published.error, undefined);
+    current = identity;
+    await tick(3);
+    assert.equal(modelCalls, 1);
+    live = false;
+    pr = { state: 'OPEN', url: 'https://example.test/pr', headRefOid: '3'.repeat(40), statusCheckRollup: [{ ...success[0], status: 'IN_PROGRESS', conclusion: null }] };
+    await tick(4);
+    assert.equal(published.jobs[0].phase, 'validating');
+    pr = { ...pr, statusCheckRollup: success };
+    for (let day = 5; day < 8; day++) await tick(day);
+    assert.equal(published.jobs[0].phase, 'awaiting-owner-approval');
+    assert.equal(published.error, undefined);
+    assert.equal(modelCalls, 1);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('worker model defaults to claude-agent opus', () => {
+  const root = mkdtempSync(join(tmpdir(), 'recovery-config-'));
+  try {
+    const file = join(root, 'config.json');
+    writeFileSync(file, JSON.stringify({ stateDirectory: root }));
+    assert.deepEqual(configuration(file).model, { providerID: 'claude-agent', id: 'opus' });
+    writeFileSync(file, JSON.stringify({ stateDirectory: root, model: { providerID: 'other', id: 'model' } }));
+    assert.deepEqual(configuration(file).model, { providerID: 'other', id: 'model' });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('admitted worker is interrupted at its deadline without a reconciliation tick', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'recovery-deadline-'));
+  const sessions = new Set(['ses_' + 'f'.repeat(32)]);
+  const registered = [];
+  const stopped = [];
+  const released = [];
+  let prompts = 0;
+  let now = 0;
+  try {
+    await reconcile({ stateDirectory: root }, {
+      ...ports(), now: () => now, discover: async () => identity, publish: async () => {},
+      active: async (id) => sessions.has(id),
+      registerDeadline: async (job) => { registered.push({ sessionID: job.sessionID, deadlineAt: job.deadlineAt, promptsBefore: prompts }); },
+      launch: async (job) => { prompts++; sessions.add(job.sessionID); },
+    });
+    assert.equal(prompts, 1);
+    assert.deepEqual(registered.map(({ promptsBefore, deadlineAt }) => [promptsBefore, deadlineAt]), [[0, 2 * 60 * 60_000]]);
+    const { sessionID, deadlineAt } = registered[0];
+    const units = renderDeadlineUnits('/srv/recovery/config.json', sessionID, deadlineAt);
+    assert.match(units[`${deadlineUnit(sessionID)}.timer`], new RegExp(`^OnCalendar=${deadlineCalendar(deadlineAt)}$`, 'm'));
+    assert.match(units[`${deadlineUnit(sessionID)}.timer`], /^Persistent=true$/m);
+    assert.match(units[`${deadlineUnit(sessionID)}.service`], new RegExp(` deadline /srv/recovery/config\\.json ${sessionID} ${deadlineAt}$`, 'm'));
+    const enforcement = {
+      now: () => now, active: async (id) => sessions.has(id),
+      stop: async (id) => { stopped.push(id); sessions.delete(id); }, release: async (id) => { released.push(id); },
+    };
+    now = deadlineAt - 1;
+    assert.equal(await enforceDeadline({ stateDirectory: root }, sessionID, deadlineAt, enforcement), 'not-due');
+    assert.deepEqual([stopped, released], [[], []]);
+    now = deadlineAt;
+    assert.equal(await enforceDeadline({ stateDirectory: root }, sessionID, deadlineAt, enforcement), 'enforced');
+    assert.deepEqual(stopped, [sessionID]);
+    assert.deepEqual(released, [sessionID]);
+    assert.equal(sessions.has('ses_' + 'f'.repeat(32)), true);
+    const job = loadState(join(root, 'state.json')).jobs[0];
+    assert.equal(job.phase, 'owner-blocked');
+    assert.match(job.reason, /2-hour deadline/);
+    assert.equal(prompts, 1);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('deadline keeps its timer while the interrupted session is still active', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'recovery-deadline-active-'));
+  const sessionID = 'ses_' + 'a'.repeat(32);
+  let released = 0;
+  try {
+    await assert.rejects(enforceDeadline({ stateDirectory: root }, sessionID, 0, {
+      now: () => 1, active: async () => true, stop: async () => {}, release: async () => { released++; },
+    }), /still active after interrupt/);
+    assert.equal(released, 0);
+    await assert.rejects(enforceDeadline({ stateDirectory: root }, sessionID, Number('bad'), {
+      now: () => 1, active: async () => assert.fail('no session lookup'),
+    }), /integer timestamp/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('failed deadline registration admits no prompt and retries never extend the deadline', async () => {
+  const job = newJob(identity, 0);
+  const deadlines = [];
+  let prompts = 0;
+  let registration = 'fail';
+  let admission = 'lost';
+  const adapter = ports({
+    registerDeadline: async (entry) => {
+      deadlines.push([entry.sessionID, entry.deadlineAt]);
+      if (registration === 'fail') throw new Error('systemd unavailable');
+    },
+    launch: async () => { if (admission === 'lost') throw new Error('lost response'); prompts++; },
+  });
+  await assert.rejects(advanceJob(job, adapter, { ...options, now: 0 }), /systemd unavailable/);
+  assert.equal(prompts, 0);
+  assert.equal(job.phase, 'dispatching');
+  registration = 'ok';
+  await assert.rejects(advanceJob(job, adapter, { ...options, now: 60 * 60_000 }), /lost response/);
+  admission = 'ok';
+  await advanceJob(job, adapter, { ...options, now: 90 * 60_000 });
+  assert.equal(prompts, 1);
+  assert.equal(job.attempts, 1);
+  assert.deepEqual(new Set(deadlines.map(String)), new Set([`${job.sessionID},${2 * 60 * 60_000}`]));
+  assert.equal(deadlines.length, 3);
+});
+
+test('an unconfirmed admission past its deadline is never admitted late', async () => {
+  const job = newJob(identity, 0);
+  const launched = [];
+  const adapter = ports({ launch: async (entry) => { launched.push(entry.sessionID); throw new Error('lost response'); } });
+  await assert.rejects(advanceJob(job, adapter, { ...options, now: 0 }), /lost response/);
+  const first = job.sessionID;
+  await assert.rejects(advanceJob(job, adapter, { ...options, now: DAY }), /lost response/);
+  assert.deepEqual(launched.slice(0, 1), [first]);
+  assert.notEqual(launched[1], first);
+  assert.equal(job.attempts, 2);
+  assert.equal(job.deadlineAt, DAY + 2 * 60 * 60_000);
+});
+
+test('deadline registration verifies real units, refuses foreign files and reads back the timer', { skip: !systemdAnalyze && 'systemd-analyze unavailable' }, () => {
+  const directory = mkdtempSync(join(tmpdir(), 'recovery-deadline-units-'));
+  const sessionID = 'ses_' + 'b'.repeat(32);
+  const other = 'ses_' + 'c'.repeat(32);
+  const deadlineAt = Math.ceil((Date.now() + 2 * 60 * 60_000) / 1000) * 1000;
+  const name = deadlineUnit(sessionID);
+  const calls = [];
+  let active = 'active';
+  const systemctl = (args) => {
+    calls.push(args.join(' '));
+    return args[0] === 'show' ? `ActiveState=${active}\nUnitFileState=enabled\n` : '';
+  };
+  try {
+    const { calendar } = verifyUnits(renderDeadlineUnits('/srv/recovery/config.json', sessionID, deadlineAt), deadlineCalendar(deadlineAt));
+    const next = calendar.match(/Next elapse: \w+ (\S+ \S+) UTC/)[1];
+    assert.equal(Date.parse(`${next}Z`), deadlineAt);
+    writeFileSync(join(directory, `${name}.timer`), '[Timer]\nOnCalendar=hourly\n');
+    assert.throws(() => registerDeadline('/srv/recovery/config.json', { sessionID, deadlineAt }, { directory, systemctl }), /not generated/);
+    assert.deepEqual(calls, []);
+    rmSync(join(directory, `${name}.timer`));
+    registerDeadline('/srv/recovery/config.json', { sessionID, deadlineAt }, { directory, systemctl });
+    registerDeadline('/srv/recovery/config.json', { sessionID: other, deadlineAt }, { directory, systemctl });
+    assert.deepEqual(calls.slice(0, 3), ['daemon-reload', `enable --now ${name}.timer`, `show ${name}.timer -p ActiveState,UnitFileState`]);
+    const written = statSync(join(directory, `${name}.timer`)).mtimeMs;
+    registerDeadline('/srv/recovery/config.json', { sessionID, deadlineAt }, { directory, systemctl });
+    assert.equal(statSync(join(directory, `${name}.timer`)).mtimeMs, written);
+    active = 'inactive';
+    assert.throws(() => registerDeadline('/srv/recovery/config.json', { sessionID, deadlineAt }, { directory, systemctl }), /not active and enabled/);
+    releaseDeadline(sessionID, { directory, systemctl });
+    assert.equal(existsSync(join(directory, `${name}.timer`)), false);
+    assert.equal(existsSync(join(directory, `${name}.service`)), false);
+    assert.equal(existsSync(join(directory, `${deadlineUnit(other)}.timer`)), true);
+    assert.deepEqual(calls.slice(-3), [`disable --now ${name}.timer`, `clean --what=state ${name}.timer`, 'daemon-reload']);
+    releaseDeadline(sessionID, { directory, systemctl });
+    assert.deepEqual(calls.slice(-1), ['daemon-reload']);
+    assert.equal(calls.filter((call) => call.startsWith('disable')).length, 1);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('repeated admission errors become owner-blocked while preserving identity', async () => {
@@ -354,10 +580,9 @@ test('failed PR cannot replace dispatch IDs after an ambiguous repair admission'
       if (!failed) { failed = true; throw new Error('ambiguous admission'); }
     },
   });
-  await advanceJob(job, adapter, options);
-  await assert.rejects(advanceJob(job, adapter, { ...options, now: job.nextAttemptAt }), /ambiguous admission/);
+  await assert.rejects(advanceJob(job, adapter, { ...options, now: DAY }), /ambiguous admission/);
   assert.equal(job.attempts, 2);
-  await advanceJob(job, adapter, { ...options, now: job.nextAttemptAt + 1 });
+  await advanceJob(job, adapter, { ...options, now: DAY + 60_000 });
   assert.equal(job.phase, 'running');
   assert.equal(job.attempts, 2);
   assert.deepEqual(launched[1], launched[0]);

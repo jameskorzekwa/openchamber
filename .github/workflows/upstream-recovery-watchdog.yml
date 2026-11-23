@@ -1,7 +1,8 @@
 name: J2K Recovery Watchdog
 on:
   schedule:
-    - cron: '43 * * * *'
+    # Daily, two hours after bee2's 08:00 UTC reconciliation tick.
+    - cron: '0 10 * * *'
   workflow_dispatch:
 permissions:
   contents: read
