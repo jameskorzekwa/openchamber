@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync } from 'node:fs';
-import { isAbsolute, join, resolve } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { advanceJob, identityKey, loadState, newJob, saveState } from './state.mjs';
 import { createOpenCode, discover, gh, GH_REPOSITORY, prepareWorktree, publishHeartbeat, pullRequest, secretPassword, verifyCandidate } from './bee2.mjs';
+import { configuration, registerDeadline, releaseDeadline } from './schedule.mjs';
 
 export async function reconcile(config, ports) {
   const file = join(config.stateDirectory, 'state.json');
@@ -69,16 +70,27 @@ export async function reconcile(config, ports) {
   return state;
 }
 
-// Used only when a tick admits a worker for actionable recovery.
-export const DEFAULT_MODEL = { providerID: 'claude-agent', id: 'opus' };
-
-export function configuration(file) {
-  const config = JSON.parse(readFileSync(file, 'utf8'));
-  config.model ??= DEFAULT_MODEL;
-  if (!isAbsolute(config.stateDirectory || '') || !config.model.providerID || !config.model.id) {
-    throw new Error('Config requires absolute stateDirectory and model {providerID,id}');
+// Runs from one attempt's deadline timer, without a reconciliation tick.
+// Interrupts exactly that session if it is still active at its deadline, and
+// releases the timer only once the session is inactive. A failure throws so
+// systemd's bounded restart tries again.
+export async function enforceDeadline(config, sessionID, deadlineAt, ports) {
+  if (!Number.isSafeInteger(deadlineAt)) throw new Error('Deadline must be an integer timestamp');
+  if (ports.now() < deadlineAt) return 'not-due';
+  if (await ports.active(sessionID)) {
+    const file = join(config.stateDirectory, 'state.json');
+    const state = loadState(file);
+    const job = state.jobs.find((entry) => entry.sessionID === sessionID);
+    if (job && job.phase !== 'owner-blocked') {
+      job.phase = 'owner-blocked';
+      job.reason = 'Worker reached its 2-hour deadline. Interrupt requested; inspect the session before resuming.';
+      saveState(file, state);
+    }
+    await ports.stop(sessionID);
+    if (await ports.active(sessionID)) throw new Error(`Session ${sessionID} is still active after interrupt`);
   }
-  return config;
+  await ports.release(sessionID);
+  return 'enforced';
 }
 
 export function lockedTickResult(child, report = console.error) {
@@ -93,15 +105,35 @@ export function lockedTickResult(child, report = console.error) {
 
 async function main() {
   const [mode, configFile] = process.argv.slice(2);
-  if (!['tick', 'locked-tick'].includes(mode) || !configFile) throw new Error('Usage: node reconcile.mjs tick <config.json>');
+  if (!['tick', 'locked-tick', 'deadline', 'locked-deadline'].includes(mode) || !configFile) {
+    throw new Error('Usage: node reconcile.mjs tick <config.json> | deadline <config.json> <sessionID> <deadlineAt>');
+  }
   const config = configuration(configFile);
   mkdirSync(config.stateDirectory, { recursive: true, mode: 0o700 });
+  const lock = join(config.stateDirectory, 'reconcile.lock');
+  const self = fileURLToPath(import.meta.url);
+  if (mode === 'deadline') {
+    // Waits out a running tick (bounded at 10 minutes); a lock timeout fails
+    // the unit so its bounded restart retries.
+    const child = spawnSync('flock', ['--no-fork', '--wait', '720', lock, process.execPath, self, 'locked-deadline',
+      resolve(configFile), ...process.argv.slice(4)], { stdio: 'inherit', timeout: 13 * 60_000 });
+    process.exitCode = lockedTickResult(child);
+    return;
+  }
+  if (mode === 'locked-deadline') {
+    const [sessionID, deadlineAt] = process.argv.slice(4);
+    const api = createOpenCode({ password: secretPassword() });
+    const outcome = await enforceDeadline(config, sessionID, Number(deadlineAt), {
+      now: Date.now, active: api.active, stop: api.stop, release: releaseDeadline,
+    });
+    console.log(JSON.stringify({ sessionID, outcome }));
+    return;
+  }
   if (mode === 'tick') {
     // Kernel-owned lock releases on exit/crash. A skipped concurrent tick does
     // not replace the last successful heartbeat with an optimistic success.
     const child = spawnSync('flock', ['--no-fork', '--nonblock', '--conflict-exit-code', '75',
-      join(config.stateDirectory, 'reconcile.lock'), process.execPath,
-      fileURLToPath(import.meta.url), 'locked-tick', resolve(configFile)], { stdio: 'inherit', timeout: 10 * 60_000 });
+      lock, process.execPath, self, 'locked-tick', resolve(configFile)], { stdio: 'inherit', timeout: 10 * 60_000 });
     process.exitCode = lockedTickResult(child);
     return;
   }
@@ -114,6 +146,7 @@ async function main() {
     stop: api.stop,
     pullRequest,
     verifyHead: (job, pr) => verifyCandidate(config.stateDirectory, job, pr),
+    registerDeadline: (job) => registerDeadline(resolve(configFile), job),
     launch: (job) => api.launch(job, prepareWorktree(config.stateDirectory, job), config.model),
     release: (sha) => gh('run', 'list', '--repo', GH_REPOSITORY, '--workflow', 'release.yml',
       '--commit', sha, '--limit', '10', '--json', 'status,conclusion,url').find((run) => run.conclusion !== 'skipped'),

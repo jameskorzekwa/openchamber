@@ -5,7 +5,8 @@
 This module reconciles the newest stable upstream release with `j2k/current`.
 It creates one neutral recovery branch per upstream/source identity, starts an
 OpenCode worker on bee2, and monitors its PR checks. A systemd user timer on
-bee2 runs `reconcile.mjs tick` directly once a day at 08:00 UTC. GitHub
+bee2 runs `reconcile.mjs tick` directly once a day at 08:00 UTC, and each
+admitted worker gets a one-shot deadline timer for its session. GitHub
 Actions checks the public heartbeat daily at 10:00 UTC, independently of bee2.
 
 `state.json` under the configured encrypted state directory owns worker IDs,
@@ -32,16 +33,32 @@ HEAD, after integration.
   checked head. There is no stored blanket approval flag.
 - The publication workflow cannot move `j2k/current` to a candidate. Both
   manual and automatic release paths require `j2k/current` and verify its SHA.
-- A kernel `flock` serializes ticks, including launches. Atomic state
+- A kernel `flock` serializes ticks, launches and deadline enforcement. Atomic state
   replacement precedes every session create/prompt attempt. Caller-assigned
   IDs and inbox/message reads recover a lost HTTP response without another
   worker. A transport failure preserves those IDs. Pending admission is
   reconciled before failed PR checks can schedule another repair attempt.
-- Active sessions prevent a competing worker. A worker still active after
-  2 hours becomes an owner-visible blocker and receives OpenCode's
-  `interrupt?resume=false`. Later ticks verify activity again; an interrupt
-  response alone never authorizes a competing worker. This time-budget check
-  precedes GitHub reads, including closed or merged PR handling. Worktrees remain.
+- Every attempt has a 2-hour deadline, fixed when its caller-assigned IDs are
+  generated and persisted with them. Before the prompt is admitted, a tick
+  writes, verifies (`systemd-analyze`) and enables a one-shot user timer
+  `j2k-upstream-recovery-deadline-<sessionID>.timer` and reads it back as
+  active and enabled. If any step fails, no prompt is sent and the failure
+  counts toward the 3 admission failures. Retrying an ambiguous admission
+  re-registers the identical deadline; it never extends it. An unconfirmed
+  admission past its deadline is never sent late: the attempt counts as a
+  stopped worker.
+- At the deadline the timer runs `reconcile.mjs deadline` for that session
+  only, with no reconciliation tick and no model call. If the exact session is
+  still active, the job becomes an owner-visible blocker and the session
+  receives OpenCode's `interrupt?resume=false`. The timer is released only
+  after the session is inactive; otherwise the unit fails and systemd retries
+  it every 5 minutes, at most 4 starts in 2 hours. Its `Persistent=true` stamp
+  fires the timer at boot when the deadline passed while bee2 was down.
+- Active sessions prevent a competing worker. Ticks also interrupt a worker
+  active past 2 hours, as a backstop for failed enforcement. Later ticks
+  verify activity again; an interrupt response alone never authorizes a
+  competing worker. This time-budget check precedes GitHub reads, including
+  closed or merged PR handling. Worktrees remain.
 - Scheduling makes no model call. A tick admits a worker (the only model
   use, default `claude-agent`/`opus`) only for an unintegrated identity that
   is due an attempt. Integrated, validating, approval-pending and blocked
@@ -125,8 +142,9 @@ carry out a sequence.
    ```
 
    They exercise real HTTP admission against a synthetic OpenCode contract,
-   daily model-call counts, real `systemd-analyze` unit and calendar checks,
-   and installer refusal to replace foreign units. They do not spend provider
+   daily model-call counts, deadline registration before admission and
+   enforcement without a tick, real `systemd-analyze` unit and calendar
+   checks in a private directory, and refusal to replace foreign units. They do not spend provider
    tokens, write GitHub or touch the user manager.
 4. Preview and verify the exact units without installing them:
 
@@ -136,8 +154,8 @@ carry out a sequence.
    ```
 
    `verify` runs `systemd-analyze --user verify` on the rendered
-   `j2k-upstream-recovery.service` and `.timer` in a private directory and
-   fails on any diagnostic. It also prints the next two calendar elapses.
+   `j2k-upstream-recovery.service` and `.timer`, and on a sample deadline
+   unit pair, in a private directory and fails on any diagnostic. It also prints the next two calendar elapses.
 5. With activation authorized, install and read back:
 
    ```sh
@@ -155,8 +173,11 @@ carry out a sequence.
    `systemctl --user start j2k-upstream-recovery.service`; it holds the same
    lock as the timer. Inspect `journalctl --user -u j2k-upstream-recovery`,
    `state.json` and the heartbeat issue.
-6. When a worker is admitted, inspect the recorded session and neutral branch
-   PR. Verify that the next daily tick does not launch a second worker,
+6. When a worker is admitted, `status` lists its deadline timer; confirm its
+   `NextElapseUSecRealtime` with
+   `systemctl --user show j2k-upstream-recovery-deadline-<sessionID>.timer`
+   equals the job's `deadlineAt` in `state.json`. Inspect the recorded
+   session and neutral branch PR. Verify that the next daily tick does not launch a second worker,
    required checks appear, and the monitor reaches `awaiting-owner-approval`
    without changing maintained refs.
 7. Dispatch `J2K Recovery Watchdog` once and inspect its issue permissions.
@@ -170,7 +191,8 @@ reconciler reads the OpenCode password from Secret Service in-process when it
 admits or inspects a worker; `gh` uses its existing credential store.
 
 Disable with `schedule.mjs disable /absolute/recovery-config.json`. This
-prevents future ticks and preserves unit files, state and active workers.
+prevents future ticks and preserves unit files, state, active workers and
+their deadline timers, which still enforce the 2-hour budget.
 Inspect the recorded session before stopping any worker. The watchdog then
 reports the stale heartbeat until deployment is restored or the owner also
 disables that workflow. Re-enabling with `install` resumes the same state.
@@ -195,6 +217,16 @@ command with no model, its own journal and `Persistent=true` catch-up after
 downtime. State transitions, leases and dispatch identity stay in
 deterministic code, so a conversational response cannot mark recovery
 complete, and the model is spent only on the worker that does the repair.
+
+## Why a per-attempt deadline timer and not more frequent ticks
+
+A daily tick alone let a worker run until the next tick, about 24 hours,
+because the worker prompt's 90 minutes is an instruction, not enforcement.
+More frequent ticks would add routine checks for every idle day. A
+one-shot timer per attempt costs one deterministic check per admitted worker
+and acts on that exact session. It is a unit file rather than a transient
+`systemd-run` timer, so it survives a reboot. Registration precedes admission
+so no worker exists without its deadline.
 
 ## Why one attempt per tick and not timed backoff
 
@@ -244,8 +276,14 @@ appropriate and cleans its completed worktree.
 
 The timer attempts a reconciliation once a day at 08:00 UTC. A successful
 tick detects inactive workers, failed checks and pending owner decisions, so
-those surface up to a day after they occur. A worker still active at the
-next tick exceeds its 2-hour budget and becomes an owner blocker. The daily
+those surface up to a day after they occur. A worker's own deadline timer
+interrupts it at 2 hours. If enforcement exhausts its retries (for example,
+OpenCode is down), its units remain listed by `status`, and the next tick
+interrupts the still-active worker as a backstop. Catch-up after a reboot
+relies on the stamp systemd writes when a persistent timer starts; no reboot
+was exercised. Enforcement waits up to 12 minutes for the lock; a tick that
+starts while enforcement holds it is skipped, as with any concurrent tick, and
+the watchdog reports the older heartbeat if no later tick succeeds. The daily
 GitHub watchdog treats a heartbeat older than 25 hours as stale. Detection
 can take until the next successful watchdog run, and GitHub schedule delays
 can extend that interval.
