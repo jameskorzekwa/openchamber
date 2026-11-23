@@ -79,7 +79,16 @@ HEAD, after integration.
   A missing or malformed heartbeat, or one older than 25 hours, fails the
   GitHub watchdog and opens or updates one attention issue.
 - The watchdog also surfaces owner blockers, approval requests, and missing
-  or failed release runs. A failed heartbeat write fails the tick; GitHub
+  or failed release runs. Once upstream is integrated, the tick checks
+  `release.yml` and `validate.yml` runs for the exact maintained SHA. While
+  that SHA's `j2k/current` push validation is queued or running (up to 6
+  hours; its jobs time out after 60 minutes), the heartbeat records
+  `release.phase: "validating"` and "Not released", with no error, and the
+  tick exits 0. After that validation succeeds, J2K Release normally starts
+  within seconds, so `release-dispatch-pending` lasts at most 30 minutes.
+  An unfinished, failed or cancelled release run, a failed or cancelled
+  validation, no matching run, or an expired window remains an error. Runs
+  for other SHAs, pull-request validations and other branches are ignored. A failed heartbeat write fails the tick; GitHub
   subsequently observes the stale heartbeat.
 - Credentials come from bee2 Secret Service inside the HTTP consumer.
   Git operations use the existing GitHub CLI authentication. No secret is

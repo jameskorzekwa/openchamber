@@ -5,8 +5,12 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { advanceJob, checkPhase, loadState, newJob, saveState } from './state.mjs';
-import { BOOTSTRAP_TIMEOUTS, command, createOpenCode, discover, prepareWorktree, verifyCandidate, workerPrompt } from './bee2.mjs';
+import {
+  advanceJob, checkPhase, loadState, newJob, RELEASE_DISPATCH_GRACE_MS, releasePhase, saveState, VALIDATION_PENDING_LIMIT_MS,
+} from './state.mjs';
+import {
+  BOOTSTRAP_TIMEOUTS, command, createOpenCode, discover, heartbeatBody, prepareWorktree, releaseRuns, verifyCandidate, workerPrompt,
+} from './bee2.mjs';
 import { discoveryPort, enforceDeadline, lockedTickResult, reconcile } from './reconcile.mjs';
 import { attentionReason, STALE_AFTER_MS, watchdog } from './watchdog.mjs';
 import {
@@ -294,7 +298,7 @@ test('daily ticks call a model only for actionable recovery', async () => {
   const adapter = {
     ...ports(), now: () => now, discover: async () => current, active: async () => live,
     launch: async () => { modelCalls++; live = true; }, pullRequest: async () => pr,
-    release: async () => ({ status: 'completed', conclusion: 'success', url: 'https://example.test/run' }),
+    release: async (sha) => ({ releases: [{ headSha: sha, status: 'completed', conclusion: 'success', url: 'https://example.test/run', createdAt: '2026-11-23T05:33:36Z' }], validations: [] }),
     publish: async (state) => { published = structuredClone(state); },
   };
   const tick = async (day) => { now = day * DAY; await reconcile({ stateDirectory: root }, adapter); };
@@ -302,6 +306,7 @@ test('daily ticks call a model only for actionable recovery', async () => {
     for (let day = 0; day < 3; day++) await tick(day);
     assert.equal(modelCalls, 0);
     assert.equal(published.error, undefined);
+    assert.equal(published.release.phase, 'released');
     current = identity;
     await tick(3);
     assert.equal(modelCalls, 1);
@@ -741,6 +746,112 @@ test('command reports a real timeout distinctly from a failed exit status', () =
     assert.equal(error.message, 'sh -c failed (status 7). Inspect local authentication/network health.');
     return true;
   });
+});
+
+const SHA_A = 'a'.repeat(40);
+const SHA_OLD = 'b'.repeat(40);
+const T0 = Date.parse('2026-11-23T05:14:46Z');
+const validateRun = (overrides = {}) => ({
+  headSha: SHA_A, headBranch: 'j2k/current', event: 'push', status: 'in_progress', conclusion: '',
+  url: 'https://example.test/validate', createdAt: '2026-11-23T05:14:46Z', updatedAt: '2026-11-23T05:20:00Z', ...overrides,
+});
+const releaseRun = (overrides = {}) => ({
+  headSha: SHA_A, headBranch: 'j2k/current', event: 'workflow_run', status: 'completed', conclusion: 'success',
+  url: 'https://example.test/release', createdAt: '2026-11-23T05:33:36Z', updatedAt: '2026-11-23T05:50:00Z', ...overrides,
+});
+
+test('release phase: exact-SHA validation in progress is pending, everything else unreleased is an error', () => {
+  const at = (minutes) => T0 + minutes * 60_000;
+  const phase = (runs, now = at(10)) => releasePhase(SHA_A, runs, now);
+  assert.deepEqual(phase({ releases: [releaseRun()] }), { phase: 'released', url: 'https://example.test/release' });
+  // Existing semantics: an unfinished or failed release run is an error.
+  for (const run of [releaseRun({ status: 'in_progress', conclusion: '' }), releaseRun({ conclusion: 'failure' }), releaseRun({ conclusion: 'cancelled' })]) {
+    assert.match(phase({ releases: [run], validations: [validateRun()] }).error, /release requires attention: https:\/\/example.test\/release$/);
+  }
+  for (const status of ['queued', 'in_progress', 'waiting']) {
+    const pending = phase({ releases: [releaseRun({ conclusion: 'skipped' })], validations: [validateRun({ status })] });
+    assert.equal(pending.phase, 'validating');
+    assert.equal(pending.error, undefined);
+    assert.match(pending.reason, new RegExp(`^Not released: J2K Validate is ${status} for ${SHA_A}`));
+  }
+  // Runs for another SHA, a PR validation or another branch never explain a missing release.
+  const mismatched = phase({
+    releases: [releaseRun({ headSha: SHA_OLD })],
+    validations: [validateRun({ headSha: SHA_OLD }), validateRun({ event: 'pull_request' }), validateRun({ headBranch: 'j2k/v2.8.0' })],
+  });
+  assert.equal(mismatched.phase, 'attention');
+  assert.match(mismatched.error, /no release run for current SHA; no J2K Validate push run for a{40}$/);
+  assert.match(phase({}).error, /no J2K Validate push run/);
+  // Pending is bounded by run age.
+  assert.equal(phase({ validations: [validateRun()] }, T0 + VALIDATION_PENDING_LIMIT_MS).phase, 'validating');
+  assert.match(phase({ validations: [validateRun()] }, T0 + VALIDATION_PENDING_LIMIT_MS + 1).error, /still in_progress after 6 hours/);
+  assert.equal(phase({ validations: [validateRun({ createdAt: 'not a date' })] }).phase, 'attention');
+  assert.equal(phase({ validations: [validateRun()] }, T0 - 1).phase, 'attention', 'a run from the future is not trusted');
+  // Successful validation without a release: short dispatch grace, then an error.
+  const done = validateRun({ status: 'completed', conclusion: 'success', updatedAt: '2026-11-23T05:33:34Z' });
+  const finished = Date.parse(done.updatedAt);
+  assert.equal(phase({ validations: [done] }, finished + RELEASE_DISPATCH_GRACE_MS).phase, 'release-dispatch-pending');
+  assert.match(phase({ validations: [done] }, finished + RELEASE_DISPATCH_GRACE_MS + 1).error, /succeeded but no release run started within 30 minutes/);
+  for (const conclusion of ['failure', 'cancelled', 'timed_out']) {
+    assert.match(phase({ validations: [validateRun({ status: 'completed', conclusion })] }).error, new RegExp(`ended ${conclusion}$`));
+  }
+  // The newest exact-SHA run decides.
+  const rerun = [validateRun({ status: 'completed', conclusion: 'failure' }), validateRun({ createdAt: '2026-11-23T05:20:00Z', url: 'https://example.test/rerun' })];
+  assert.equal(phase({ validations: rerun }).url, 'https://example.test/rerun');
+});
+
+test('pending validation publishes a not-released heartbeat that the watchdog does not alarm on; failure still alarms', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'recovery-release-'));
+  let runs = { releases: [], validations: [validateRun()] };
+  let published;
+  let current = { ...identity, sourceCommit: SHA_A, integrated: true };
+  const adapter = {
+    ...ports(), now: () => T0 + 10 * 60_000, discover: async () => current,
+    release: async (sha) => { assert.equal(sha, SHA_A); return runs; },
+    publish: async (state) => { published = heartbeatBody(state); },
+  };
+  try {
+    const state = await reconcile({ stateDirectory: root }, adapter);
+    assert.equal(state.error, undefined, 'a pending release is not an error, so the tick exits 0');
+    assert.deepEqual(state.release, { sourceCommit: SHA_A, phase: 'validating', url: 'https://example.test/validate', reason: state.release.reason });
+    assert.match(published, /"phase": "validating"/);
+    assert.match(published, /\n\nNot released: J2K Validate is in_progress for a{40}/);
+    assert.equal(attentionReason(published, T0 + 11 * 60_000), '');
+
+    runs = { releases: [], validations: [validateRun({ status: 'completed', conclusion: 'failure' })] };
+    const failed = await reconcile({ stateDirectory: root }, adapter);
+    assert.match(failed.error, /ended failure$/);
+    assert.doesNotMatch(published, /Not released:/);
+    assert.match(attentionReason(published, T0 + 11 * 60_000), /release requires attention: no release run for current SHA; J2K Validate https:\/\/example.test\/validate ended failure/);
+
+    runs = { releases: [], validations: [] };
+    assert.match(attentionReason((await reconcile({ stateDirectory: root }, adapter), published), T0 + 11 * 60_000), /no J2K Validate push run/);
+
+    // A tick that is not integrated carries no stale release phase.
+    current = { ...identity, sourceCommit: SHA_A };
+    assert.equal((await reconcile({ stateDirectory: root }, adapter)).release, undefined);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('release adapter queries both workflows for the exact SHA through a real gh child', () => {
+  const root = mkdtempSync(join(tmpdir(), 'recovery-gh-'));
+  const stub = join(root, 'gh');
+  try {
+    writeFileSync(join(root, 'release.yml.json'), JSON.stringify([releaseRun({ headSha: SHA_OLD }), releaseRun({ conclusion: 'skipped' })]));
+    writeFileSync(join(root, 'validate.yml.json'), JSON.stringify([validateRun({ status: 'queued' })]));
+    writeFileSync(stub, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${root}/calls'\nwhile [ $# -gt 0 ]; do [ "$1" = --workflow ] && workflow=$2; shift; done\ncat '${root}/'"$workflow.json"\n`, { mode: 0o700 });
+    const run = (binary, args, cwd, timeout) => { assert.equal(binary, 'gh'); return command(stub, args, cwd, timeout); };
+    const runs = releaseRuns(SHA_A, run);
+    const calls = readFileSync(join(root, 'calls'), 'utf8').trim().split('\n');
+    assert.deepEqual(calls.map((line) => line.split(' ').slice(0, 10).join(' ')), [
+      `run list --repo github.com/jameskorzekwa/openchamber --workflow release.yml --commit ${SHA_A} --limit 20`,
+      `run list --repo github.com/jameskorzekwa/openchamber --workflow validate.yml --commit ${SHA_A} --limit 20`,
+    ]);
+    const result = releasePhase(SHA_A, runs, T0 + 60_000);
+    assert.equal(result.phase, 'validating', 'old-SHA and skipped release runs are ignored');
+    assert.match(result.reason, /J2K Validate is queued/);
+    assert.throws(() => releaseRuns('abc', () => assert.fail('no lookup for an invalid SHA')), /full commit SHA/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('real child timeout reports sanitized failure and leaves shared state untouched', () => {

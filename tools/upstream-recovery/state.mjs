@@ -156,3 +156,44 @@ export async function advanceJob(job, ports, options) {
     await dispatchAttempt(job, ports, maxAttempts);
   }
 }
+
+// J2K Release starts on J2K Validate's workflow_run completion; on 2026-11-23
+// it was created 2 seconds after Validate finished. The grace covers delayed
+// event delivery only; a longer gap is a missed release, not progress.
+export const RELEASE_DISPATCH_GRACE_MS = 30 * 60_000;
+// Validate jobs time out after 60 minutes; 6 hours also allows for runner
+// queueing. A run still unfinished after that needs attention.
+export const VALIDATION_PENDING_LIMIT_MS = 6 * 60 * 60_000;
+const UNFINISHED = ['queued', 'in_progress', 'waiting', 'requested', 'pending'];
+const newestFirst = (runs) => [...runs].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+
+// Release state of the integrated maintained SHA. Only runs for that exact
+// SHA count, and only the push validation of j2k/current can explain a
+// missing release run; a missing, failed or cancelled run stays an error.
+export function releasePhase(sha, { releases = [], validations = [] }, now) {
+  const release = newestFirst(releases).find((run) => run.headSha === sha && run.conclusion !== 'skipped');
+  if (release) {
+    if (release.status === 'completed' && release.conclusion === 'success') return { phase: 'released', url: release.url };
+    return { phase: 'attention', url: release.url, error: `Upstream integrated, release requires attention: ${release.url}` };
+  }
+  const missing = 'Upstream integrated, release requires attention: no release run for current SHA';
+  const validation = newestFirst(validations)
+    .find((run) => run.headSha === sha && run.event === 'push' && run.headBranch === 'j2k/current');
+  if (!validation) return { phase: 'attention', error: `${missing}; no J2K Validate push run for ${sha}` };
+  const { url, status, conclusion } = validation;
+  if (UNFINISHED.includes(status)) {
+    const age = now - Date.parse(validation.createdAt);
+    if (age >= 0 && age <= VALIDATION_PENDING_LIMIT_MS) {
+      return { phase: 'validating', url, reason: `Not released: J2K Validate is ${status} for ${sha}; J2K Release starts after it succeeds.` };
+    }
+    return { phase: 'attention', url, error: `${missing}; J2K Validate ${url} is still ${status} after 6 hours` };
+  }
+  if (status === 'completed' && conclusion === 'success') {
+    const age = now - Date.parse(validation.updatedAt);
+    if (age >= 0 && age <= RELEASE_DISPATCH_GRACE_MS) {
+      return { phase: 'release-dispatch-pending', url, reason: `Not released: J2K Validate succeeded for ${sha}; J2K Release has not started yet.` };
+    }
+    return { phase: 'attention', url, error: `${missing}; J2K Validate ${url} succeeded but no release run started within 30 minutes` };
+  }
+  return { phase: 'attention', url, error: `${missing}; J2K Validate ${url} ended ${conclusion || status}` };
+}

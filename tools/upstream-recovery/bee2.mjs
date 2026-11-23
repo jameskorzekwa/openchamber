@@ -210,18 +210,32 @@ export function verifyCandidate(root, job, pr) {
   return git(directory, 'rev-list', job.upstreamCommit, '--not', pr.headRefOid) === '';
 }
 
+// Release and push-validation runs for one maintained SHA; releasePhase
+// selects only runs whose head is exactly that SHA.
+export function releaseRuns(sha, run = command) {
+  if (!SHA.test(sha)) throw new Error('Release lookup requires a full commit SHA');
+  const list = (workflow) => JSON.parse(run('gh', ['run', 'list', '--repo', GH_REPOSITORY, '--workflow', workflow,
+    '--commit', sha, '--limit', '20', '--json', 'headSha,headBranch,event,status,conclusion,url,createdAt,updatedAt']));
+  return { releases: list('release.yml'), validations: list('validate.yml') };
+}
+
+export function heartbeatBody(state) {
+  const summary = {
+    schema: 1, checkedAt: state.checkedAt, error: state.error || null,
+    current: state.current, release: state.release ?? null,
+    jobs: state.jobs.filter((job) => !['integrated', 'superseded'].includes(job.phase))
+      .map(({ key, tag, phase, pr, head, reason, sessionID }) => ({ key, tag, phase, pr, head, reason, sessionID })),
+  };
+  const pending = state.release?.reason && !state.error ? `\n\n${state.release.reason}` : '';
+  return `<!-- j2k:recovery-monitor -->\n\`\`\`json\n${JSON.stringify(summary, null, 2)}\n\`\`\`${pending}\n\nEvery integration requires explicit owner approval. Recovery sessions publish neutral-branch PRs only.`;
+}
+
 export function publishHeartbeat(state) {
   const title = 'Upstream recovery monitor';
   const issues = gh('issue', 'list', '--repo', GH_REPOSITORY, '--state', 'all', '--search', `in:title "${title}"`,
     '--json', 'number,title,author');
   const issue = issues.find((entry) => entry.title === title && entry.author.login === 'jameskorzekwa');
-  const summary = {
-    schema: 1, checkedAt: state.checkedAt, error: state.error || null,
-    current: state.current,
-    jobs: state.jobs.filter((job) => !['integrated', 'superseded'].includes(job.phase))
-      .map(({ key, tag, phase, pr, head, reason, sessionID }) => ({ key, tag, phase, pr, head, reason, sessionID })),
-  };
-  const body = `<!-- j2k:recovery-monitor -->\n\`\`\`json\n${JSON.stringify(summary, null, 2)}\n\`\`\`\n\nEvery integration requires explicit owner approval. Recovery sessions publish neutral-branch PRs only.`;
+  const body = heartbeatBody(state);
   if (issue) command('gh', ['issue', 'edit', `${issue.number}`, '--repo', GH_REPOSITORY, '--body', body]);
   else command('gh', ['issue', 'create', '--repo', GH_REPOSITORY, '--title', title, '--body', body]);
 }
