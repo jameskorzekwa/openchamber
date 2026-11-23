@@ -3,8 +3,8 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { advanceJob, identityKey, loadState, newJob, saveState } from './state.mjs';
-import { command, createOpenCode, discover, gh, GH_REPOSITORY, prepareWorktree, publishHeartbeat, pullRequest, secretPassword, verifyCandidate } from './bee2.mjs';
+import { advanceJob, identityKey, loadState, newJob, releasePhase, saveState } from './state.mjs';
+import { command, createOpenCode, discover, gh, GH_REPOSITORY, prepareWorktree, publishHeartbeat, pullRequest, releaseRuns, secretPassword, verifyCandidate } from './bee2.mjs';
 import { configuration, registerDeadline, releaseDeadline } from './schedule.mjs';
 
 export async function reconcile(config, ports) {
@@ -14,6 +14,7 @@ export async function reconcile(config, ports) {
   const now = ports.now();
   state.checkedAt = now;
   delete state.error;
+  delete state.release;
   try {
     const identity = await ports.discover();
     state.current = {
@@ -42,10 +43,9 @@ export async function reconcile(config, ports) {
     }
     if (identity.integrated) {
       for (const job of state.jobs.filter((entry) => entry.upstreamCommit === identity.upstreamCommit)) job.phase = 'integrated';
-      const release = await ports.release(identity.sourceCommit);
-      if (!release || release.status !== 'completed' || release.conclusion !== 'success') {
-        state.error = `Upstream integrated, release requires attention: ${release?.url || 'no release run for current SHA'}`;
-      }
+      const { phase, url, reason, error } = releasePhase(identity.sourceCommit, await ports.release(identity.sourceCommit), now);
+      state.release = { sourceCommit: identity.sourceCommit, phase, url: url ?? null, reason: reason ?? null };
+      if (error) state.error = error;
     } else {
       let job = state.jobs.find((entry) => entry.key === key);
       if (!job) {
@@ -154,8 +154,7 @@ async function main() {
     verifyHead: (job, pr) => verifyCandidate(config.stateDirectory, job, pr),
     registerDeadline: (job) => registerDeadline(resolve(configFile), job),
     launch: (job) => api.launch(job, prepareWorktree(config.stateDirectory, job), config.model),
-    release: (sha) => gh('run', 'list', '--repo', GH_REPOSITORY, '--workflow', 'release.yml',
-      '--commit', sha, '--limit', '10', '--json', 'status,conclusion,url').find((run) => run.conclusion !== 'skipped'),
+    release: (sha) => releaseRuns(sha),
     publish: publishHeartbeat,
   });
   console.log(JSON.stringify({ checkedAt: state.checkedAt, error: state.error || null, jobs: state.jobs.map(({ key, phase }) => ({ key, phase })) }));
