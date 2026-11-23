@@ -69,9 +69,13 @@ export async function reconcile(config, ports) {
   return state;
 }
 
-function configuration(file) {
+// Used only when a tick admits a worker for actionable recovery.
+export const DEFAULT_MODEL = { providerID: 'claude-agent', id: 'opus' };
+
+export function configuration(file) {
   const config = JSON.parse(readFileSync(file, 'utf8'));
-  if (!isAbsolute(config.stateDirectory || '') || !config.model?.providerID || !config.model?.id) {
+  config.model ??= DEFAULT_MODEL;
+  if (!isAbsolute(config.stateDirectory || '') || !config.model.providerID || !config.model.id) {
     throw new Error('Config requires absolute stateDirectory and model {providerID,id}');
   }
   return config;

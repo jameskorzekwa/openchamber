@@ -1,3 +1,7 @@
+// bee2 ticks daily at 08:00 UTC and this watchdog runs daily at 10:00 UTC, so a
+// missed tick is at least 26 hours old when checked.
+export const STALE_AFTER_MS = 25 * 60 * 60_000;
+
 export function attentionReason(body, now = Date.now()) {
   if (!body) return 'bee2 recovery heartbeat is missing.';
   try {
@@ -5,7 +9,7 @@ export function attentionReason(body, now = Date.now()) {
     if (summary?.schema !== 1 || !Number.isFinite(summary.checkedAt) || !Array.isArray(summary.jobs)) {
       return 'bee2 recovery heartbeat is malformed.';
     }
-    if (now - summary.checkedAt > 90 * 60_000 || summary.checkedAt > now + 5 * 60_000) {
+    if (now - summary.checkedAt > STALE_AFTER_MS || summary.checkedAt > now + 5 * 60_000) {
       return 'bee2 recovery heartbeat is stale or its clock is invalid.';
     }
     if (summary.error) return summary.error;
