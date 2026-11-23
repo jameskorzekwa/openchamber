@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const REPOSITORY = 'jameskorzekwa/openchamber';
@@ -27,8 +27,9 @@ export const gh = (...args) => JSON.parse(command('gh', args));
 
 // A cold clone of the fork measured 552s on bee2, far past the 120s command
 // limit; a blobless clone took 16s and a dissociated reference clone 22s.
-// Bootstrap stays inside the 10-minute locked tick and leaves room for both
-// 2-minute fetches, discovery and the heartbeat.
+// A 300s clone budget plus both 120s fetches leaves 60s for discovery and
+// the heartbeat. The 10-minute locked-tick timeout remains the overall bound;
+// this budget does not guarantee that every step fits within it.
 export const BOOTSTRAP_TIMEOUTS = { reference: 90_000, total: 300_000 };
 
 function bootstrapRepository(root, directory, run, reference, timeouts) {
@@ -38,10 +39,12 @@ function bootstrapRepository(root, directory, run, reference, timeouts) {
     throw new Error(`Recovery cache ${directory} exists but is not a Git checkout. Inspect and move it aside, then rerun the tick.`);
   }
   mkdirSync(root, { recursive: true, mode: 0o700 });
-  // Clones land in a private staging path and are renamed only when complete,
-  // so a killed bootstrap never leaves a half-made cache in place.
-  const staging = join(root, 'repository.bootstrap');
-  rmSync(staging, { recursive: true, force: true });
+  // Each invocation clones into a fresh directory it created itself and
+  // removes only that directory. Pre-existing paths, including any
+  // repository.bootstrap* left by an earlier killed tick or used as the
+  // reference, are never removed here.
+  const staging = mkdtempSync(join(root, 'repository.bootstrap-'));
+  const clone = join(staging, 'clone');
   const attempts = [];
   // A local reference supplies objects quickly; --dissociate copies them so
   // the cache never depends on the reference after the clone.
@@ -54,20 +57,24 @@ function bootstrapRepository(root, directory, run, reference, timeouts) {
   attempts.push({ name: 'blobless', args: ['--filter=blob:none'] });
   const started = Date.now();
   const failures = [];
-  for (const attempt of attempts) {
-    const remaining = timeouts.total - (Date.now() - started);
-    if (remaining <= 0) break;
-    try {
-      run('git', ['clone', '--no-checkout', ...attempt.args, url, staging], root, Math.min(attempt.timeout ?? remaining, remaining));
-      if (existsSync(join(staging, '.git', 'objects', 'info', 'alternates'))) {
-        throw new Error('git clone left an alternates file after --dissociate');
+  try {
+    for (const attempt of attempts) {
+      const remaining = timeouts.total - (Date.now() - started);
+      if (remaining <= 0) break;
+      try {
+        run('git', ['clone', '--no-checkout', ...attempt.args, url, clone], root, Math.min(attempt.timeout ?? remaining, remaining));
+        if (existsSync(join(clone, '.git', 'objects', 'info', 'alternates'))) {
+          throw new Error('git clone left an alternates file after --dissociate');
+        }
+        renameSync(clone, directory);
+        return attempt.name;
+      } catch (error) {
+        failures.push(`${attempt.name}: ${error.message}`);
+        rmSync(clone, { recursive: true, force: true });
       }
-      renameSync(staging, directory);
-      return attempt.name;
-    } catch (error) {
-      failures.push(`${attempt.name}: ${error.message}`);
-      rmSync(staging, { recursive: true, force: true });
     }
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
   }
   throw new Error(`Cold bootstrap of ${directory} failed (${failures.join(' | ') || 'no time left'}). `
     + `Next action: seed it with "git clone --no-checkout --filter=blob:none ${url} ${directory}" `

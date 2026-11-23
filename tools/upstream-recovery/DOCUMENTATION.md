@@ -277,8 +277,10 @@ appropriate and cleans its completed worktree.
 ## Cold bootstrap of the discovery cache
 
 Discovery keeps a Git cache at `<stateDirectory>/repository`. When it is
-missing, the tick creates it within a 300-second budget, which leaves room
-for both fetches and the heartbeat inside the 10-minute locked tick. A full
+missing, the tick clones it within a 300-second budget. With both
+120-second fetches that leaves 60 seconds for discovery and the heartbeat;
+the 10-minute locked-tick timeout is the actual overall bound, and the budget
+does not guarantee every step fits within it. A full
 cold clone of the fork took 552 seconds on bee2 and could not finish within
 the 120-second command limit.
 
@@ -291,10 +293,15 @@ the 120-second command limit.
    on demand when a worker worktree checks out files. A shallow clone is not
    used because ancestry checks would be wrong.
 
-Each clone lands in `repository.bootstrap` and is renamed into place only
-when complete; a stale staging directory from a killed tick is replaced. A
-non-Git `repository` directory is never cleared: the tick fails and names
-it. When every attempt fails, the heartbeat error names each attempt's
+Each tick clones into a new `repository.bootstrap-XXXXXX` directory that it
+creates, renames the clone into place only when complete, and removes only
+that directory. It never removes other paths: a pre-existing
+`repository.bootstrap*` directory, or a reference stored there, is left
+alone. A tick killed by SIGKILL (for example at the 10-minute timeout) can
+leave its `repository.bootstrap-XXXXXX` directory behind; inspect it, and
+delete it only after confirming no tick is running and it holds no owner
+data. A non-Git `repository` directory is never cleared: the tick fails and
+names it. When every attempt fails, the heartbeat error names each attempt's
 failure (`timed out after Ns` or `failed (status N)`) and the next action:
 seed the cache with
 `git clone --no-checkout --filter=blob:none https://github.com/jameskorzekwa/openchamber.git <stateDirectory>/repository`,

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -610,7 +610,7 @@ test('cold start without a local reference bootstraps a blobless clone that keep
     const repository = join(state, 'repository');
     assert.equal(git(repository, 'config', 'remote.origin.partialclonefilter'), 'blob:none');
     assert.equal(git(repository, 'rev-parse', '--is-shallow-repository'), 'false');
-    assert.equal(existsSync(join(state, 'repository.bootstrap')), false);
+    assert.deepEqual(readdirSync(state), ['repository'], 'no staging directory remains');
     // A worker worktree still checks out real file contents from origin.
     const job = { ...newJob(found, 0), key: 'cold' };
     const worktree = prepareWorktree(state, job);
@@ -644,6 +644,30 @@ test('local reference bootstraps a dissociated cache that survives losing the re
   } finally { rmSync(fixture.root, { recursive: true, force: true }); }
 });
 
+test('a reference stored at the legacy staging path survives and yields a dissociated cache', () => {
+  const fixture = coldStartFixture();
+  const { git, state } = fixture;
+  const reference = join(state, 'repository.bootstrap');
+  try {
+    mkdirSync(state);
+    git(fixture.root, 'clone', '-q', fixture.fork, reference);
+    const refs = () => git(reference, 'for-each-ref', '--format=%(refname) %(objectname)');
+    const before = refs();
+    assert.match(before, /refs\/remotes\/origin\/j2k\/current/);
+    const found = discover(state, fixture.transport, { reference });
+    assert.equal(found.sourceCommit, fixture.source);
+    assert.deepEqual(fixture.calls.find((args) => args[0] === 'clone').slice(2, 5), ['--reference', reference, '--dissociate']);
+    assert.equal(refs(), before, 'reference is untouched');
+    git(reference, 'fsck', '--connectivity-only', '--no-dangling');
+    const repository = join(state, 'repository');
+    assert.equal(existsSync(join(repository, '.git', 'objects', 'info', 'alternates')), false);
+    assert.deepEqual(readdirSync(state).sort(), ['repository', 'repository.bootstrap']);
+    rmSync(reference, { recursive: true, force: true });
+    const worktree = prepareWorktree(state, { ...newJob(found, 0), key: 'legacy' });
+    assert.equal(readFileSync(join(worktree, 'kept.txt'), 'utf8'), 'keep');
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
 test('missing or broken reference falls back to the blobless bootstrap', () => {
   const fixture = coldStartFixture();
   const notARepository = join(fixture.root, 'not-a-repository');
@@ -665,9 +689,10 @@ test('slow cold bootstrap times out with a next action, leaves no partial cache 
   try {
     mkdirSync(state);
     writeFileSync(join(state, 'state.json'), 'unrelated');
-    // A stale staging clone from a killed tick is replaced, not trusted.
+    // Arbitrary pre-existing data at the old fixed staging path, which a
+    // failed bootstrap must not remove.
     mkdirSync(join(state, 'repository.bootstrap'));
-    writeFileSync(join(state, 'repository.bootstrap', 'stale'), 'stale');
+    writeFileSync(join(state, 'repository.bootstrap', 'owner'), 'owner data');
     // A real `git clone` child is killed by its timeout.
     const slow = (binary, args, cwd, timeout) => {
       if (args[0] === 'clone') return fixture.transport('sh', ['-c', 'exec sleep 5'], cwd, timeout);
@@ -681,17 +706,21 @@ test('slow cold bootstrap times out with a next action, leaves no partial cache 
       return true;
     });
     assert.equal(existsSync(join(state, 'repository')), false);
-    assert.equal(existsSync(join(state, 'repository.bootstrap')), false);
+    assert.equal(readFileSync(join(state, 'repository.bootstrap', 'owner'), 'utf8'), 'owner data');
     assert.equal(readFileSync(join(state, 'state.json'), 'utf8'), 'unrelated');
+    const remaining = () => readdirSync(state).sort();
+    assert.deepEqual(remaining(), ['repository.bootstrap', 'state.json'], 'only the owned staging directory is removed');
     // The cache is still missing; the next tick bootstraps it normally.
     assert.equal(discover(state, fixture.transport).sourceCommit, fixture.source);
     assert.equal(readFileSync(join(state, 'state.json'), 'utf8'), 'unrelated');
+    assert.equal(readFileSync(join(state, 'repository.bootstrap', 'owner'), 'utf8'), 'owner data');
+    assert.deepEqual(remaining(), ['repository', 'repository.bootstrap', 'state.json']);
   } finally { rmSync(fixture.root, { recursive: true, force: true }); }
 });
 
 test('bootstrap budget fits the locked tick and never clears an unrecognized cache directory', () => {
   assert.ok(BOOTSTRAP_TIMEOUTS.reference < BOOTSTRAP_TIMEOUTS.total);
-  assert.ok(BOOTSTRAP_TIMEOUTS.total + 2 * 120_000 < 10 * 60_000, 'bootstrap plus both fetches fit the 10-minute tick');
+  assert.ok(BOOTSTRAP_TIMEOUTS.total + 2 * 120_000 <= 10 * 60_000 - 60_000, 'clone budget plus both fetches leaves 60s of the 10-minute tick');
   const root = mkdtempSync(join(tmpdir(), 'recovery-foreign-'));
   try {
     mkdirSync(join(root, 'repository'));
