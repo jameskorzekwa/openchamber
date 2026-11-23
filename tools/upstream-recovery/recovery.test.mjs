@@ -494,7 +494,8 @@ test('real Git discovery and green-PR readiness verify upstream ancestry, head a
   try {
     git(root, 'init', '-b', 'main', upstream);
     const base = commit(upstream, 'base');
-    git(upstream, 'tag', 'v2.7.0');
+    // Annotated, like older upstream releases: describe would print v2.7.0-N-g….
+    git(upstream, 'tag', '-a', 'v2.7.0', '-m', 'stable');
     git(root, 'clone', upstream, fork);
     git(fork, 'switch', '-c', 'j2k/current');
     const source = commit(fork, 'custom patch');
