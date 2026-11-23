@@ -14,7 +14,7 @@ try {
 }
 
 test('chat Markdown tables expand into spare transcript width and show hidden-edge fades', {
-  skip: !chrome && 'Set OPENCHAMBER_TEST_CHROME to run this browser regression',
+  skip: process.env.OPENCHAMBER_SKIP_BROWSER_TESTS === '1' ? 'OPENCHAMBER_SKIP_BROWSER_TESTS=1 (J2K release gates)' : !chrome && 'Set OPENCHAMBER_TEST_CHROME to run this browser regression',
   timeout: 120_000,
 }, async () => {
   const fixture = createFixtureDir('markdown-table');

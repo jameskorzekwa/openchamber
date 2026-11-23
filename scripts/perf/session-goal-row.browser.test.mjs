@@ -194,7 +194,7 @@ try {
   if (process.env.OPENCHAMBER_TEST_CHROME) throw error;
 }
 test('a paused goal row shows the whole hint and Resume on a 360-390 px phone, and its token count on a wide row, in every locale and a wide font', {
-  skip: !chrome && 'Set OPENCHAMBER_TEST_CHROME to run the browser regression', timeout: 480_000,
+  skip: process.env.OPENCHAMBER_SKIP_BROWSER_TESTS === '1' ? 'OPENCHAMBER_SKIP_BROWSER_TESTS=1 (J2K release gates)' : !chrome && 'Set OPENCHAMBER_TEST_CHROME to run the browser regression', timeout: 480_000,
 }, async () => {
   const fixture = await createGoalRowFixture();
   let browser;
