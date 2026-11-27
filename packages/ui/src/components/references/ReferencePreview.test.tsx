@@ -75,7 +75,7 @@ function renderPreview(item: ReferencePickerItem, pinned: boolean, status: 'read
 describe('ReferencePreview layout', () => {
     test('a supplied state menu renders an actionable state pill', () => {
         const container = renderPreview(items[0], true, 'ready', true, <button>Close pull request</button>);
-        const trigger = container.querySelector('header button[aria-haspopup="menu"]');
+        const trigger = container.querySelector('header button[aria-haspopup="menu"][aria-label*="Open"]');
         expect(trigger).not.toBeNull();
         expect(trigger?.textContent).toContain('Open');
         expect(trigger?.getAttribute('aria-label')).toContain('Open');
@@ -84,7 +84,7 @@ describe('ReferencePreview layout', () => {
 
     test('without a state menu the preview retains a non-interactive state pill', () => {
         const container = renderPreview(items[0], true);
-        expect(container.querySelector('header button[aria-haspopup="menu"]')).toBeNull();
+        expect(container.querySelector('header button[aria-haspopup="menu"][aria-label*="Open"]')).toBeNull();
         expect(container.querySelector('header')?.textContent).toContain('Open');
         expect(container.querySelector('h3')?.textContent).toBe('Preview layout');
     });

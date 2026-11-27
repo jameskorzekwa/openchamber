@@ -299,6 +299,7 @@ var modulePath = (name) => `./${name}${".js"}`;
 var { readReviews, reviewDismissal, withReviewerStates } = await import(modulePath("reviewer-states"));
 var { readReferences, withReferences, itemReferences } = await import(modulePath("references"));
 var { mapChangedFile, splitUnifiedDiff } = await import(modulePath("diff"));
+var { repositoryOfRemote } = await import(modulePath("remote-repository"));
 var port = Number(process.env.OPENCHAMBER_SERVICE_PORT);
 var serviceToken = process.env.OPENCHAMBER_SERVICE_TOKEN ?? "";
 if (!port || !serviceToken) {
@@ -358,35 +359,6 @@ var remoteUrl = (directory, remote) => new Promise((resolve, reject) => {
       resolve(stdout.trim());
   });
 });
-var repositoryOfRemote = (raw, instance) => {
-  const origin = new URL(instance);
-  let host;
-  let path;
-  const scp = raw.includes("://") ? null : raw.match(/^(?:[^@\s]+@)?([^:/\s]+):(?!\/)(.+)$/);
-  if (scp) {
-    host = scp[1].toLowerCase();
-    path = scp[2];
-    if (host !== origin.hostname.toLowerCase())
-      return null;
-  } else {
-    let url;
-    try {
-      url = new URL(raw);
-    } catch {
-      return null;
-    }
-    const web = url.protocol === "https:" || url.protocol === "http:";
-    if (web && url.host.toLowerCase() !== origin.host.toLowerCase())
-      return null;
-    if (!web && url.hostname.toLowerCase() !== origin.hostname.toLowerCase())
-      return null;
-    path = decodeURIComponent(url.pathname);
-  }
-  const segments = path.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "").split("/");
-  if (segments.length !== 2 || segments.some((segment) => !/^[A-Za-z0-9_.-]+$/.test(segment) || segment === "." || segment === ".."))
-    return null;
-  return { owner: segments[0], name: segments[1] };
-};
 var mapProject = (call, raw, remoteName) => {
   const project = { ...call.identity, id: String(raw.id), owner: raw.owner.login, name: raw.name, url: raw.html_url };
   if (raw.clone_url)

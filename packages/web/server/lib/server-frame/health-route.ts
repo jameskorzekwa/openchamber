@@ -10,7 +10,6 @@ export interface HealthRouteDependencies {
   runtimeName: string;
   compatibility: object;
   isLocalPeer: (req: Request) => boolean;
-  /** Process identity the restart-transaction helper matches; loopback callers only. */
   localIdentity?: () => object;
 }
 
@@ -67,11 +66,11 @@ export const registerHealthRoute = ({ app, getHealthSnapshot, resolveServerId, o
     const serverId = await resolveServerId();
     const identity: Record<string, string> = {};
     if (serverId) identity.serverId = serverId;
+    if (openchamberBuildRevision) identity.openchamberBuildRevision = openchamberBuildRevision;
     const liveness = {
       status: 'ok',
       timestamp: new Date().toISOString(),
       openchamberVersion,
-      ...(openchamberBuildRevision ? { openchamberBuildRevision } : {}),
       runtime: runtimeName,
       compatibility,
       ...identity,

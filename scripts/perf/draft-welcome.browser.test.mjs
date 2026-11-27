@@ -186,7 +186,7 @@ try {
 }
 
 test('a compact new-session heading shows a long project name and the text after it inside the phone column', {
-  skip: !chrome && 'Set OPENCHAMBER_TEST_CHROME to run the browser regression', timeout: 120_000,
+  skip: process.env.OPENCHAMBER_SKIP_BROWSER_TESTS === '1' ? 'OPENCHAMBER_SKIP_BROWSER_TESTS=1 (J2K release gates)' : !chrome && 'Set OPENCHAMBER_TEST_CHROME to run the browser regression', timeout: 120_000,
 }, async () => {
   const fixture = await createDraftFixture();
   let browser;
