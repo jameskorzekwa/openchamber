@@ -123,15 +123,12 @@ export const WorkStatusPanel: React.FC<Props> = ({ sessionId, directory, visible
       aria-hidden={!interactive}
       inert={!interactive}
       className={cn(
-        'relative my-4 ms-2 me-4 flex shrink-0 flex-col self-start overflow-hidden',
-        'max-h-[calc(100%-2rem)]',
-        overlay && [
-          'absolute inset-e-3 top-3 z-30 mx-0 my-0',
-          'max-h-[calc(100%-1.5rem)]',
-        ],
+        'relative flex shrink-0 flex-col self-start overflow-hidden',
+        overlay
+          ? 'absolute inset-e-3 top-3 z-30 max-h-[calc(100%-1.5rem)] rounded-xl'
+          : 'mb-2 ms-1 me-1.5 max-h-[calc(100%-0.5rem)] rounded-[10px] bg-background',
         'motion-reduce:transition-none',
-        'oc-panel-edge rounded-xl',
-        !overlay && 'bg-background',
+        'oc-panel-edge',
       )}
       data-edge-hidden={overlay && !interactive ? '' : undefined}
       data-edge-floating={overlay ? '' : undefined}
