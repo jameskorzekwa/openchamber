@@ -1,6 +1,6 @@
 import React from 'react';
 import type { SessionGroup, SessionNode } from '../types';
-import { anySessionOrDescendantIn, collectOpenTurnSessionIds, useGlobalSessionStatusStore } from '@/sync/global-session-status';
+import { collectOpenTurnSessionIds, useGlobalSessionStatusStore } from '@/sync/global-session-status';
 import { useGlobalBlockingRequestsStore } from '@/sync/global-blocking-requests';
 import { useBackgroundShellsStore } from '@/sync/background-shells';
 import { useBackgroundImagesStore } from '@/sync/background-images';
@@ -13,8 +13,6 @@ import { isSessionUnread } from '@/sync/session-unread';
 export type CollapsedActivityState = 'permission' | 'form' | 'failed' | 'active' | 'unread' | null;
 
 const EMPTY_IDS: ReadonlySet<string> = new Set();
-const EMPTY_PR_WATCHES: ReturnType<typeof usePrWatchStore.getState>['bySession'] = new Map();
-const EMPTY_EXTENSION_WAITS: ReturnType<typeof useExtensionWaitsStore.getState>['bySession'] = new Map();
 
 export const collectGroupActivityNodes = (
   groups: readonly SessionGroup[],
@@ -106,6 +104,16 @@ const collectActivityIds = (nodes: readonly SessionNode[]) => {
   return { active, unread };
 };
 
+const splitOpenTurnKeys = (keys: readonly string[]): string[] => keys.flatMap((key) => (key ? key.split('\n') : []));
+
+const openTurnKeyWithin = (sessionIds: ReadonlySet<string>, candidates: Iterable<string>, earlierKeys: readonly string[]): string => {
+  const earlier = new Set(splitOpenTurnKeys(earlierKeys));
+  return [...collectOpenTurnSessionIds(EMPTY_IDS, [candidates])]
+    .filter((sessionId) => sessionIds.has(sessionId) && !earlier.has(sessionId))
+    .sort()
+    .join('\n');
+};
+
 export const useCollapsedSessionActivityState = ({
   nodes,
   blockingSessionIds,
@@ -116,20 +124,29 @@ export const useCollapsedSessionActivityState = ({
     () => (blockingSessionIds && blockingSessionIds.length > 0 ? new Set([...ids.active, ...blockingSessionIds]) : ids.active),
     [blockingSessionIds, ids.active],
   );
-  const activeIds = useGlobalSessionStatusStore((state) => (enabled ? state.activeSessionIds : EMPTY_IDS));
-  const workflowIds = useWorkflowActivityStore((state) => (enabled ? state.runningSessionIds : EMPTY_IDS));
-  const shellIds = useBackgroundShellsStore((state) => (enabled ? state.sessionIds : EMPTY_IDS));
-  const imageIds = useBackgroundImagesStore((state) => (enabled ? state.sessionIds : EMPTY_IDS));
-  const prWatches = usePrWatchStore((state) => (enabled ? state.bySession : EMPTY_PR_WATCHES));
-  const extensionWaits = useExtensionWaitsStore((state) => (enabled ? state.bySession : EMPTY_EXTENSION_WAITS));
-  const openTurnIds = React.useMemo(() => (
-    enabled
-      ? collectOpenTurnSessionIds(activeIds, [workflowIds, shellIds, imageIds, prWatches.keys(), extensionWaits.keys()])
-      : EMPTY_IDS
-  ), [activeIds, enabled, extensionWaits, imageIds, prWatches, shellIds, workflowIds]);
-  const running: CollapsedActivityState = React.useMemo(() => (
-    enabled && anySessionOrDescendantIn(ids.active, openTurnIds) ? 'active' : null
-  ), [enabled, ids.active, openTurnIds]);
+  const activeOpen = useGlobalSessionStatusStore(React.useCallback((state) => (
+    enabled ? openTurnKeyWithin(ids.active, state.activeSessionIds, []) : ''
+  ), [enabled, ids.active]));
+  const workflowOpen = useWorkflowActivityStore(React.useCallback((state) => (
+    enabled ? openTurnKeyWithin(ids.active, state.runningSessionIds, [activeOpen]) : ''
+  ), [activeOpen, enabled, ids.active]));
+  const shellOpen = useBackgroundShellsStore(React.useCallback((state) => (
+    enabled ? openTurnKeyWithin(ids.active, state.sessionIds, [activeOpen, workflowOpen]) : ''
+  ), [activeOpen, enabled, ids.active, workflowOpen]));
+  const imageOpen = useBackgroundImagesStore(React.useCallback((state) => (
+    enabled ? openTurnKeyWithin(ids.active, state.sessionIds, [activeOpen, workflowOpen, shellOpen]) : ''
+  ), [activeOpen, enabled, ids.active, shellOpen, workflowOpen]));
+  const prWatchOpen = usePrWatchStore(React.useCallback((state) => (
+    enabled ? openTurnKeyWithin(ids.active, state.bySession.keys(), [activeOpen, workflowOpen, shellOpen, imageOpen]) : ''
+  ), [activeOpen, enabled, ids.active, imageOpen, shellOpen, workflowOpen]));
+  const extensionWaitOpen = useExtensionWaitsStore(React.useCallback((state) => (
+    enabled ? openTurnKeyWithin(ids.active, state.bySession.keys(), [activeOpen, workflowOpen, shellOpen, imageOpen, prWatchOpen]) : ''
+  ), [activeOpen, enabled, ids.active, imageOpen, prWatchOpen, shellOpen, workflowOpen]));
+  const openTurnIds = React.useMemo(
+    () => new Set(splitOpenTurnKeys([activeOpen, workflowOpen, shellOpen, imageOpen, prWatchOpen, extensionWaitOpen])),
+    [activeOpen, extensionWaitOpen, imageOpen, prWatchOpen, shellOpen, workflowOpen],
+  );
+  const running: CollapsedActivityState = openTurnIds.size > 0 ? 'active' : null;
   const outcome = useGlobalSessionsStore(React.useCallback((state): CollapsedActivityState => {
     if (!enabled) return null;
     let unread: CollapsedActivityState = null;
