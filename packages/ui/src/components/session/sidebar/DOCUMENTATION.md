@@ -488,7 +488,10 @@ branching to three sessions (`lead`) in the one-line row's chevron slot, the way
 sits in a group header: the title starts where every row's title starts, and
 with workers under it the mark gives way to the chevron on hover or focus
 (`SessionLeadSlot`); on touch the mark stays and a tap on it still toggles.
-Two-line rows show the mark with the row's marks, the phone beside the title.
+Two-line rows show the mark on the first line right before the title
+(`titleMark` of `SessionTimelineRowBody`), as the session tab does, and moves
+the title's hover mask in by its width (`--oc-actions-inset`); the
+phone's row (`MobileSessionRow`) keeps it after the title.
 The row's states are any session's: no count of workers. A lead starts from
 New lead (a draft with its own welcome heading): in the project menu, and in
 the menu of the project's "+" (right click on desktop, long press on the

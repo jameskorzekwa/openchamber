@@ -127,6 +127,22 @@ test('an extension mark opens no second line and rides in the first line until s
   expect(order(document.body)).toEqual(['goal', 'pr', 'marks', 'badges']);
 });
 
+test('a title mark stands right before the title on the first line, with or without a second line', async () => {
+  const titleMark = <span data-title-mark />;
+  for (const overrides of [{ titleMark }, { titleMark, branchLabel: 'main', marks: <span data-mark /> }]) {
+    await act(async () => renderRow(false, false, overrides));
+    const mark = document.querySelector('[data-title-mark]');
+    expect(mark?.parentElement?.className).toContain('h-5');
+    expect(mark?.nextElementSibling?.textContent).toBe(title);
+    // The title starts after the mark, so its hover fade moves in by the mark and the gap.
+    expect(mark?.nextElementSibling?.className).toContain('[--oc-actions-inset:1.125rem]');
+    expect(document.querySelectorAll('[data-title-mark]')).toHaveLength(1);
+  }
+  // A title mark alone opens no second line.
+  await act(async () => renderRow(false, false, { titleMark }));
+  expect(document.querySelector('.h-4')).toBeNull();
+});
+
 test('a branch name opens its line without an icon, and the chevron sits over it on hover', async () => {
   const toggle = <button data-toggle>Expand</button>;
   for (const withProject of [false, true]) {

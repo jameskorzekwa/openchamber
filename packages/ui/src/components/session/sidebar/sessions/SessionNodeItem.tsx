@@ -329,6 +329,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
       project={timelineProject}
       projectLabel={tooltipProjectLabel}
       title={sessionTitle}
+      titleMark={isTwoLineRow && isLead ? <SessionLeadSlot chevron={null} alwaysShowActions={alwaysShowActions} /> : null}
       titleClassName={isRowSelected || (isHighlighted && !repeat)
         ? 'text-interactive-selection-foreground'
         : isHighlighted
@@ -347,10 +348,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
       prBadge={timelinePrBadge}
       zombieIndicator={isTimelineRow ? streamingIndicator : null}
       goal={goalMark}
-      marks={guestMarks.length > 0 || (isTwoLineRow && isLead) ? <>
-        {isTwoLineRow && isLead ? <SessionLeadSlot chevron={null} alwaysShowActions={alwaysShowActions} /> : null}
-        {guestMarks.length > 0 ? <GuestRowMarks marks={guestMarks} onOpen={openGuestMark} /> : null}
-      </> : null}
+      marks={guestMarks.length > 0 ? <GuestRowMarks marks={guestMarks} onOpen={openGuestMark} /> : null}
       badges={badgesAtRowEnd ? null : rowBadges}
       endBadges={badgesAtRowEnd ? rowBadges : null}
       doneHint={showDoneHint ? <DoneHintMark /> : null}

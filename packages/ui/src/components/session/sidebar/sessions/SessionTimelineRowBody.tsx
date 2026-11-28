@@ -21,6 +21,7 @@ type Props = {
   project: TimelineRowProject | null;
   projectLabel: string | null;
   title: React.ReactNode;
+  titleMark?: React.ReactNode;
   titleClassName: string;
   branchLabel: string | null;
   spaceMark?: string | null;
@@ -97,6 +98,7 @@ export const SessionTimelineRowBody: React.FC<Props> = ({
   project,
   projectLabel,
   title,
+  titleMark = null,
   titleClassName,
   branchLabel,
   spaceMark = null,
@@ -154,7 +156,7 @@ export const SessionTimelineRowBody: React.FC<Props> = ({
     <span className="absolute inset-y-0 start-0 z-10 inline-flex w-3 items-center justify-center">{leadToggle}</span>
   ) : leadIcon;
   const titleLine = (
-    <div dir="auto" className={cn('oc-ui-start-align min-w-0 flex-1 truncate typography-ui-label font-normal', actionsMaskClass, titleClassName)}>{title}</div>
+    <div dir="auto" className={cn('oc-ui-start-align min-w-0 flex-1 truncate typography-ui-label font-normal', titleMark && !compact && '[--oc-actions-inset:1.125rem]', actionsMaskClass, titleClassName)}>{title}</div>
   );
   if (compact) {
     return <div className={cn('@container relative flex w-full min-w-0 items-center gap-1', actionsReserveClass)}>
@@ -166,6 +168,7 @@ export const SessionTimelineRowBody: React.FC<Props> = ({
   const secondLine = Boolean(leadToggle || leadIcon || branchLine || goal || zombieIndicator || prBadge || badges);
   return <div className="flex w-full min-w-0 flex-col gap-px">
     <div className={cn('@container relative flex h-5 w-full min-w-0 items-center gap-1', actionsReserveClass)}>
+      {titleMark}
       {titleLine}
       {meta(!secondLine, true)}
     </div>
