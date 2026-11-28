@@ -3,14 +3,16 @@ import { cn } from '@/lib/utils';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { describeChange } from '../git/changeStatus';
 import { FileTreeChevron, FileTreeIndentGuides, FileTreeRowEnd, FileTreeStatusLetter } from '../files/FileTreeRowParts';
-import { fileTreeRowPaddingLeft, fileTreeRowStateClassName } from '../files/fileTreeRow';
+import { FILE_TREE_GROUP_HOVER_ROW_CLASSNAME, fileTreeRowPaddingLeft, fileTreeRowStateClassName } from '../files/fileTreeRow';
 import { useFileTreeDisclosure } from '../files/useFileTreeDisclosure';
 import { Icon } from '@/components/icon/Icon';
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
 import { ReviewFileMark } from '@/components/review/ReviewFileMark';
+import { DelegatedTooltip } from '@/components/ui/row-tooltip';
+import { FileReviewedButton } from '../FileReviewedButton';
 import { useI18n } from '@/lib/i18n';
 import { buildDiffTreeRows } from '../diffFileTree';
-import type { FileEntry } from './types';
+import type { DiffData, FileEntry } from './types';
 import { formatDiffTotals } from './diffData';
 
 interface FileListProps {
@@ -18,6 +20,10 @@ interface FileListProps {
     selectedFile: string | null;
     onSelectFile: (path: string) => void;
     reviewedPaths?: ReadonlySet<string>;
+}
+
+interface FileTreeProps extends FileListProps {
+    onToggleReviewed: (path: string, diffData: DiffData | null) => void;
 }
 
 export const FileList = React.memo<FileListProps>(({
@@ -81,11 +87,12 @@ export const FileList = React.memo<FileListProps>(({
         </ScrollableOverlay>
     );
 });
-export const FileTree = React.memo<FileListProps>(({
+export const FileTree = React.memo<FileTreeProps>(({
     changedFiles,
     selectedFile,
     onSelectFile,
     reviewedPaths,
+    onToggleReviewed,
 }) => {
     const { t } = useI18n();
     const [collapsedDirectories, setCollapsedDirectories] = React.useState<ReadonlySet<string>>(() => new Set());
@@ -152,39 +159,52 @@ export const FileTree = React.memo<FileListProps>(({
                     return (
                         <li key={row.key} className="relative" data-tree-disclosure-path={row.file.path}>
                             <FileTreeIndentGuides depth={row.depth} />
-                            <button
-                                type="button"
-                                onClick={() => onSelectFile(row.file.path)}
-                                aria-current={isActive ? 'true' : undefined}
-                                className={cn(
-                                    'oc-file-tree-row flex w-full items-center gap-1.5 rounded-md py-1 text-start',
-                                    fileTreeRowStateClassName(isActive)
-                                )}
-                                style={{ paddingInlineStart: paddingLeft }}
-                                title={row.file.path}
-                            >
-                                <FileTypeIcon filePath={row.file.path} className="ms-0.5 size-3.5 flex-shrink-0" />
-                                <span className={cn('oc-file-tree-row-name typography-meta', isReviewed && !isActive && 'text-muted-foreground')}>{row.name}</span>
-                                <FileTreeRowEnd className="pe-2">
-                                    {isReviewed && (
-                                        <Icon
-                                            name="checkbox-circle"
-                                            className="size-3.5 shrink-0 text-[var(--status-success)]"
-                                            aria-label={t('diffView.reviewed.label')}
-                                        />
+                            <div className="group relative flex items-center">
+                                <button
+                                    type="button"
+                                    onClick={() => onSelectFile(row.file.path)}
+                                    aria-current={isActive ? 'true' : undefined}
+                                    className={cn(
+                                        'oc-file-tree-row flex w-full items-center gap-1.5 rounded-md py-1 text-start',
+                                        isActive ? fileTreeRowStateClassName(true) : cn('text-foreground/90', FILE_TREE_GROUP_HOVER_ROW_CLASSNAME)
                                     )}
-                                    <ReviewFileMark path={row.file.path} />
-                                    <FileTreeStatusLetter
-                                        code={descriptor.code}
-                                        color={descriptor.color}
-                                        label={t(descriptor.descriptionKey)}
+                                    style={{ paddingInlineStart: paddingLeft }}
+                                    title={row.file.path}
+                                >
+                                    <FileTypeIcon filePath={row.file.path} className="ms-0.5 size-3.5 flex-shrink-0" />
+                                    <span className={cn('oc-file-tree-row-name typography-meta', isReviewed && !isActive && 'text-muted-foreground')}>{row.name}</span>
+                                    <FileTreeRowEnd className="pe-2">
+                                        <ReviewFileMark path={row.file.path} />
+                                        <FileTreeStatusLetter
+                                            code={descriptor.code}
+                                            color={descriptor.color}
+                                            label={t(descriptor.descriptionKey)}
+                                        />
+                                        <span className="w-6 shrink-0">
+                                            {isReviewed ? <span className="sr-only">{t('diffView.reviewed.label')}</span> : null}
+                                        </span>
+                                    </FileTreeRowEnd>
+                                </button>
+                                <div
+                                    className={cn(
+                                        'pointer-events-none sticky end-0 z-[2] -ms-8 flex w-8 shrink-0 items-center justify-end self-stretch pe-2 transition-opacity',
+                                        !isReviewed && 'opacity-0 focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100',
+                                    )}
+                                >
+                                    <FileReviewedButton
+                                        compact
+                                        rowTooltip
+                                        reviewed={isReviewed}
+                                        onToggle={() => onToggleReviewed(row.file.path, null)}
+                                        className="pointer-events-auto"
                                     />
-                                </FileTreeRowEnd>
-                            </button>
+                                </div>
+                            </div>
                         </li>
                     );
                 })}
             </ul>
+            <DelegatedTooltip containerRef={listRef} />
         </ScrollableOverlay>
     );
 });

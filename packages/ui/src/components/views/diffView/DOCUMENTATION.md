@@ -73,6 +73,13 @@ remain in their existing neighbouring modules.
   Walkthrough, start collapsed when a scope initializes, collapse when marked
   reviewed, and auto-unreview and expand when status/revision/patch metadata or
   targeted working-tree git refresh hints indicate the file changed.
+- The tree file list's row toggle runs the same reviewed action as the file
+  header and never selects the file or a folder. It shows at rest on a
+  reviewed row (it is the row's only check), on hover, on its own keyboard
+  focus and always on a coarse pointer. A row mark has no loaded patch, so it
+  records the file list's fingerprint: an edit that keeps the status and line
+  counts unmarks it only through a targeted git refresh hint, where a header
+  mark also compares the patch.
 - State and refs belong to the retained view instance. Passing them between
   hooks preserves their identities, cache scope and hidden-view lifecycle.
 - An entry keeps its own loading, context expansion and hunk-mutation state.
@@ -81,6 +88,15 @@ remain in their existing neighbouring modules.
   sticky headers, header-slot placement and review provider keep their hierarchy.
 
 ## Decisions
+
+### Why the row toggle is a sibling lane over a reserved slot
+
+A button cannot hold another button, so the toggle sits after the row button,
+as the Git panel's stage and revert lane does, over an empty slot the row
+button reserves at its end. The slot keeps the status letter in place and
+carries the row button's hidden "Reviewed" text; the toggle draws the check, so
+a reviewed row never shows two. Its tooltip goes through the list's
+`DelegatedTooltip`, since the tree keeps every row mounted.
 
 ### Why content and file rendering stay in the view
 

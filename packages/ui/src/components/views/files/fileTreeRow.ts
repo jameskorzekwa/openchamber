@@ -13,6 +13,8 @@ export const fileTreeRowStateClassName = (isActive: boolean): string => (
     : 'text-foreground/90 hover:bg-interactive-hover hover:text-foreground hover:[--oc-file-tree-row-fill:var(--interactive-hover)]'
 );
 
+export const FILE_TREE_GROUP_HOVER_ROW_CLASSNAME = 'group-hover:bg-interactive-hover group-hover:text-foreground group-hover:[--oc-file-tree-row-fill:var(--interactive-hover)]';
+
 export const fileTreeRowMenuFillClassName = (isActive: boolean): string => (
   isActive
     ? '[--oc-file-tree-row-fill:var(--interactive-selection)]'

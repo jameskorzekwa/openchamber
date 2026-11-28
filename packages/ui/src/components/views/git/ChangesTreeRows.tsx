@@ -5,11 +5,9 @@ import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import type { GitStatus } from '@/lib/api/types';
 import { FileTreeChevron, FileTreeIndentGuides, FileTreeRowEnd, FileTreeStatusLetter } from '../files/FileTreeRowParts';
-import { fileTreeRowMenuFillClassName, fileTreeRowPaddingLeft, fileTreeRowStateClassName } from '../files/fileTreeRow';
+import { FILE_TREE_GROUP_HOVER_ROW_CLASSNAME as GROUP_HOVER_ROW, fileTreeRowMenuFillClassName, fileTreeRowPaddingLeft, fileTreeRowStateClassName } from '../files/fileTreeRow';
 import { describeChange } from './changeStatus';
 import { changedPathName } from './changesTree';
-
-const GROUP_HOVER_ROW = 'group-hover:bg-interactive-hover group-hover:text-foreground group-hover:[--oc-file-tree-row-fill:var(--interactive-hover)]';
 
 const ROW_STYLE: React.CSSProperties = { blockSize: 'calc(max(1lh, 1rem) + 0.5rem)' };
 
