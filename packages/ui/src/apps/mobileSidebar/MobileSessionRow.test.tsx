@@ -218,6 +218,17 @@ test('a tap on the row away from the badge still opens the parent', async () => 
   expect(opened).toEqual([['ses_parent', '/project']]);
 });
 
+test('a lead row puts the lead mark right before the title, in one-line and detailed rows', async () => {
+  const lead = parentNode([]);
+  lead.session = { ...lead.session, metadata: { openchamber: { lead: { at: 1 } } } };
+  for (const detailed of [false, true]) {
+    await render({ ...row(undefined, lead), detailed });
+    const mark = host.querySelector('[aria-label="Lead"]');
+    expect(mark).not.toBeNull();
+    expect(mark?.nextElementSibling?.textContent).toBe('ses_parent');
+  }
+});
+
 test('the row stands in for the open hidden subagent', async () => {
   useSessionDisplayStore.setState({ showSubagentSessions: false });
   await render(row());

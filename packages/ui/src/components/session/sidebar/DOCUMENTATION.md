@@ -490,8 +490,9 @@ with workers under it the mark gives way to the chevron on hover or focus
 (`SessionLeadSlot`); on touch the mark stays and a tap on it still toggles.
 Two-line rows show the mark on the first line right before the title
 (`titleMark` of `SessionTimelineRowBody`), as the session tab does, and moves
-the title's hover mask in by its width (`--oc-actions-inset`); the
-phone's row (`MobileSessionRow`) keeps it after the title.
+the title's hover mask in by its width (`--oc-actions-inset`). The
+phone's row (`MobileSessionRow`) puts it right before the title too, in its
+one-line and detailed layouts alike.
 The row's states are any session's: no count of workers. A lead starts from
 New lead (a draft with its own welcome heading): in the project menu, and in
 the menu of the project's "+" (right click on desktop, long press on the

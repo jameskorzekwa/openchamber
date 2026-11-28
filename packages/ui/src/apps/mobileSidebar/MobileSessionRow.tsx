@@ -208,7 +208,7 @@ export const MobileSessionRow: React.FC<{
     : null;
   const isLead = isLeadSession(session);
   const leadMarker = isLead
-    ? <Icon name="lead" className="size-3 shrink-0 text-muted-foreground" role="img" aria-hidden={false} aria-label={t('sessions.sidebar.session.leadMark')} />
+    ? <Icon name="lead" className="-me-1 size-3 shrink-0 text-muted-foreground" role="img" aria-hidden={false} aria-label={t('sessions.sidebar.session.leadMark')} />
     : null;
   const doneHint = showDoneHint
     ? <Icon name="check" className="size-3.5 shrink-0 text-muted-foreground" aria-label={t('sessions.sidebar.session.work.doneSuggested')} />
@@ -247,10 +247,10 @@ export const MobileSessionRow: React.FC<{
         firstLine={renaming
           ? renameForm(0, 'h-[1lh] pe-0 typography-ui-label [&_button]:size-6 [&_button>svg]:size-3.5')
           : <>
+            {leadMarker}
             {titleText}
             {doneHint}
             {hasSecondLine ? null : marks}
-            {leadMarker}
             {pinMarker}
             {liveState}
             {timeSlot}
@@ -289,13 +289,13 @@ export const MobileSessionRow: React.FC<{
           style={{ paddingInlineStart: geometry.textLeft(depth), touchAction: 'manipulation' }}
           onClick={select}
         >
+          {leadMarker}
           {titleText}
           {doneHint}
           <MobileSessionGoalGlyph session={session} />
           {refMark(false)}
           {marks}
           {pendingBadgeButtons ? null : <MobileSessionPendingBadges {...pendingRequests} />}
-          {leadMarker}
           {pinMarker}
           {liveState}
           {timeSlot}
