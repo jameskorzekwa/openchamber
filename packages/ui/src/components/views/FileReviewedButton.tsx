@@ -1,5 +1,5 @@
 import { Icon } from '@/components/icon/Icon';
-import { ButtonTooltip } from '@/components/ui/action-toolbar';
+import { ButtonTooltip, TooltipLabelWithShortcut } from '@/components/ui/action-toolbar';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
@@ -10,6 +10,7 @@ interface FileReviewedButtonProps {
   compact?: boolean;
   rowTooltip?: boolean;
   className?: string;
+  shortcut?: string;
 }
 
 export function FileReviewedButton({
@@ -18,6 +19,7 @@ export function FileReviewedButton({
   compact = false,
   rowTooltip = false,
   className,
+  shortcut,
 }: FileReviewedButtonProps) {
   const { t } = useI18n();
   const label = reviewed
@@ -43,7 +45,9 @@ export function FileReviewedButton({
         event.stopPropagation();
         onToggle();
       }}
-      onKeyDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
+      }}
     >
       <Icon name={reviewed ? 'checkbox-circle' : 'checkbox-blank-circle'} className="size-3.5 shrink-0" />
       {!compact && (
@@ -52,5 +56,7 @@ export function FileReviewedButton({
     </Button>
   );
 
-  return rowTooltip ? button : <ButtonTooltip label={label} side="top">{button}</ButtonTooltip>;
+  return rowTooltip
+    ? button
+    : <ButtonTooltip label={<TooltipLabelWithShortcut label={label} shortcut={reviewed ? undefined : shortcut} />} side="top">{button}</ButtonTooltip>;
 }
