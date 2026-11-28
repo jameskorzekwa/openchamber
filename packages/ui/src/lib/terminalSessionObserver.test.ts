@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { Window } from 'happy-dom';
 import type { TerminalAPI, TerminalServerSession } from './api/types';
+import { controlStreamSilenceLimitMs } from './controlStreamHeartbeat';
 import { observeTerminalSessions } from './terminalSessionObserver';
 import { useTerminalStore } from '@/stores/useTerminalStore';
 
@@ -61,7 +62,7 @@ test('a failed invalidation retries with bounded backoff on a connected stream a
   const retries: Array<{ delay: number; run: () => void }> = [];
   const timer = spyOn(globalThis, 'setTimeout').mockImplementation(Object.assign((...parameters: Parameters<typeof setTimeout>) => {
     const [callback, delay, ...args] = parameters;
-    if (delay && delay >= 2000 && delay <= 60_000 && delay !== 45_000) {
+    if (delay && delay >= 2000 && delay <= 60_000 && delay !== controlStreamSilenceLimitMs()) {
       retries.push({ delay, run: () => callback(...args) });
       return original(() => {}, 0);
     }
