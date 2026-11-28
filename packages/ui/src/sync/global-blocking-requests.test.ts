@@ -11,6 +11,8 @@ import {
   type BlockingPermissionRequest,
 } from './global-blocking-requests';
 import type { HostSessionStatusSnapshot } from '@/lib/opencode/session-status';
+import { setSessionParentResolver } from './global-session-status';
+import { resetSessionOrdering, useSessionOrderingStore } from './session-ordering';
 
 /** A host status read whose pending map is `pending`, as the poller and mobile sheet receive it. */
 const hostSnapshot = (pending: NonNullable<HostSessionStatusSnapshot['pending']>) =>
@@ -140,5 +142,42 @@ describe('global blocking requests index', () => {
     expect(bySession().get('s2')?.permissions.map((p) => p.id)).toEqual(['p2']);
     await readHostBlockingRequestsSnapshot(hostSnapshot({}), () => '/other');
     expect(bySession().has('s2')).toBe(true);
+  });
+
+  test('new live requests promote the session and its parent in ordering, while duplicates and seeds do not', async () => {
+    resetSessionOrdering();
+    setSessionParentResolver((id) => (id === 'child' ? 'parent' : undefined));
+    try {
+      await readHostBlockingRequestsSnapshot(hostSnapshot({
+        seeded: { permissions: [permission('p0', 'seeded')], forms: [], pages: [] },
+      }), () => '/repo');
+      expect(useSessionOrderingStore.getState().rankById.has('seeded')).toBe(false);
+
+      applyGlobalBlockingRequestEvents('/repo', [permissionAsked(permission('p1', 'child'))]);
+      const childRank = useSessionOrderingStore.getState().rankById.get('child') ?? 0;
+      const parentRank = useSessionOrderingStore.getState().rankById.get('parent') ?? 0;
+      expect(childRank).toBeGreaterThan(0);
+      expect(parentRank).toBeGreaterThan(0);
+
+      // Re-sending the same permission does not re-promote.
+      applyGlobalBlockingRequestEvents('/repo', [permissionAsked(permission('p1', 'child'))]);
+      expect(useSessionOrderingStore.getState().rankById.get('parent')).toBe(parentRank);
+
+      // A new form on another session promotes it above parent.
+      applyGlobalBlockingRequestEvents('/repo', [formCreated(form('q1', 'other'))]);
+      expect(useSessionOrderingStore.getState().rankById.get('other') ?? 0).toBeGreaterThan(parentRank);
+
+      // In a single batch A, B, A (all distinct requests), A keeps the newest rank above B.
+      applyGlobalBlockingRequestEvents('/repo', [
+        permissionAsked(permission('p2', 'a')),
+        permissionAsked(permission('p3', 'b')),
+        formCreated(form('q2', 'a')),
+      ]);
+      const rankA = useSessionOrderingStore.getState().rankById.get('a') ?? 0;
+      const rankB = useSessionOrderingStore.getState().rankById.get('b') ?? 0;
+      expect(rankA).toBeGreaterThan(rankB);
+    } finally {
+      setSessionParentResolver(() => undefined);
+    }
   });
 });

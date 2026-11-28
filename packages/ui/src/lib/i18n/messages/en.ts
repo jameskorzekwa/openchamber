@@ -877,6 +877,7 @@ export const dict = {
   'sessions.sidebar.session.export.dialog.confirm': 'Export',
   'sessions.sidebar.session.status.active': 'Session active',
   'sessions.sidebar.session.status.unread': 'Unread updates',
+  'sessions.sidebar.session.status.failed': 'Last turn failed',
   'sessions.sidebar.session.status.backgroundSubagent': 'Subagent running in the background',
   'sessions.sidebar.session.status.backgroundCommand': 'Command running in the background',
   'sessions.sidebar.session.status.backgroundImage': 'Image generating in the background',

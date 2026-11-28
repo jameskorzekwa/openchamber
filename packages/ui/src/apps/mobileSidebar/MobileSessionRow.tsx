@@ -36,6 +36,7 @@ import { getSessionGoal } from '@/lib/sessionGoalMetadata';
 import { collectSessionWorkInWork } from '@/components/session/sidebar/works/sidebarWorks';
 import { cn } from '@/lib/utils';
 import { useProjectsStore } from '@/stores/useProjectsStore';
+import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
 import { useSessionPinnedStore } from '@/stores/useSessionPinnedStore';
 import { isChatCoveredByPage, useUIStore } from '@/stores/useUIStore';
@@ -191,9 +192,14 @@ export const MobileSessionRow: React.FC<{
   const pendingBadgeButtons = waitingOnUser && !renaming
     ? <MobileSessionPendingBadgeButtons {...pendingRequests} onOpen={openPendingRequest} />
     : null;
+  const liveOutcome = useGlobalSessionsStore(React.useCallback(
+    (state) => state.entityById.get(session.id)?.outcome ?? session.outcome,
+    [session.id, session.outcome],
+  ));
+  const isFailed = !aiRename.pending && !isStreaming && liveOutcome === 'failed';
   const liveState = aiRename.pending
     ? <Icon name="loader-4" className="size-3 shrink-0 animate-spin text-status-info" aria-label={t('sessions.aiRename.generating')} />
-    : (isStreaming || showUnread) && !waitingOnUser ? <SessionActivityIndicator state={turnActivity ?? 'unread'} /> : null;
+    : (isStreaming || isFailed || showUnread) && !waitingOnUser ? <SessionActivityIndicator state={turnActivity ?? (isFailed ? 'failed' : 'unread')} /> : null;
   const timeSlot = showActivityDuration && !waitingOnUser
     ? <SessionActivityDuration sessionId={session.id} running={isStreaming} className="shrink-0 typography-micro" />
     : null;

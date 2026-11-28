@@ -878,6 +878,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.export.dialog.confirm': '导出',
   'sessions.sidebar.session.status.active': '会话活跃中',
   'sessions.sidebar.session.status.unread': '有未读更新',
+  'sessions.sidebar.session.status.failed': '上一轮失败',
   'sessions.sidebar.session.status.backgroundSubagent': '子智能体正在后台运行',
   'sessions.sidebar.session.status.backgroundCommand': '命令正在后台运行',
   'sessions.sidebar.session.status.backgroundImage': '图片正在后台生成',

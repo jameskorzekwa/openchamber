@@ -7,6 +7,7 @@ export type SessionActivityPhase = 'active' | 'settled';
 
 export type SessionOrderingMutation =
   | { type: 'observe'; sessionId: string; phase: SessionActivityPhase }
+  | { type: 'promote'; sessionId: string }
   | { type: 'remove'; sessionId: string };
 
 type SessionOrderingState = {
@@ -48,6 +49,14 @@ export const promoteRestoredSessionOrdering = (sessionId: string): void => {
   promoteSessions([sessionId]);
 };
 
+export const promoteSessionAttentionOrdering = (sessionIds: Iterable<string>): void => {
+  const mutations: SessionOrderingMutation[] = [];
+  for (const sessionId of sessionIds) {
+    if (sessionId) mutations.push({ type: 'promote', sessionId });
+  }
+  applySessionOrderingMutations(mutations);
+};
+
 export const observeSessionActivityEvent = (
   sessionId: string,
   phase: SessionActivityPhase,
@@ -70,6 +79,12 @@ export const applySessionOrderingMutations = (
         rankById ??= new Map(currentRanks);
         rankById.delete(mutation.sessionId);
       }
+      continue;
+    }
+
+    if (mutation.type === 'promote') {
+      rankById ??= new Map(currentRanks);
+      rankById.set(mutation.sessionId, nextRank());
       continue;
     }
 

@@ -13,6 +13,7 @@ export const createPreferenceActions: UIStoreSlice<
   | 'setSessionRecapEnabled'
   | 'setSessionSuggestionEnabled'
   | 'setSessionWorkEnabled'
+  | 'setSessionWorkAutoDoneDays'
   | 'setSessionReviewOfferEnabled'
   | 'setSessionGoalEnabled'
   | 'setSessionGoalChecker'
@@ -131,6 +132,11 @@ export const createPreferenceActions: UIStoreSlice<
 
   setSessionWorkEnabled: (value) => {
     set({ sessionWorkEnabled: value });
+  },
+
+  setSessionWorkAutoDoneDays: (days) => {
+    const normalized = Number.isFinite(days) ? Math.max(0, Math.min(365, Math.round(days))) : 0;
+    set({ sessionWorkAutoDoneDays: normalized });
   },
 
   setSessionReviewOfferEnabled: (value) => {

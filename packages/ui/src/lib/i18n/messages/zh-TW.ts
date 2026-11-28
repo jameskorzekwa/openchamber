@@ -898,6 +898,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.export.dialog.confirm': '匯出',
   'sessions.sidebar.session.status.active': '會話活躍中',
   'sessions.sidebar.session.status.unread': '有未讀更新',
+  'sessions.sidebar.session.status.failed': '上一輪失敗',
   'sessions.sidebar.session.status.backgroundSubagent': '子代理程式正在背景執行',
   'sessions.sidebar.session.status.backgroundCommand': '指令正在背景執行',
   'sessions.sidebar.session.status.backgroundImage': '圖片正在背景產生',

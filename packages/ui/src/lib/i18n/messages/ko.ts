@@ -878,6 +878,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.export.dialog.confirm': '내보내기',
   'sessions.sidebar.session.status.active': '활성 세션',
   'sessions.sidebar.session.status.unread': '읽지 않은 업데이트',
+  'sessions.sidebar.session.status.failed': '마지막 턴 실패',
   'sessions.sidebar.session.status.backgroundSubagent': '하위 에이전트가 백그라운드에서 실행 중',
   'sessions.sidebar.session.status.backgroundCommand': '명령이 백그라운드에서 실행 중',
   'sessions.sidebar.session.status.backgroundImage': '백그라운드에서 이미지 생성 중',

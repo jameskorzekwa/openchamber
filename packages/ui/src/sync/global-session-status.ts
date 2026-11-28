@@ -84,6 +84,17 @@ const forEachAncestorId = (sessionId: string, visit: (ancestorId: string) => voi
   }
 };
 
+export const collectSessionAndAncestorIds = (
+  sessionId: string,
+  resolveParentId: SessionParentResolver = resolveSessionParentId,
+): string[] => {
+  const ids = [sessionId];
+  forEachAncestorId(sessionId, (ancestorId) => {
+    ids.push(ancestorId);
+  }, resolveParentId);
+  return ids;
+};
+
 const hasDescendantIn = (
   sessionId: string,
   candidateIds: Iterable<string>,
@@ -471,6 +482,11 @@ export const applyGlobalSessionStatusEvents = (directory: string, payloads: read
       if (sessionID) {
         observe(sessionID, payload.type === 'session.error' ? 'failed' : 'completed');
         settle(sessionID);
+        if (payload.type === 'session.error') {
+          for (const id of collectSessionAndAncestorIds(sessionID)) {
+            orderingMutations.push({ type: 'promote', sessionId: id });
+          }
+        }
       }
       continue;
     }

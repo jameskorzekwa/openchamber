@@ -6,6 +6,8 @@ import { Spinner } from '@/components/ui/spinner';
 import { ContextMenuItem } from '@/components/ui/context-menu';
 import { ACTIVITY_TITLE_KEY, isBuiltinActivityKey } from '@/components/session/sidebar/sessionSidebarActivityLabels';
 import type { SessionSidebarRow } from '@/components/session/sidebar/sessionSidebarRowModel';
+import { CollapsedSessionActivityIndicator } from '@/components/session/sidebar/sessions/collapsedActivityIndicator';
+import { collectGroupActivityNodes } from '@/components/session/sidebar/sessions/collapsedActivityState';
 import { FileTreeChevron } from '@/components/views/files/FileTreeRowParts';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
@@ -31,8 +33,9 @@ const putAwayRevealed = (): boolean => {
 const MobileCaption: React.FC<{
   label: string;
   collapsed: boolean;
+  statusIndicator?: React.ReactNode;
   onToggle: () => void;
-}> = ({ label, collapsed, onToggle }) => {
+}> = ({ label, collapsed, statusIndicator = null, onToggle }) => {
   const { t } = useI18n();
   return (
     <button
@@ -47,6 +50,7 @@ const MobileCaption: React.FC<{
     >
       <span className="min-w-0 truncate typography-ui-label font-medium text-muted-foreground">{label}</span>
       <Icon name={collapsed ? 'arrow-right-s' : 'arrow-down-s'} className="size-4 shrink-0 text-muted-foreground" />
+      {statusIndicator ? <span className="ms-0.5 inline-flex shrink-0 items-center">{statusIndicator}</span> : null}
     </button>
   );
 };
@@ -56,7 +60,10 @@ export const MobileZoneHeader: React.FC<{
   onToggle: () => void;
 }> = ({ row, onToggle }) => {
   const { t } = useI18n();
-  return <MobileCaption label={row.label ?? (isBuiltinActivityKey(row.activityKey) ? t(ACTIVITY_TITLE_KEY[row.activityKey]) : '')} collapsed={row.collapsed} onToggle={onToggle} />;
+  const statusIndicator = row.collapsed && row.collapsedNodes && row.collapsedNodes.length > 0
+    ? <CollapsedSessionActivityIndicator nodes={row.collapsedNodes} />
+    : null;
+  return <MobileCaption label={row.label ?? (isBuiltinActivityKey(row.activityKey) ? t(ACTIVITY_TITLE_KEY[row.activityKey]) : '')} collapsed={row.collapsed} statusIndicator={statusIndicator} onToggle={onToggle} />;
 };
 
 export const MobileProjectsCaption: React.FC<{
@@ -64,7 +71,10 @@ export const MobileProjectsCaption: React.FC<{
   onToggle: () => void;
 }> = ({ row, onToggle }) => {
   const { t } = useI18n();
-  return <MobileCaption label={row.label ?? t('sessions.sidebar.activity.projectsTitle')} collapsed={row.collapsed} onToggle={onToggle} />;
+  const statusIndicator = row.collapsed && row.collapsedNodes && row.collapsedNodes.length > 0
+    ? <CollapsedSessionActivityIndicator nodes={row.collapsedNodes} />
+    : null;
+  return <MobileCaption label={row.label ?? t('sessions.sidebar.activity.projectsTitle')} collapsed={row.collapsed} statusIndicator={statusIndicator} onToggle={onToggle} />;
 };
 
 const HeaderIconButton: React.FC<{ icon: 'add' | 'git-branch'; label: string; onClick: () => void }> = ({ icon, label, onClick }) => (
@@ -144,6 +154,9 @@ export const MobileProjectHeader: React.FC<{
         >
           <MobileProjectIcon project={project} size="xs" />
           <span className="block min-w-0 flex-1 truncate ps-1 typography-ui-label font-medium text-foreground">{label}</span>
+          {row.collapsed ? (
+            <CollapsedSessionActivityIndicator nodes={collectGroupActivityNodes(row.section.groups)} />
+          ) : null}
         </button>
         {isRepo ? <HeaderIconButton icon="git-branch" label={t('sessions.sidebar.project.actions.newWorktree')} onClick={() => actions.openNewWorktree(project.id)} /> : null}
         <MobileRowMenu menu={<>

@@ -48,9 +48,10 @@ export const SessionSidebarActivityHeader: React.FC<{
   loading?: boolean;
   collapsed: boolean;
   alwaysShowActions: boolean;
+  statusIndicator?: React.ReactNode;
   onToggle: () => void;
   onNewChat: () => void;
-}> = ({ activityKey, label, preview = false, loading = false, collapsed, alwaysShowActions, onToggle, onNewChat }) => {
+}> = ({ activityKey, label, preview = false, loading = false, collapsed, alwaysShowActions, statusIndicator = null, onToggle, onNewChat }) => {
   const { t } = useI18n();
   const chats = activityKey === 'chats';
   const timeline = activityKey === 'timeline';
@@ -73,6 +74,7 @@ export const SessionSidebarActivityHeader: React.FC<{
           collapsed || alwaysShowActions ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100',
         )}
       />
+      {statusIndicator ? <span className="ms-0.5 inline-flex shrink-0 items-center">{statusIndicator}</span> : null}
       {loading ? <Spinner className="size-3 text-muted-foreground" aria-label={t('sessions.sidebar.group.empty.loadingSessions')} /> : null}
     </button>
     {chats ? <button
@@ -93,8 +95,9 @@ export const SessionSidebarCaption: React.FC<{
   collapsed: boolean;
   alwaysShowActions: boolean;
   addsProjects: boolean;
+  statusIndicator?: React.ReactNode;
   onToggle: () => void;
-}> = ({ label, preview = false, collapsed, alwaysShowActions, addsProjects, onToggle }) => {
+}> = ({ label, preview = false, collapsed, alwaysShowActions, addsProjects, statusIndicator = null, onToggle }) => {
   const { t } = useI18n();
   return <div className="relative -ms-2.5 -me-2">
     <button
@@ -115,6 +118,7 @@ export const SessionSidebarCaption: React.FC<{
           collapsed || alwaysShowActions ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100',
         )}
       />
+      {statusIndicator ? <span className="ms-0.5 inline-flex shrink-0 items-center">{statusIndicator}</span> : null}
     </button>
     {addsProjects ? <AddProjectButton /> : null}
   </div>;

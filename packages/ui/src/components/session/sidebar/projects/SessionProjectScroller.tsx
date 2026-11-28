@@ -1,5 +1,6 @@
 import React from 'react';
 import { CollapsedSessionActivityIndicator } from '../sessions/collapsedActivityIndicator';
+import { collectGroupActivityNodes } from '../sessions/collapsedActivityState';
 import {
   DndContext,
   DragOverlay,
@@ -352,6 +353,9 @@ function SessionProjectScrollerComponent({ model, view, actions }: SessionProjec
           loading={row.loading === true}
           collapsed={row.collapsed}
           alwaysShowActions={view.alwaysShowActions}
+          statusIndicator={row.collapsed && row.collapsedNodes && row.collapsedNodes.length > 0
+            ? <CollapsedSessionActivityIndicator nodes={row.collapsedNodes} />
+            : null}
           onToggle={() => toggleActivityZone(row, { model, actions })}
           onNewChat={() => {
             useUIStore.getState().closeMainSurfaces();
@@ -377,7 +381,10 @@ function SessionProjectScrollerComponent({ model, view, actions }: SessionProjec
         isCollapsed={row.collapsed} isRepo={Boolean(model.projectRepoStatus.get(project.id))}
         hideDirectoryControls={view.hideDirectoryControls}
         mobileVariant={view.mobileVariant} alwaysShowActions={view.alwaysShowActions}
-        statusIndicator={row.collapsed ? actions.renderProjectStatusIndicator?.(project.id, row.section.groups) : null}
+        statusIndicator={row.collapsed
+          ? (actions.renderProjectStatusIndicator?.(project.id, row.section.groups)
+            ?? <CollapsedSessionActivityIndicator nodes={collectGroupActivityNodes(row.section.groups)} />)
+          : null}
         openSidebarMenuKey={model.state.openSidebarMenuKey} setOpenSidebarMenuKey={model.state.setOpenSidebarMenuKey}
         projectPickerOptions={model.singleProjectMode ? projectPickerOptions : undefined}
         onProjectSelect={model.singleProjectMode ? actions.setSingleProjectId : undefined}
@@ -567,6 +574,9 @@ function SessionProjectScrollerComponent({ model, view, actions }: SessionProjec
         collapsed={row.collapsed}
         alwaysShowActions={view.alwaysShowActions}
         addsProjects={row.caption === 'projects'}
+        statusIndicator={row.collapsed && row.collapsedNodes && row.collapsedNodes.length > 0
+          ? <CollapsedSessionActivityIndicator nodes={row.collapsedNodes} />
+          : null}
         onToggle={() => toggleProjectsCaption(row, { model })}
       />);
     }

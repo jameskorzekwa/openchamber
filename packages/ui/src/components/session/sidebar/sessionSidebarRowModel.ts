@@ -20,6 +20,7 @@ import type { SidebarSessionLocation } from './recent/sessionLocation';
 import { SIDEBAR_SESSION_BATCH_DEFAULT } from '@/lib/sidebarSections';
 import { splitTimelineDays, type TimelineActivity, type TimelineDay } from './timelineDates';
 import { gatherRunMembers } from './sessionSidebarZoneRuns';
+import { collectGroupActivityNodes, collectWorkEntryActivityNodes } from './sessions/collapsedActivityState';
 
 export type SessionSidebarActivityItem = {
   node: SessionNode;
@@ -74,9 +75,9 @@ export type SessionSidebarOwnerAuthority = {
 type RowBase = { key: string; estimateSize: number; treeGuides?: readonly SessionTreeGuide[] };
 
 export type SessionSidebarRow =
-  | (RowBase & { kind: 'activity-header'; activityKey: SessionSidebarActivityKey; collapsed: boolean; label?: string; preview?: boolean; loading?: boolean })
+  | (RowBase & { kind: 'activity-header'; activityKey: SessionSidebarActivityKey; collapsed: boolean; label?: string; preview?: boolean; loading?: boolean; collapsedNodes?: readonly SessionNode[] })
   | (RowBase & { kind: 'project-header'; section: ProjectSection; collapsed: boolean })
-  | (RowBase & { kind: 'caption'; caption: 'projects' | `section:${string}`; collapsed: boolean; label?: string; preview?: boolean })
+  | (RowBase & { kind: 'caption'; caption: 'projects' | `section:${string}`; collapsed: boolean; label?: string; preview?: boolean; collapsedNodes?: readonly SessionNode[] })
   | (RowBase & { kind: 'date-header'; day: TimelineDay | null; detailed: boolean })
   | (RowBase & { kind: 'group-header'; group: SessionGroup; groupKey: string; projectId: string | null; collapsed: boolean; empty: boolean; allSessions: readonly Session[]; depth: number; mixed: boolean; detailed: boolean })
   | (RowBase & { kind: 'folder-header'; depth: number; group: SessionGroup; folder: SessionFolder; displayName: string; scopeKey: string; scopeDirectory: string | null; ownerKey: string | null; nodes: readonly SessionNode[]; activityNodes: readonly SessionNode[]; projectId: string | null; archived: boolean; collapsed: boolean; empty: boolean; deleteSessions: readonly Session[]; subFolderCount: number; memberCount: number; dropEnabled: boolean; mixed: boolean })
@@ -808,10 +809,10 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
     }
   };
 
-  const appendActivityHeader = (activityKey: SessionSidebarActivityKey, named?: { label: string; preview: boolean }, loading?: boolean): boolean => {
+  const appendActivityHeader = (activityKey: SessionSidebarActivityKey, named?: { label: string; preview: boolean }, loading?: boolean, getCollapsedNodes?: () => readonly SessionNode[]): boolean => {
     const collapsed = args.collapsedActivities.has(activityKey);
     const rowIndex = rows.length;
-    push({ kind: 'activity-header', key: `activity:${activityKey}:header`, estimateSize: SECTION_HEADER_ESTIMATE, activityKey, collapsed, loading, ...named });
+    push({ kind: 'activity-header', key: `activity:${activityKey}:header`, estimateSize: SECTION_HEADER_ESTIMATE, activityKey, collapsed, loading, collapsedNodes: collapsed && getCollapsedNodes ? getCollapsedNodes() : undefined, ...named });
     stickyHeaders.push(Object.freeze({ rowIndex, kind: 'activity', id: activityKey }));
     return collapsed;
   };
@@ -882,10 +883,11 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
 
   const appendChats = (): void => {
     if (!args.chatGroup) return;
-    const chatsLoading = args.chatGroup.sessions.length === 0 && args.groupStatusByKey.get('activity:chats')?.state === 'loading';
-    const collapsed = appendActivityHeader('chats', undefined, chatsLoading);
+    const chatGroup = args.chatGroup;
+    const chatsLoading = chatGroup.sessions.length === 0 && args.groupStatusByKey.get('activity:chats')?.state === 'loading';
+    const collapsed = appendActivityHeader('chats', undefined, chatsLoading, () => chatGroup.sessions);
     if (collapsed) return;
-    appendGroup(args.chatGroup, 'activity:chats', null, true, {
+    appendGroup(chatGroup, 'activity:chats', null, true, {
       initial: CHATS_INITIAL_LIMIT, increment: CHATS_INCREMENT, pinnedAlwaysVisible: true,
       renderContext: 'tree-chat', loadingInHeader: true,
     });
@@ -982,23 +984,20 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
     const pinnedItems = args.pinnedItems ?? [];
     const pinnedWorktrees = args.pinnedWorktrees ?? [];
     if (pinnedItems.length === 0 && pinnedWorktrees.length === 0) return;
-    const collapsed = appendActivityHeader('pinned');
-    if (collapsed) return;
     const entries: readonly SessionSidebarWorkEntry[] = [...pinnedItems.map((item) => ({ kind: 'session' as const, item })), ...pinnedWorktrees];
+    if (appendActivityHeader('pinned', undefined, undefined, () => collectWorkEntryActivityNodes(entries))) return;
     appendWorkEntries(entries, PINNED_ZONE_KEY, PINNED_ZONE_KEY, true);
   };
   const appendWork = (): void => {
     const workEntries = args.workEntries ?? [];
     if (workEntries.length === 0) return;
-    const collapsed = appendActivityHeader('work');
-    if (!collapsed) appendWorkEntries(workEntries, 'activity:work', 'activity:work');
+    if (!appendActivityHeader('work', undefined, undefined, () => collectWorkEntryActivityNodes(workEntries))) appendWorkEntries(workEntries, 'activity:work', 'activity:work');
   };
   const appendCustom = (block: Extract<SessionSidebarBlock, { kind: 'custom' }>): void => {
     const entries = block.entries;
     if (entries.length === 0 && block.hideWhenEmpty && !block.preview) return;
     const activityKey = sidebarSectionActivityKey(block.id);
-    const collapsed = appendActivityHeader(activityKey, { label: block.name, preview: block.preview });
-    if (collapsed) return;
+    if (appendActivityHeader(activityKey, { label: block.name, preview: block.preview }, undefined, () => collectWorkEntryActivityNodes(entries))) return;
     if (entries.length === 0) {
       push({ kind: 'empty', key: `activity:${activityKey}:empty`, estimateSize: STATUS_ESTIMATE, emptyKind: 'section' });
       return;
@@ -1040,7 +1039,7 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
     if (!captionHidden && sections.length > 0) {
       const collapseKey = caption.key === 'projects' ? PROJECTS_CAPTION_COLLAPSE_KEY : caption.key;
       const captionCollapsed = args.collapsedActivities.has(collapseKey);
-      push({ kind: 'caption', key: `caption:${caption.key}`, estimateSize: SECTION_HEADER_ESTIMATE, caption: caption.key, collapsed: captionCollapsed, label: caption.label, preview: caption.preview });
+      push({ kind: 'caption', key: `caption:${caption.key}`, estimateSize: SECTION_HEADER_ESTIMATE, caption: caption.key, collapsed: captionCollapsed, label: caption.label, preview: caption.preview, collapsedNodes: captionCollapsed ? projectSections.flatMap((section) => collectGroupActivityNodes(section.groups)) : undefined });
       if (captionCollapsed) return;
     }
     for (const section of projectSections) {
@@ -1088,7 +1087,7 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
         return hasFolders ? [{ section, rootGroup }] : [];
       });
       if (entries.length > 0 || foldered.length > 0) {
-        const collapsed = appendActivityHeader('timeline');
+        const collapsed = appendActivityHeader('timeline', undefined, undefined, () => [...collectWorkEntryActivityNodes(entries), ...foldered.flatMap(({ rootGroup }) => rootGroup.sessions)]);
         if (!collapsed) {
           for (const { section, rootGroup } of foldered) {
             const filedWorktrees = collectFiledWorktrees(buildGroupRenderDescriptors(section, { mainWorkspaceOnly: false }));

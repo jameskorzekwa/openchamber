@@ -14,6 +14,7 @@ import {
   runSessionRetentionCleanup,
   useSessionRetentionRunStore,
 } from '@/sync/session-retention';
+import { isSessionWorkAutoDoneDue, runSessionWorkAutoDone } from '@/sync/session-work-auto-done';
 import { useUIStore } from '@/stores/useUIStore';
 import { useSessionPinnedStore } from '@/stores/useSessionPinnedStore';
 
@@ -35,7 +36,10 @@ export const useSessionAutoCleanup = ({ autoRun = true, enabled = true }: Cleanu
   const onlyArchived = useUIStore((state) => state.sessionRetentionOnlyArchived);
   const action = useUIStore((state) => state.sessionRetentionOnlyArchived ? 'delete' : state.sessionRetentionAction);
   const autoDeleteLastRunAt = useUIStore((state) => state.autoDeleteLastRunAt);
-  const needsGlobalSessions = enabled && (!autoRun || autoDeleteEnabled);
+  const sessionWorkEnabled = useUIStore((state) => state.sessionWorkEnabled);
+  const sessionWorkAutoDoneDays = useUIStore((state) => state.sessionWorkAutoDoneDays);
+  const workAutoDoneActive = sessionWorkEnabled && sessionWorkAutoDoneDays > 0;
+  const needsGlobalSessions = enabled && (!autoRun || autoDeleteEnabled || workAutoDoneActive);
   const activeSessions = useGlobalSessionsStore((state) => needsGlobalSessions ? state.activeSessions : EMPTY_SESSIONS);
   const archivedSessions = useGlobalSessionsStore((state) => needsGlobalSessions ? state.archivedSessions : EMPTY_SESSIONS);
   const status = useGlobalSessionsStore((state) => state.status);
@@ -53,7 +57,9 @@ export const useSessionAutoCleanup = ({ autoRun = true, enabled = true }: Cleanu
       if (document.visibilityState === 'hidden') return;
       lastActivityAtRef.current = Date.now();
       const settings = useUIStore.getState();
-      if (settings.autoDeleteEnabled && isRunDue(settings.autoDeleteLastRunAt)) setActivityTick((tick) => tick + 1);
+      const retentionDue = settings.autoDeleteEnabled && isRunDue(settings.autoDeleteLastRunAt);
+      const workAutoDoneDue = settings.sessionWorkEnabled && settings.sessionWorkAutoDoneDays > 0 && isSessionWorkAutoDoneDue();
+      if (retentionDue || workAutoDoneDue) setActivityTick((tick) => tick + 1);
     };
     for (const type of ACTIVITY_EVENTS) window.addEventListener(type, onActivity, true);
     return () => {
@@ -63,9 +69,9 @@ export const useSessionAutoCleanup = ({ autoRun = true, enabled = true }: Cleanu
 
   React.useEffect(() => {
     if (!needsGlobalSessions) return;
-    if (autoRun && !isRunDue(autoDeleteLastRunAt)) return;
+    if (autoRun && !isRunDue(autoDeleteLastRunAt) && !(workAutoDoneActive && isSessionWorkAutoDoneDue())) return;
     void ensureGlobalSessionsLoaded();
-  }, [needsGlobalSessions, autoRun, autoDeleteLastRunAt, activityTick]);
+  }, [needsGlobalSessions, autoRun, autoDeleteLastRunAt, workAutoDoneActive, activityTick]);
 
   const candidates = React.useMemo(() => {
     const now = Date.now();
@@ -93,6 +99,14 @@ export const useSessionAutoCleanup = ({ autoRun = true, enabled = true }: Cleanu
       console.error('[SessionRetention] Cleanup failed', error);
     });
   }, [enabled, autoRun, autoDeleteEnabled, autoDeleteAfterDays, isLoading, status, isRunning, autoDeleteLastRunAt, activityTick]);
+
+  React.useEffect(() => {
+    if (!enabled || !autoRun || !workAutoDoneActive || isLoading || status !== 'ready') return;
+    if (!isSessionWorkAutoDoneDue() || Date.now() - lastActivityAtRef.current > ACTIVE_USE_WINDOW_MS) return;
+    void runSessionWorkAutoDone().catch((error) => {
+      console.error('[SessionWorkAutoDone] Auto-close failed', error);
+    });
+  }, [enabled, autoRun, workAutoDoneActive, sessionWorkAutoDoneDays, isLoading, status, activityTick]);
 
   return {
     candidates,

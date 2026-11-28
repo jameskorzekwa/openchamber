@@ -537,6 +537,7 @@ export const SETTINGS_REGISTRY = {
   sessionRecapEnabled: field({ scope: 'profile', parse: parseBoolean, ui: uiStore('sessionRecapEnabled', (v) => useUIStore.getState().setSessionRecapEnabled(v)) }),
   sessionSuggestionEnabled: field({ scope: 'profile', parse: parseBoolean, ui: uiStore('sessionSuggestionEnabled', (v) => useUIStore.getState().setSessionSuggestionEnabled(v)) }),
   sessionWorkEnabled: field({ scope: 'profile', parse: parseBoolean, ui: uiStore('sessionWorkEnabled', (v) => useUIStore.getState().setSessionWorkEnabled(v)) }),
+  sessionWorkAutoDoneDays: field({ scope: 'profile', parse: fromSchema(z.number().int().min(0).max(365)), ui: uiStore('sessionWorkAutoDoneDays', (v) => useUIStore.getState().setSessionWorkAutoDoneDays(v)) }),
   sessionReviewOfferEnabled: field({ scope: 'profile', surfaces: ['web', 'desktop', 'mobile'], parse: parseBoolean, ui: uiStore('sessionReviewOfferEnabled', (v) => useUIStore.getState().setSessionReviewOfferEnabled(v)) }),
   sessionGoalEnabled: field({ scope: 'profile', parse: parseBoolean, ui: uiStore('sessionGoalEnabled', (v) => useUIStore.getState().setSessionGoalEnabled(v)) }),
   sessionGoalChecker: field({

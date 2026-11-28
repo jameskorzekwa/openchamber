@@ -882,6 +882,7 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.session.export.dialog.confirm": "Експортувати",
   "sessions.sidebar.session.status.active": "Сесія активна",
   "sessions.sidebar.session.status.unread": "Непрочитані оновлення",
+  'sessions.sidebar.session.status.failed': 'Останній хід завершився помилкою',
   "sessions.sidebar.session.status.backgroundSubagent": "Субагент працює у фоні",
   "sessions.sidebar.session.status.backgroundCommand": "Команда працює у фоні",
   "sessions.sidebar.session.status.backgroundImage": "Картинка генерується у фоні",

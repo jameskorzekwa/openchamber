@@ -46,14 +46,16 @@ export function useSessionRowLiveState({
   } = useSessionBlockingRequests(blockingBadgeSessionScopes);
   const needsAttention = useSessionUnread(session.id);
   const markedUnread = useSessionMarkedUnread(session.id);
+  const isFailed = !isSessionActionPending && !isStreaming && session.outcome === 'failed';
   const showUnreadStatus = !isSessionActionPending && !isStreaming && needsAttention && (!isActive || markedUnread);
-  const showStatusMarker = isStreaming || showUnreadStatus;
+  const showStatusMarker = isStreaming || isFailed || showUnreadStatus;
   const showActivityDuration = (isStreaming || showUnreadStatus) && hasActivityDuration;
   const waitingOnUser = hasPendingPermission || hasPendingForm;
   return {
     isZombie,
     turnActivity,
     isStreaming,
+    isFailed,
     isAiRenaming,
     isSessionActionPending,
     hasPendingPermission,

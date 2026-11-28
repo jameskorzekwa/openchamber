@@ -4,6 +4,8 @@ import { normalizeProjectPath } from '@/lib/projectResolution';
 import type { FormRequest, PermissionRequest } from '@/lib/opencode/model';
 import type { HostSessionStatusSnapshot } from '@/lib/opencode/session-status';
 import { isSpaceDirectory } from '@/lib/spaces/space-route';
+import { collectSessionAndAncestorIds } from './global-session-status';
+import { promoteSessionAttentionOrdering } from './session-ordering';
 
 export type BlockingPermissionRequest = Pick<PermissionRequest, 'id' | 'sessionID' | 'action' | 'resources' | 'save'>;
 export type BlockingFormRequest = Pick<FormRequest, 'id' | 'sessionID' | 'title'>;
@@ -25,6 +27,9 @@ type WaitingPageEvent = Extract<SyncEvent, { type: 'openchamber.page-waiting' | 
 const settledByRead = new Set<string>();
 const settledKey = (kind: 'permissions' | 'forms', sessionId: string, requestId: string): string => `${kind}:${sessionId}:${requestId}`;
 const pageSnapshotObservers = new Set<(event: WaitingPageEvent) => void>();
+let hostPendingSnapshotObserved = false;
+
+export const hasHostBlockingSnapshot = (): boolean => hostPendingSnapshotObserved;
 
 const recordWaitingPageEvent = (event: WaitingPageEvent): void => {
   for (const observer of pageSnapshotObservers) observer(event);
@@ -60,6 +65,7 @@ export const settledPageKeys = (
 export const resetGlobalBlockingRequests = (): void => {
   pageSnapshotObservers.clear();
   settledByRead.clear();
+  hostPendingSnapshotObserved = false;
   useGlobalBlockingRequestsStore.setState({ bySession: new Map() });
 };
 
@@ -107,18 +113,25 @@ class Reducer {
     else this.draft.set(sessionId, entry);
   }
 
-  ask(directory: string, sessionId: string, request: BlockingRequest): void {
+  ask(directory: string, sessionId: string, request: BlockingRequest): boolean {
     const existing = this.current(sessionId) ?? { directory, permissions: EMPTY, forms: EMPTY, pages: EMPTY };
+    const existingList = request.kind === 'permission'
+      ? existing.permissions
+      : request.kind === 'form'
+        ? existing.forms
+        : existing.pages;
+    const isNew = !existingList.some((entry) => entry.id === request.request.id);
     const permissions = request.kind === 'permission' ? upsertRequest(existing.permissions, request.request) : null;
     const forms = request.kind === 'form' ? upsertRequest(existing.forms, request.request) : null;
     const pages = request.kind === 'page' ? upsertRequest(existing.pages, request.request) : null;
-    if (!permissions && !forms && !pages && existing.directory === directory) return;
+    if (!permissions && !forms && !pages && existing.directory === directory) return false;
     this.write(sessionId, {
       directory,
       permissions: permissions ?? existing.permissions,
       forms: forms ?? existing.forms,
       pages: pages ?? existing.pages,
     });
+    return isNew;
   }
 
   settle(kind: 'permissions' | 'forms' | 'pages', sessionId: string, requestId: string | undefined): void {
@@ -143,17 +156,29 @@ export const applyGlobalBlockingRequestEvents = (rawDirectory: string, payloads:
   if (payloads.length === 0) return;
   const directory = normalizeDirectory(rawDirectory);
   const reducer = new Reducer(useGlobalBlockingRequestsStore.getState());
+  const promotedIds = new Set<string>();
+
+  const promote = (sessionId: string): void => {
+    for (const id of collectSessionAndAncestorIds(sessionId)) {
+      promotedIds.delete(id);
+      promotedIds.add(id);
+    }
+  };
 
   for (const payload of payloads) {
     switch (payload.type) {
       case 'permission.asked': {
         const request = payload.properties;
-        if (request.sessionID && request.id) reducer.ask(directory, request.sessionID, { kind: 'permission', request: toBlockingPermission(request) });
+        if (request.sessionID && request.id && reducer.ask(directory, request.sessionID, { kind: 'permission', request: toBlockingPermission(request) })) {
+          promote(request.sessionID);
+        }
         continue;
       }
       case 'form.created': {
         const { form } = payload.properties;
-        if (form.sessionID && form.id) reducer.ask(directory, form.sessionID, { kind: 'form', request: toBlockingForm(form) });
+        if (form.sessionID && form.id && reducer.ask(directory, form.sessionID, { kind: 'form', request: toBlockingForm(form) })) {
+          promote(form.sessionID);
+        }
         continue;
       }
       case 'permission.replied': {
@@ -178,6 +203,7 @@ export const applyGlobalBlockingRequestEvents = (rawDirectory: string, payloads:
   }
 
   reducer.publish();
+  if (promotedIds.size > 0) promoteSessionAttentionOrdering(promotedIds);
 };
 
 export const indexedBlockingRequestDirectories = (): Set<string> => new Set(
@@ -220,15 +246,19 @@ export const applyWaitingPageEvent = (
 ): void => {
   recordWaitingPageEvent(event);
   const reducer = new Reducer(useGlobalBlockingRequestsStore.getState());
+  let promotedIds: string[] = [];
   if (event.type === 'openchamber.page-settled') {
     reducer.settle('pages', event.properties.sessionID, event.properties.pageID);
   } else {
     const { sessionID, page } = event.properties;
     const directory = event.properties.directory ?? resolveDirectory(sessionID);
     if (!directory) return;
-    reducer.ask(normalizeDirectory(directory), sessionID, { kind: 'page', request: { id: page.id, sessionID, title: page.title } });
+    if (reducer.ask(normalizeDirectory(directory), sessionID, { kind: 'page', request: { id: page.id, sessionID, title: page.title } })) {
+      promotedIds = collectSessionAndAncestorIds(sessionID);
+    }
   }
   reducer.publish();
+  if (promotedIds.length > 0) promoteSessionAttentionOrdering(promotedIds);
 };
 
 export const readHostBlockingRequestsSnapshot = async (
@@ -275,6 +305,7 @@ export const readHostBlockingRequestsSnapshot = async (
       reducer.write(sessionId, { directory: normalizeDirectory(directory), permissions, forms, pages });
     }
     reducer.publish();
+    hostPendingSnapshotObserved = true;
     return snapshot;
   } finally {
     pageSnapshotObservers.delete(observe);

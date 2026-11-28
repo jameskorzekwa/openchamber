@@ -1,6 +1,6 @@
 import React from 'react';
-import type { SessionNode } from '../types';
-import { anySessionOrDescendantIn, useGlobalSessionStatusStore } from '@/sync/global-session-status';
+import type { SessionGroup, SessionNode } from '../types';
+import { anySessionOrDescendantIn, collectOpenTurnSessionIds, useGlobalSessionStatusStore } from '@/sync/global-session-status';
 import { useGlobalBlockingRequestsStore } from '@/sync/global-blocking-requests';
 import { useBackgroundShellsStore } from '@/sync/background-shells';
 import { useBackgroundImagesStore } from '@/sync/background-images';
@@ -10,7 +10,31 @@ import { useExtensionWaitsStore } from '@/sync/extension-waits';
 import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { isSessionUnread } from '@/sync/session-unread';
 
-export type CollapsedActivityState = 'permission' | 'form' | 'active' | 'unread' | null;
+export type CollapsedActivityState = 'permission' | 'form' | 'failed' | 'active' | 'unread' | null;
+
+const EMPTY_IDS: ReadonlySet<string> = new Set();
+const EMPTY_PR_WATCHES: ReturnType<typeof usePrWatchStore.getState>['bySession'] = new Map();
+const EMPTY_EXTENSION_WAITS: ReturnType<typeof useExtensionWaitsStore.getState>['bySession'] = new Map();
+
+export const collectGroupActivityNodes = (groups: readonly SessionGroup[]): SessionNode[] => {
+  const nodes: SessionNode[] = [];
+  for (const group of groups) {
+    if (group.isArchivedBucket) continue;
+    nodes.push(...group.sessions);
+  }
+  return nodes;
+};
+
+export const collectWorkEntryActivityNodes = (
+  entries: readonly ({ kind: 'session'; item: { node: SessionNode } } | { kind: 'group'; group: SessionGroup } | { kind: 'draft' })[],
+): SessionNode[] => {
+  const nodes: SessionNode[] = [];
+  for (const entry of entries) {
+    if (entry.kind === 'session') nodes.push(entry.item.node);
+    else if (entry.kind === 'group') nodes.push(...entry.group.sessions);
+  }
+  return nodes;
+};
 
 const mergeCollapsedActivityStates = (
   current: CollapsedActivityState,
@@ -85,31 +109,30 @@ export const useCollapsedSessionActivityState = ({
     () => (blockingSessionIds && blockingSessionIds.length > 0 ? new Set([...ids.active, ...blockingSessionIds]) : ids.active),
     [blockingSessionIds, ids.active],
   );
-  const active = useGlobalSessionStatusStore(React.useCallback((state): CollapsedActivityState => (
-    enabled && anySessionOrDescendantIn(ids.active, state.activeSessionIds) ? 'active' : null
-  ), [enabled, ids.active]));
-  const waitingOnWorkflow = useWorkflowActivityStore(React.useCallback((state): CollapsedActivityState => (
-    enabled && !active && anySessionOrDescendantIn(ids.active, state.runningSessionIds) ? 'active' : null
-  ), [active, enabled, ids.active]));
-  const waitingOnShell = useBackgroundShellsStore(React.useCallback((state): CollapsedActivityState => (
-    enabled && !active && !waitingOnWorkflow && anySessionOrDescendantIn(ids.active, state.sessionIds) ? 'active' : null
-  ), [active, enabled, ids.active, waitingOnWorkflow]));
-  const waitingOnImage = useBackgroundImagesStore(React.useCallback((state): CollapsedActivityState => (
-    enabled && !active && !waitingOnWorkflow && !waitingOnShell && anySessionOrDescendantIn(ids.active, state.sessionIds) ? 'active' : null
-  ), [active, enabled, ids.active, waitingOnShell, waitingOnWorkflow]));
-  const waitingOnPullRequest = usePrWatchStore(React.useCallback((state): CollapsedActivityState => (
-    enabled && !active && !waitingOnWorkflow && !waitingOnShell && !waitingOnImage && anySessionOrDescendantIn(ids.active, state.bySession) ? 'active' : null
-  ), [active, enabled, ids.active, waitingOnImage, waitingOnShell, waitingOnWorkflow]));
-  const waitingOnExtension = useExtensionWaitsStore(React.useCallback((state): CollapsedActivityState => (
-    enabled && !active && !waitingOnWorkflow && !waitingOnShell && !waitingOnImage && !waitingOnPullRequest && anySessionOrDescendantIn(ids.active, state.bySession) ? 'active' : null
-  ), [active, enabled, ids.active, waitingOnImage, waitingOnPullRequest, waitingOnShell, waitingOnWorkflow]));
-  const unread = useGlobalSessionsStore(React.useCallback((state): CollapsedActivityState => {
+  const activeIds = useGlobalSessionStatusStore((state) => (enabled ? state.activeSessionIds : EMPTY_IDS));
+  const workflowIds = useWorkflowActivityStore((state) => (enabled ? state.runningSessionIds : EMPTY_IDS));
+  const shellIds = useBackgroundShellsStore((state) => (enabled ? state.sessionIds : EMPTY_IDS));
+  const imageIds = useBackgroundImagesStore((state) => (enabled ? state.sessionIds : EMPTY_IDS));
+  const prWatches = usePrWatchStore((state) => (enabled ? state.bySession : EMPTY_PR_WATCHES));
+  const extensionWaits = useExtensionWaitsStore((state) => (enabled ? state.bySession : EMPTY_EXTENSION_WAITS));
+  const openTurnIds = React.useMemo(() => (
+    enabled
+      ? collectOpenTurnSessionIds(activeIds, [workflowIds, shellIds, imageIds, prWatches.keys(), extensionWaits.keys()])
+      : EMPTY_IDS
+  ), [activeIds, enabled, extensionWaits, imageIds, prWatches, shellIds, workflowIds]);
+  const running: CollapsedActivityState = React.useMemo(() => (
+    enabled && anySessionOrDescendantIn(ids.active, openTurnIds) ? 'active' : null
+  ), [enabled, ids.active, openTurnIds]);
+  const outcome = useGlobalSessionsStore(React.useCallback((state): CollapsedActivityState => {
     if (!enabled) return null;
+    let unread: CollapsedActivityState = null;
     for (const sessionId of ids.unread) {
-      if (isSessionUnread(state.entityById.get(sessionId))) return 'unread';
+      const session = state.entityById.get(sessionId);
+      if (session?.outcome === 'failed' && !openTurnIds.has(sessionId)) return 'failed';
+      if (isSessionUnread(session)) unread = 'unread';
     }
-    return null;
-  }, [enabled, ids.unread]));
+    return unread;
+  }, [enabled, ids.unread, openTurnIds]));
   const blocked = useGlobalBlockingRequestsStore(React.useCallback((state): CollapsedActivityState => {
     if (!enabled) return null;
     let result: CollapsedActivityState = null;
@@ -121,5 +144,5 @@ export const useCollapsedSessionActivityState = ({
     }
     return result;
   }, [enabled, blockingIds]));
-  return blocked ?? active ?? waitingOnWorkflow ?? waitingOnShell ?? waitingOnImage ?? waitingOnPullRequest ?? waitingOnExtension ?? unread;
+  return blocked ?? (outcome === 'failed' ? 'failed' : null) ?? running ?? outcome;
 };

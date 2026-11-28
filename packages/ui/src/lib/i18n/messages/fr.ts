@@ -714,6 +714,7 @@ export const dict = {
   'sessions.sidebar.session.export.dialog.confirm': 'Exporter',
   'sessions.sidebar.session.status.active': 'Session active',
   'sessions.sidebar.session.status.unread': 'Mises à jour non lues',
+  'sessions.sidebar.session.status.failed': 'Dernier tour échoué',
   'sessions.sidebar.session.status.backgroundSubagent': 'Sous-agent en cours en arrière-plan',
   'sessions.sidebar.session.status.backgroundCommand': 'Commande en cours en arrière-plan',
   'sessions.sidebar.session.status.backgroundImage': 'Image en cours de génération en arrière-plan',

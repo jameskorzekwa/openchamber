@@ -882,6 +882,7 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.session.export.dialog.confirm": "Exportar",
   "sessions.sidebar.session.status.active": "Sessão ativa",
   "sessions.sidebar.session.status.unread": "Atualizações não lidas",
+  'sessions.sidebar.session.status.failed': 'Último turno falhou',
   "sessions.sidebar.session.status.backgroundSubagent": "Subagente em execução em segundo plano",
   "sessions.sidebar.session.status.backgroundCommand": "Comando em execução em segundo plano",
   "sessions.sidebar.session.status.backgroundImage": "Imagem sendo gerada em segundo plano",

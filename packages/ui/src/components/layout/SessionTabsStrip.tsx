@@ -3,7 +3,8 @@ import { TooltipLabelWithShortcut } from '@/components/ui/action-toolbar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { scrollTabsWithWheel } from '@/components/ui/tab-strip-wheel';
 import { formatShortcutForDisplay, getEffectiveShortcutCombo, getEffectiveShortcutPrefix, UNASSIGNED_SHORTCUT } from '@/lib/shortcuts';
-import { useSessionTurnActivity } from '@/sync/global-session-status';
+import { collectSessionAndAncestorIds, useSessionTurnActivity } from '@/sync/global-session-status';
+import { useGlobalBlockingRequestsStore } from '@/sync/global-blocking-requests';
 import { SessionActivityIndicator } from '@/components/session/SessionActivityIndicator';
 import {
   DndContext,
@@ -93,10 +94,20 @@ const SessionTabItem: React.FC<{
   const isAiRenaming = useIsSessionAiRenamePending(tab.id, resolveGlobalSessionDirectory(tab.session));
   const turnActivity = useSessionTurnActivity(tab.id);
   const isStreaming = turnActivity !== null;
+  const isFailed = !isStreaming && tab.session.outcome === 'failed';
+  const pendingRequest = useGlobalBlockingRequestsStore(React.useCallback((state): 'permission' | 'form' | null => {
+    let result: 'permission' | 'form' | null = null;
+    for (const [sessionId, pending] of state.bySession) {
+      if (sessionId !== tab.id && !collectSessionAndAncestorIds(sessionId).includes(tab.id)) continue;
+      if (pending.permissions.length > 0) return 'permission';
+      if (pending.forms.length > 0 || pending.pages.length > 0) result = 'form';
+    }
+    return result;
+  }, [tab.id]));
   const isUnread = useSessionUnread(tab.id);
   const markedUnread = useSessionMarkedUnread(tab.id);
   const showUnread = isUnread && (!isActive || markedUnread) && !isStreaming;
-  const showDot = isStreaming || showUnread;
+  const showDot = isStreaming || isFailed || showUnread;
   const isLead = isLeadSession(tab.session);
 
   const menuArgs: SessionTabMenuArgs = {
@@ -204,8 +215,17 @@ const SessionTabItem: React.FC<{
                     </div>
                     {isAiRenaming ? (
                       <Icon name="loader-4" className="ms-1.5 size-3 shrink-0 animate-spin text-primary" aria-label={t('sessions.aiRename.generating')} />
+                    ) : pendingRequest ? (
+                      <span
+                        className="ms-1.5 inline-flex shrink-0 items-center text-status-warning"
+                        aria-label={t(pendingRequest === 'permission'
+                          ? 'sessions.sidebar.session.status.permissionRequired'
+                          : 'sessions.sidebar.session.status.questionPending')}
+                      >
+                        <Icon name={pendingRequest === 'permission' ? 'shield' : 'question'} className="size-3" />
+                      </span>
                     ) : showDot ? (
-                      <SessionActivityIndicator state={turnActivity ?? 'unread'} className="ms-1.5 shrink-0" />
+                      <SessionActivityIndicator state={turnActivity ?? (isFailed ? 'failed' : 'unread')} className="ms-1.5 shrink-0" />
                     ) : null}
                   </div>
                 </div>

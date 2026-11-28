@@ -789,6 +789,7 @@ export const dict = {
   'sessions.sidebar.session.export.dialog.confirm': 'ייצא',
   'sessions.sidebar.session.status.active': 'ההפעלה פעילה',
   'sessions.sidebar.session.status.unread': 'עדכונים שלא נקראו',
+  'sessions.sidebar.session.status.failed': 'התור האחרון נכשל',
   'sessions.sidebar.session.status.backgroundSubagent': 'סוכן משנה פועל ברקע',
   'sessions.sidebar.session.status.backgroundCommand': 'פקודה פועלת ברקע',
   'sessions.sidebar.session.status.backgroundImage': 'תמונה נוצרת ברקע',

@@ -878,6 +878,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.export.dialog.confirm': 'Eksportuj',
   'sessions.sidebar.session.status.active': 'Sesja aktywna',
   'sessions.sidebar.session.status.unread': 'Nieprzeczytane aktualizacje',
+  'sessions.sidebar.session.status.failed': 'Ostatnia tura nie powiodła się',
   'sessions.sidebar.session.status.backgroundSubagent': 'Subagent działa w tle',
   'sessions.sidebar.session.status.backgroundCommand': 'Polecenie działa w tle',
   'sessions.sidebar.session.status.backgroundImage': 'Obraz generuje się w tle',

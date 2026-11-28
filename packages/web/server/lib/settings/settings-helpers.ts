@@ -181,7 +181,7 @@ type ClearableStringSettingsKey =
 
 type NumberSettingsKey =
   | 'inputHistoryLimit' | 'sidebarSessionBatchSize' | 'liveBrowserTabLimit' | 'sessionGoalMaxAutoTurns'
-  | 'sessionGoalDefaultBudget' | 'sessionCostWarnThreshold' | 'sessionCostCriticalThreshold' | 'summaryThreshold' | 'summaryLength' | 'maxLastMessageLength' | 'autoDeleteAfterDays'
+  | 'sessionGoalDefaultBudget' | 'sessionCostWarnThreshold' | 'sessionCostCriticalThreshold' | 'sessionWorkAutoDoneDays' | 'summaryThreshold' | 'summaryLength' | 'maxLastMessageLength' | 'autoDeleteAfterDays'
   | 'tunnelSessionTtlMs' | 'tunnelHttpsPort' | 'fontSize' | 'chatFontSize' | 'terminalFontSize' | 'editorFontSize'
   | 'padding' | 'cornerRadius' | 'inputBarOffset';
 

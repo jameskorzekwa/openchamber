@@ -790,6 +790,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.export.dialog.confirm': 'تصدير',
   'sessions.sidebar.session.status.active': 'الجلسة نشطة',
   'sessions.sidebar.session.status.unread': 'تحديثات غير مقروءة',
+  'sessions.sidebar.session.status.failed': 'فشلت الجولة الأخيرة',
   'sessions.sidebar.session.status.backgroundSubagent': 'وكيل فرعي يعمل في الخلفية',
   'sessions.sidebar.session.status.backgroundCommand': 'أمر يعمل في الخلفية',
   'sessions.sidebar.session.status.backgroundImage': 'صورة قيد الإنشاء في الخلفية',

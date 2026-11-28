@@ -828,6 +828,9 @@
     "sessionWorkEnabled": {
       "scope": "profile"
     },
+    "sessionWorkAutoDoneDays": {
+      "scope": "profile"
+    },
     "sessionReviewOfferEnabled": {
       "scope": "profile",
       "surfaces": [

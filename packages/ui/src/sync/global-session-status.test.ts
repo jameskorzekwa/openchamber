@@ -138,7 +138,7 @@ describe("global session status index", () => {
     expect(useGlobalSessionStatusStore.getState().statusById.has("session-a")).toBe(false)
   })
 
-  test("promotes on active and settled lifecycle edges only", () => {
+  test("promotes on active, settled, and error lifecycle events", () => {
     applyGlobalSessionStatusEvent("/repo", {
       type: "session.status",
       properties: { sessionID: "session-a", status: { type: "busy" } },
@@ -159,10 +159,16 @@ describe("global session status index", () => {
     expect(idleRank).toBeGreaterThan(busyRank ?? 0)
 
     applyGlobalSessionStatusEvent("/repo", {
+      type: "session.idle",
+      properties: { sessionID: "session-a" },
+    })
+    expect(useSessionOrderingStore.getState().rankById.get("session-a")).toBe(idleRank)
+
+    applyGlobalSessionStatusEvent("/repo", {
       type: "session.error",
       properties: { sessionID: "session-a" },
     } as SyncEvent)
-    expect(useSessionOrderingStore.getState().rankById.get("session-a")).toBe(idleRank)
+    expect(useSessionOrderingStore.getState().rankById.get("session-a")).toBeGreaterThan(idleRank ?? 0)
   })
 
   test("authoritative snapshots clear absent active entries for their directory", () => {

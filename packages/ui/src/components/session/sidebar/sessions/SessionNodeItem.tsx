@@ -146,6 +146,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
     isZombie,
     turnActivity,
     isStreaming,
+    isFailed,
     isAiRenaming,
     isSessionActionPending,
     hasPendingPermission,
@@ -274,7 +275,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
   const { alwaysActionPaddingClass, vscodeAlwaysActionPaddingClass, showQuickArchiveAction } = actionLayout;
   const liveStateMark = isSessionActionPending
     ? <SessionActionSpinner aiRenaming={isAiRenaming} />
-    : showStatusMarker && !waitingOnUser ? <SessionActivityIndicator state={turnActivity ?? 'unread'} tooltip /> : null;
+    : showStatusMarker && !waitingOnUser ? <SessionActivityIndicator state={turnActivity ?? (isFailed ? 'failed' : 'unread')} tooltip /> : null;
   const toggleSubsessions = () => toggleParent(expansionKey);
   const treeChevron = hasChildren && !isTwoLineRow
     ? <SessionTreeChevron expanded={isExpanded} onToggle={toggleSubsessions} />

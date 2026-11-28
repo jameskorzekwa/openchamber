@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
 import { cn } from '@/lib/utils';
 
-type SessionActivityIndicatorState = 'running' | 'workflow' | 'subagent' | 'shell' | 'image' | 'pullRequest' | 'extensionWait' | 'unread';
+type SessionActivityIndicatorState = 'running' | 'workflow' | 'subagent' | 'shell' | 'image' | 'pullRequest' | 'extensionWait' | 'failed' | 'unread';
 
 const PRESENTATION = {
   running: { icon: 'circle', colorClass: 'text-status-info', labelKey: 'sessions.sidebar.session.status.active' },
@@ -17,6 +17,7 @@ const PRESENTATION = {
   image: { icon: 'image', colorClass: 'text-status-info', labelKey: 'sessions.sidebar.session.status.backgroundImage' },
   pullRequest: { icon: 'circle', colorClass: 'text-status-info', labelKey: 'sessions.sidebar.session.status.waitingOnPullRequest' },
   extensionWait: { icon: 'timer', colorClass: 'text-status-info', labelKey: 'sessions.sidebar.session.status.waitingOnExtension' },
+  failed: { icon: 'error-warning', colorClass: 'text-status-error', labelKey: 'sessions.sidebar.session.status.failed' },
   unread: { icon: 'checkbox-circle', colorClass: 'text-status-success', labelKey: 'sessions.sidebar.session.status.unread' },
 } as const satisfies Record<SessionActivityIndicatorState, { icon: IconName; colorClass: string; labelKey: string }>;
 
@@ -30,7 +31,7 @@ export const SessionActivityIndicator: React.FC<{
   const animated = useSessionDisplayStore((s) => s.animatedActivityIndicators);
   const presentation = PRESENTATION[state];
   const label = t(presentation.labelKey);
-  const running = state !== 'unread';
+  const running = state !== 'unread' && state !== 'failed';
 
   const mark = (
     <span

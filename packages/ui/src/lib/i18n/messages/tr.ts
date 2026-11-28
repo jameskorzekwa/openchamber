@@ -791,6 +791,7 @@ export const dict = {
   'sessions.sidebar.session.export.dialog.confirm': 'Dışa aktar',
   'sessions.sidebar.session.status.active': 'Session aktif',
   'sessions.sidebar.session.status.unread': 'Okunmamış güncellemeler',
+  'sessions.sidebar.session.status.failed': 'Son tur başarısız oldu',
   'sessions.sidebar.session.status.backgroundSubagent': 'Alt ajan arka planda çalışıyor',
   'sessions.sidebar.session.status.backgroundCommand': 'Komut arka planda çalışıyor',
   'sessions.sidebar.session.status.backgroundImage': 'Görsel arka planda oluşturuluyor',

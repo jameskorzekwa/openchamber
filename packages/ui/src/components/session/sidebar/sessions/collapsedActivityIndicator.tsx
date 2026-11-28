@@ -30,11 +30,17 @@ export function CollapsedActivityIndicator({
       </RowMarkTooltip>
     );
   }
-  return <SessionActivityIndicator state={state === 'active' ? 'running' : 'unread'} className={className} tooltip />;
+  return (
+    <SessionActivityIndicator
+      state={state === 'active' ? 'running' : state === 'failed' ? 'failed' : 'unread'}
+      className={className}
+      tooltip
+    />
+  );
 }
 
 export const CollapsedSessionActivityIndicator: React.FC<{
-  nodes: SessionNode[];
+  nodes: readonly SessionNode[];
   blockingSessionIds?: readonly string[];
 }> = ({ nodes, blockingSessionIds }) => {
   const resolved = useCollapsedSessionActivityState({ nodes, blockingSessionIds });

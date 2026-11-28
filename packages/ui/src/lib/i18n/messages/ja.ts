@@ -878,6 +878,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.export.dialog.confirm': 'エクスポート',
   'sessions.sidebar.session.status.active': 'セッションアクティブ',
   'sessions.sidebar.session.status.unread': '未読の更新',
+  'sessions.sidebar.session.status.failed': '前回のターンが失敗しました',
   'sessions.sidebar.session.status.backgroundSubagent': 'サブエージェントがバックグラウンドで実行中',
   'sessions.sidebar.session.status.backgroundCommand': 'コマンドがバックグラウンドで実行中',
   'sessions.sidebar.session.status.backgroundImage': 'バックグラウンドで画像を生成中',
