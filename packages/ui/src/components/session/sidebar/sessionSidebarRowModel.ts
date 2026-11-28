@@ -76,7 +76,7 @@ type RowBase = { key: string; estimateSize: number; treeGuides?: readonly Sessio
 
 export type SessionSidebarRow =
   | (RowBase & { kind: 'activity-header'; activityKey: SessionSidebarActivityKey; collapsed: boolean; label?: string; preview?: boolean; loading?: boolean; collapsedNodes?: readonly SessionNode[] })
-  | (RowBase & { kind: 'project-header'; section: ProjectSection; collapsed: boolean })
+  | (RowBase & { kind: 'project-header'; section: ProjectSection; collapsed: boolean; collapsedNodes?: readonly SessionNode[] })
   | (RowBase & { kind: 'caption'; caption: 'projects' | `section:${string}`; collapsed: boolean; label?: string; preview?: boolean; collapsedNodes?: readonly SessionNode[] })
   | (RowBase & { kind: 'date-header'; day: TimelineDay | null; detailed: boolean })
   | (RowBase & { kind: 'group-header'; group: SessionGroup; groupKey: string; projectId: string | null; collapsed: boolean; empty: boolean; allSessions: readonly Session[]; depth: number; mixed: boolean; detailed: boolean })
@@ -1039,7 +1039,7 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
     if (!captionHidden && sections.length > 0) {
       const collapseKey = caption.key === 'projects' ? PROJECTS_CAPTION_COLLAPSE_KEY : caption.key;
       const captionCollapsed = args.collapsedActivities.has(collapseKey);
-      push({ kind: 'caption', key: `caption:${caption.key}`, estimateSize: SECTION_HEADER_ESTIMATE, caption: caption.key, collapsed: captionCollapsed, label: caption.label, preview: caption.preview, collapsedNodes: captionCollapsed ? projectSections.flatMap((section) => collectGroupActivityNodes(section.groups)) : undefined });
+      push({ kind: 'caption', key: `caption:${caption.key}`, estimateSize: SECTION_HEADER_ESTIMATE, caption: caption.key, collapsed: captionCollapsed, label: caption.label, preview: caption.preview, collapsedNodes: captionCollapsed ? projectSections.flatMap((section) => collectGroupActivityNodes(section.groups, { projectId: section.project.id, movedSessionIds, movedGroupKeys })) : undefined });
       if (captionCollapsed) return;
     }
     for (const section of projectSections) {
@@ -1047,7 +1047,7 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
       const projectCollapsed = !args.singleProjectMode && !args.showOnlyMainWorkspace && args.collapsedProjects.has(section.project.id);
       if (!args.showOnlyMainWorkspace) {
         const rowIndex = rows.length;
-        push({ kind: 'project-header', key: `project:${section.project.id}:header`, estimateSize: SECTION_HEADER_ESTIMATE, section, collapsed: projectCollapsed });
+        push({ kind: 'project-header', key: `project:${section.project.id}:header`, estimateSize: SECTION_HEADER_ESTIMATE, section, collapsed: projectCollapsed, collapsedNodes: projectCollapsed ? collectGroupActivityNodes(section.groups, { projectId: section.project.id, movedSessionIds, movedGroupKeys }) : undefined });
         stickyHeaders.push(Object.freeze({ rowIndex, kind: 'project', id: section.project.id }));
       }
       if (projectCollapsed) continue;
@@ -1087,7 +1087,7 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
         return hasFolders ? [{ section, rootGroup }] : [];
       });
       if (entries.length > 0 || foldered.length > 0) {
-        const collapsed = appendActivityHeader('timeline', undefined, undefined, () => [...collectWorkEntryActivityNodes(entries), ...foldered.flatMap(({ rootGroup }) => rootGroup.sessions)]);
+        const collapsed = appendActivityHeader('timeline', undefined, undefined, () => [...collectWorkEntryActivityNodes(entries), ...foldered.flatMap(({ rootGroup }) => rootGroup.sessions.filter((node) => !isMovedToZone(node.session.id)))]);
         if (!collapsed) {
           for (const { section, rootGroup } of foldered) {
             const filedWorktrees = collectFiledWorktrees(buildGroupRenderDescriptors(section, { mainWorkspaceOnly: false }));

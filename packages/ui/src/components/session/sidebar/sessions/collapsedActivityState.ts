@@ -16,11 +16,18 @@ const EMPTY_IDS: ReadonlySet<string> = new Set();
 const EMPTY_PR_WATCHES: ReturnType<typeof usePrWatchStore.getState>['bySession'] = new Map();
 const EMPTY_EXTENSION_WAITS: ReturnType<typeof useExtensionWaitsStore.getState>['bySession'] = new Map();
 
-export const collectGroupActivityNodes = (groups: readonly SessionGroup[]): SessionNode[] => {
+export const collectGroupActivityNodes = (
+  groups: readonly SessionGroup[],
+  moved?: { projectId: string; movedSessionIds: ReadonlySet<string>; movedGroupKeys: ReadonlySet<string> },
+): SessionNode[] => {
   const nodes: SessionNode[] = [];
   for (const group of groups) {
     if (group.isArchivedBucket) continue;
-    nodes.push(...group.sessions);
+    if (moved && moved.movedGroupKeys.has(`${moved.projectId}:${group.id}`)) continue;
+    for (const node of group.sessions) {
+      if (moved?.movedSessionIds.has(node.session.id)) continue;
+      nodes.push(node);
+    }
   }
   return nodes;
 };

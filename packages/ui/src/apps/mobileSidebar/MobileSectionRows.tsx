@@ -7,7 +7,6 @@ import { ContextMenuItem } from '@/components/ui/context-menu';
 import { ACTIVITY_TITLE_KEY, isBuiltinActivityKey } from '@/components/session/sidebar/sessionSidebarActivityLabels';
 import type { SessionSidebarRow } from '@/components/session/sidebar/sessionSidebarRowModel';
 import { CollapsedSessionActivityIndicator } from '@/components/session/sidebar/sessions/collapsedActivityIndicator';
-import { collectGroupActivityNodes } from '@/components/session/sidebar/sessions/collapsedActivityState';
 import { FileTreeChevron } from '@/components/views/files/FileTreeRowParts';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
@@ -154,8 +153,8 @@ export const MobileProjectHeader: React.FC<{
         >
           <MobileProjectIcon project={project} size="xs" />
           <span className="block min-w-0 flex-1 truncate ps-1 typography-ui-label font-medium text-foreground">{label}</span>
-          {row.collapsed ? (
-            <CollapsedSessionActivityIndicator nodes={collectGroupActivityNodes(row.section.groups)} />
+          {row.collapsed && row.collapsedNodes && row.collapsedNodes.length > 0 ? (
+            <CollapsedSessionActivityIndicator nodes={row.collapsedNodes} />
           ) : null}
         </button>
         {isRepo ? <HeaderIconButton icon="git-branch" label={t('sessions.sidebar.project.actions.newWorktree')} onClick={() => actions.openNewWorktree(project.id)} /> : null}

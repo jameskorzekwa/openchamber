@@ -1,6 +1,5 @@
 import React from 'react';
 import { CollapsedSessionActivityIndicator } from '../sessions/collapsedActivityIndicator';
-import { collectGroupActivityNodes } from '../sessions/collapsedActivityState';
 import {
   DndContext,
   DragOverlay,
@@ -383,7 +382,9 @@ function SessionProjectScrollerComponent({ model, view, actions }: SessionProjec
         mobileVariant={view.mobileVariant} alwaysShowActions={view.alwaysShowActions}
         statusIndicator={row.collapsed
           ? (actions.renderProjectStatusIndicator?.(project.id, row.section.groups)
-            ?? <CollapsedSessionActivityIndicator nodes={collectGroupActivityNodes(row.section.groups)} />)
+            ?? (row.collapsedNodes && row.collapsedNodes.length > 0
+              ? <CollapsedSessionActivityIndicator nodes={row.collapsedNodes} />
+              : null))
           : null}
         openSidebarMenuKey={model.state.openSidebarMenuKey} setOpenSidebarMenuKey={model.state.setOpenSidebarMenuKey}
         projectPickerOptions={model.singleProjectMode ? projectPickerOptions : undefined}
