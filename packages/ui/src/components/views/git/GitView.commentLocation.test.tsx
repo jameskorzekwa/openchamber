@@ -128,6 +128,7 @@ test("a pull request comment's opener brings the git tab's text diff to its line
   const { useUIStore } = await import('@/stores/useUIStore');
   const { useOpenCommentSource } = await import('@/components/comments/useOpenCommentSource');
   const { GitView } = await import('../GitView');
+  const { terminateWorkerPoolsForTests } = await import('@/contexts/DiffWorkerProvider');
   const { getZoneView, resolveZoneActiveTab, zoneOfMode } = await import('@/lib/workspace/zones');
 
   const Opener = () => {
@@ -177,6 +178,7 @@ test("a pull request comment's opener brings the git tab's text diff to its line
     expect(patchSources.every((source) => !source?.revision)).toBe(true);
   } finally {
     await act(async () => root.unmount());
+    await terminateWorkerPoolsForTests();
     globalThis.fetch = originalFetch;
     useContextWindowStore.setState({ followedDirectory: null });
     await dom.happyDOM.abort();

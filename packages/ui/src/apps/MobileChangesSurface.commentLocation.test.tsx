@@ -140,6 +140,7 @@ test("the phone's composer label opens the comparison a comment was written on, 
   const { createMobileCommentDraftController } = await import('@/components/chat/composer/comment/mobileCommentDraft');
   const { useInlineCommentDraftStore } = await import('@/stores/useInlineCommentDraftStore');
   const { useUIStore } = await import('@/stores/useUIStore');
+  const { terminateWorkerPoolsForTests } = await import('@/contexts/DiffWorkerProvider');
   const apis = createWebAPIs();
 
   useGitStore.getState().setActiveDirectory(DIRECTORY);
@@ -225,6 +226,7 @@ test("the phone's composer label opens the comparison a comment was written on, 
     expect(container.textContent).toContain('All files reviewed');
   } finally {
     await act(async () => root.unmount());
+    await terminateWorkerPoolsForTests();
     globalThis.fetch = originalFetch;
     await dom.happyDOM.abort();
     for (const [name, value] of originals) {

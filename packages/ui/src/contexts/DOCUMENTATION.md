@@ -36,6 +36,10 @@ React Strict Mode disposes and remounts effects, so each effect setup creates a 
 
 Static Pierre runtime imports pull Highlights and fallback Shiki into the eager graph, and pool initialization creates workers and a main-thread highlighter before a diff is visible. Heavy modules load on demand, pool and chat Highlights warmup waits for startup idle to avoid competing with initial load, and language preloading stays small because workers load other languages on demand.
 
+### Why tests terminate the pools and not leave them for the process to drop
+
+The pools live as long as the app, so nothing in the product stops them. A test that installs happy-dom globals and removes them afterwards must call `terminateWorkerPoolsForTests()` after unmount and before the removal: a worker reply that arrives later makes the Pierre pool schedule a stats broadcast with `requestAnimationFrame`, which no longer exists, and Bun reports it as an error between tests. The helper first awaits the module load, so a pool creation already in flight finishes and is terminated too instead of starting after the teardown.
+
 ### Why highlight small inputs on the main thread and not send every input to a worker
 
 The 64 KiB threshold lets small files and diffs paint highlighted in their first frame: Highlights tokenizes that amount in about a millisecond, less than a worker round trip. Shiki is slower, so the threshold remains small.

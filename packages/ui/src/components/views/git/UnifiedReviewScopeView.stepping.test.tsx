@@ -111,6 +111,7 @@ test('Alt+Down in the narrow review accordion expands an offscreen file and brin
   const github = githubLikeDescriptor();
   useSourceControlProviderRegistry.setState({ ordered: [github], byId: new Map([[github.id, github]]), status: 'ready', holdsList: true });
   const { useGitStore } = await import('@/stores/useGitStore');
+  const { terminateWorkerPoolsForTests } = await import('@/contexts/DiffWorkerProvider');
   useGitStore.getState().setActiveDirectory(DIRECTORY);
   useGitStore.getState().restoreStatus(DIRECTORY, STATUS);
   const { getEffectiveShortcutCombo, ShortcutDispatcher, shortcutRegistry } = await import('@/lib/shortcuts');
@@ -193,6 +194,7 @@ test('Alt+Down in the narrow review accordion expands an offscreen file and brin
     expect(isExpanded(FILES[0])).toBe(false);
   } finally {
     await act(async () => root.unmount());
+    await terminateWorkerPoolsForTests();
     globalThis.fetch = originalFetch;
     window.removeEventListener('keydown', dispatch);
     await dom.happyDOM.abort();

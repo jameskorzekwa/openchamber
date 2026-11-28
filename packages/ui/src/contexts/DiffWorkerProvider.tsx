@@ -175,6 +175,17 @@ export const DiffWorkerProvider: React.FC<DiffWorkerProviderProps> = ({ children
 };
 
 // oxlint-disable-next-line react/only-export-components
+export const terminateWorkerPoolsForTests = async (): Promise<void> => {
+  if (poolModulesPromise) await poolModulesPromise;
+  pools.unified?.terminate();
+  pools.split?.terminate();
+  delete pools.unified;
+  delete pools.split;
+  poolsRequested.clear();
+  notifyPoolListeners();
+};
+
+// oxlint-disable-next-line react/only-export-components
 export const useWorkerPool = (style: WorkerPoolStyle = 'unified'): WorkerPoolManager | undefined => {
   const pool = useSyncExternalStore(
     subscribeToPools,
