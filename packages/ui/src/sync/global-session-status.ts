@@ -119,23 +119,6 @@ const hasSelfOrDescendant = (
   candidates.size > 0 && (candidates.has(sessionId) || hasDescendantIn(sessionId, candidates.keys(), resolveParentId))
 );
 
-export const anySessionOrDescendantIn = (
-  sessionIds: ReadonlySet<string>,
-  candidates: ReadonlySet<string> | ReadonlyMap<string, unknown>,
-  resolveParentId: SessionParentResolver = resolveSessionParentId,
-): boolean => {
-  if (sessionIds.size === 0 || candidates.size === 0) return false;
-  for (const candidateId of candidates.keys()) {
-    if (sessionIds.has(candidateId)) return true;
-    let found = false;
-    forEachAncestorId(candidateId, (ancestorId) => {
-      if (sessionIds.has(ancestorId)) found = true;
-    }, resolveParentId);
-    if (found) return true;
-  }
-  return false;
-};
-
 export const hasActiveSubagent = (
   sessionId: string,
   activeSessionIds: ReadonlySet<string>,
